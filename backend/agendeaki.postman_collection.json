@@ -1,0 +1,193 @@
+{
+  "info": {
+    "_postman_id": "e6f7434d-34d7-4ffd-9cf1-7b6c9d7d08dc",
+    "name": "AgendeAki - API",
+    "description": "Collection das rotas da API AgendeAki.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "urlBase",
+      "value": "http://localhost:3001",
+      "type": "string"
+    },
+    {
+      "key": "tokenAcesso",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Saúde",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{urlBase}}/saude",
+        "description": "Verifica se a API está disponível."
+      },
+      "response": []
+    },
+    {
+      "name": "Cliente",
+      "item": [
+        {
+          "name": "Criar conta",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nome\": \"Maria da Silva\",\n  \"email\": \"maria@example.com\",\n  \"senha\": \"senha-segura\",\n  \"confirmacaoSenha\": \"senha-segura\"\n}"
+            },
+            "url": "{{urlBase}}/api/clientes/cadastro"
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"maria@example.com\",\n  \"senha\": \"senha-segura\"\n}" },
+            "url": "{{urlBase}}/api/clientes/login"
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }],
+            "url": "{{urlBase}}/api/clientes/logout"
+          },
+          "response": []
+        },
+        {
+          "name": "Listar salões próximos",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }],
+            "url": "{{urlBase}}/api/clientes/saloes-proximos?latitude=-23.5505&longitude=-46.6333&raioKm=5&cidade=S%C3%A3o%20Paulo&busca="
+          },
+          "response": []
+        },
+        {
+          "name": "Listar serviços de uma unidade",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }],
+            "url": "{{urlBase}}/api/clientes/saloes/1/servicos"
+          },
+          "response": []
+        },
+        {
+          "name": "Sugerir salões",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/clientes/sugestoes-saloes?termo=aurora&cidade=S%C3%A3o%20Paulo" },
+          "response": []
+        },
+        {
+          "name": "Criar agendamento",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"idUnidade\": 1,\n  \"idServico\": 1,\n  \"idFuncionario\": 1,\n  \"dataHoraInicio\": \"2026-12-10T14:00\",\n  \"observacao\": \"Prefiro um atendimento tranquilo.\"\n}" },
+            "url": "{{urlBase}}/api/clientes/agendamentos"
+          },
+          "response": []
+        },
+        {
+          "name": "Listar próximos agendamentos",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }],
+            "url": "{{urlBase}}/api/clientes/agendamentos/futuros"
+          },
+          "response": []
+        },
+        {
+          "name": "Atualizar agendamento",
+          "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"idUnidade\": 1,\n  \"idServico\": 1,\n  \"idFuncionario\": 1,\n  \"dataHoraInicio\": \"2026-12-12T14:00\"\n}" }, "url": "{{urlBase}}/api/clientes/agendamentos/1" },
+          "response": []
+        },
+        {
+          "name": "Cancelar agendamento",
+          "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/clientes/agendamentos/1/cancelar" },
+          "response": []
+        },
+        {
+          "name": "Listar histórico de agendamentos",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }],
+            "url": "{{urlBase}}/api/clientes/agendamentos/historico"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Salão",
+      "item": [
+        {
+          "name": "Criar conta",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nomeResponsavel\": \"João Oliveira\",\n  \"email\": \"joao@studioaurora.com\",\n  \"senha\": \"senha-segura\",\n  \"confirmacaoSenha\": \"senha-segura\"\n}"
+            },
+            "url": "{{urlBase}}/api/saloes/cadastro"
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"joao@studioaurora.com\",\n  \"senha\": \"senha-segura\"\n}" },
+            "url": "{{urlBase}}/api/saloes/login"
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }],
+            "url": "{{urlBase}}/api/saloes/logout"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Administração do salão",
+      "item": [
+        { "name": "Consultar CEP", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/enderecos/01001000" }, "response": [] },
+        { "name": "Localizar filial no mapa", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/coordenadas?cep=01001000&numero=100" }, "response": [] },
+        { "name": "Criar salão", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"nome\": \"Studio Aurora\",\n  \"email\": \"contato@studioaurora.com\",\n  \"telefone\": \"11999999999\"\n}" }, "url": "{{urlBase}}/api/salao/saloes" }, "response": [] },
+        { "name": "Consultar salão", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/saloes/atual" }, "response": [] },
+        { "name": "Atualizar salão", "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"nome\": \"Studio Aurora\",\n  \"email\": \"contato@studioaurora.com\",\n  \"telefone\": \"11999999999\"\n}" }, "url": "{{urlBase}}/api/salao/saloes/atual" }, "response": [] },
+        { "name": "Criar filial", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"nome\": \"Unidade Jardins\",\n  \"categoria\": \"UNISSEX\",\n  \"cep\": \"01001000\",\n  \"numero\": \"100\",\n  \"latitude\": -23.55052,\n  \"longitude\": -46.63331,\n  \"horarios\": [\n    { \"diaSemana\": 0, \"fechado\": true },\n    { \"diaSemana\": 1, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 2, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 3, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 4, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 5, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 6, \"fechado\": true }\n  ]\n}" }, "url": "{{urlBase}}/api/salao/filiais" }, "response": [] },
+        { "name": "Listar filiais", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/filiais" }, "response": [] },
+        { "name": "Atualizar filial", "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"nome\": \"Unidade Jardins\",\n  \"categoria\": \"UNISSEX\",\n  \"cep\": \"01001000\",\n  \"numero\": \"100\",\n  \"latitude\": -23.55052,\n  \"longitude\": -46.63331,\n  \"horarios\": [\n    { \"diaSemana\": 0, \"fechado\": true },\n    { \"diaSemana\": 1, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 2, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 3, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 4, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 5, \"abertura\": \"09:00\", \"fechamento\": \"18:00\", \"fechado\": false },\n    { \"diaSemana\": 6, \"fechado\": true }\n  ]\n}" }, "url": "{{urlBase}}/api/salao/filiais/1" }, "response": [] },
+        { "name": "Excluir filial", "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/filiais/1" }, "response": [] },
+        { "name": "Criar serviço", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"idUnidade\": 1,\n  \"nome\": \"Corte\",\n  \"valor\": 80,\n  \"duracaoMinutos\": 60\n}" }, "url": "{{urlBase}}/api/salao/servicos" }, "response": [] },
+        { "name": "Listar serviços", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/servicos" }, "response": [] },
+        { "name": "Atualizar serviço", "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"idUnidade\": 1,\n  \"nome\": \"Corte atualizado\",\n  \"descricao\": \"Corte e finalização\",\n  \"valor\": 90,\n  \"duracaoMinutos\": 60\n}" }, "url": "{{urlBase}}/api/salao/servicos/1" }, "response": [] },
+        { "name": "Excluir serviço", "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/servicos/1" }, "response": [] },
+        { "name": "Criar funcionário", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"idUnidade\": 1,\n  \"nome\": \"Ana Souza\",\n  \"idsServicos\": [1]\n}" }, "url": "{{urlBase}}/api/salao/funcionarios" }, "response": [] },
+        { "name": "Listar funcionários", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/funcionarios" }, "response": [] },
+        { "name": "Atualizar funcionário", "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"idUnidade\": 1,\n  \"nome\": \"Ana Souza\",\n  \"idsServicos\": [1]\n}" }, "url": "{{urlBase}}/api/salao/funcionarios/1" }, "response": [] },
+        { "name": "Excluir funcionário", "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/funcionarios/1" }, "response": [] },
+        { "name": "Listar clientes", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/clientes" }, "response": [] },
+        { "name": "Listar agendamentos", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/agendamentos?tipo=futuros" }, "response": [] },
+        { "name": "Indicadores filtrados", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/indicadores?dataInicio=2026-01-01&dataFim=2026-12-31&idUnidade=1&idServico=1&idFuncionario=1" }, "response": [] },
+        { "name": "Consultar indicadores", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{tokenAcesso}}" }], "url": "{{urlBase}}/api/salao/indicadores" }, "response": [] }
+      ]
+    }
+  ]
+}
