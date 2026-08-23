@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { obterClienteSupabase } from '../configuracoes/supabase.js';
-import { sincronizarUsuario } from '../servicos/usuarios.js';
+import { cnpjValido, cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
+import { obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 
 const roteadorAutenticacao = Router();
 
@@ -35,6 +36,20 @@ function validarDadosCadastro(dadosCadastro, perfil) {
     return 'A confirmação de senha não corresponde à senha informada.';
   }
 
+  if (!dataNascimentoValida(dadosCadastro.dataNascimento)) {
+    return 'Informe uma data de nascimento válida.';
+  }
+
+  if (perfil === perfis.cliente && !cpfValido(dadosCadastro.cpf)) {
+    return 'Informe um CPF válido.';
+  }
+
+  if (perfil === perfis.salao) {
+    const tipoDocumento = dadosCadastro.tipoDocumento;
+    const documentoValido = tipoDocumento === 'CPF' ? cpfValido(dadosCadastro.documento) : tipoDocumento === 'CNPJ' && cnpjValido(dadosCadastro.documento);
+    if (!documentoValido) return `Informe um ${tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido.`;
+  }
+
   return null;
 }
 
@@ -64,6 +79,9 @@ async function criarConta(requisicao, resposta, perfil) {
 
   const nome = obterNomeCadastro(dadosCadastro, perfil).trim();
   const email = dadosCadastro.email.trim();
+  const cpf = perfil === perfis.cliente ? somenteNumeros(dadosCadastro.cpf) : null;
+  const tipoDocumento = perfil === perfis.salao ? dadosCadastro.tipoDocumento : 'CPF';
+  const documento = perfil === perfis.salao ? somenteNumeros(dadosCadastro.documento) : cpf;
 
   try {
     const clienteSupabase = obterClienteSupabase();
@@ -83,10 +101,14 @@ async function criarConta(requisicao, resposta, perfil) {
     }
 
     await sincronizarUsuario({
+      cpf,
+      dataNascimento: dadosCadastro.dataNascimento,
+      documento,
       email: dadosAutenticacao.user.email,
       idAutenticacaoExterna: dadosAutenticacao.user.id,
       nome,
       perfil,
+      tipoDocumento,
     });
 
     return resposta.status(201).json({
@@ -129,12 +151,16 @@ async function realizarLogin(requisicao, resposta, perfil) {
       return resposta.status(403).json({ mensagem: 'Use a área de acesso correspondente ao seu perfil.' });
     }
 
-    await sincronizarUsuario({
+    const usuarioLocal = await sincronizarUsuario({
       email: dadosAutenticacao.user.email,
       idAutenticacaoExterna: dadosAutenticacao.user.id,
       nome: dadosAutenticacao.user.user_metadata.nome ?? dadosAutenticacao.user.email,
       perfil,
     });
+    const dadosCadastrais = await obterDadosCadastraisUsuario(usuarioLocal.idUsuario);
+    const cadastroIncompleto = perfil === perfis.cliente
+      ? !dadosCadastrais?.cpf || !dadosCadastrais?.dataNascimento
+      : !dadosCadastrais?.dataNascimento || !dadosCadastrais?.tipoDocumento || !dadosCadastrais?.documento;
 
     return resposta.status(200).json({
       mensagem: 'Login realizado com sucesso.',
@@ -146,6 +172,7 @@ async function realizarLogin(requisicao, resposta, perfil) {
       },
       tokenAcesso: dadosAutenticacao.session.access_token,
       tokenAtualizacao: dadosAutenticacao.session.refresh_token,
+      cadastroIncompleto,
     });
   } catch (erro) {
     return resposta.status(500).json({ mensagem: erro.message });

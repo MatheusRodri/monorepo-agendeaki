@@ -2,7 +2,8 @@ import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
-import { sincronizarUsuario } from '../servicos/usuarios.js';
+import { cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
+import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 
 const roteadorCliente = Router();
 const raiosPermitidos = [1, 5, 10];
@@ -83,6 +84,49 @@ function formatarHora(data) {
   return `${String(data.getHours()).padStart(2, '0')}:${String(data.getMinutes()).padStart(2, '0')}:00`;
 }
 
+async function consultarPerfil(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const perfil = await obterDadosCadastraisUsuario(cliente.idUsuario);
+  resposta.status(200).json({
+    perfil,
+    cadastroIncompleto: !perfil?.cpf || !perfil?.dataNascimento,
+  });
+}
+
+async function atualizarPerfil(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const { dataNascimento, nome } = requisicao.body ?? {};
+  const cpf = somenteNumeros(requisicao.body?.cpf);
+  if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe seu nome.' }); return; }
+  if (!cpfValido(cpf)) { resposta.status(400).json({ mensagem: 'Informe um CPF válido.' }); return; }
+  if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Informe uma data de nascimento válida.' }); return; }
+  try {
+    const perfil = await atualizarDadosCadastraisUsuario(cliente.idUsuario, { cpf, dataNascimento, documento: cpf, nome, tipoDocumento: 'CPF' });
+    resposta.status(200).json({ mensagem: 'Informações da conta atualizadas.', perfil, cadastroIncompleto: false });
+  } catch (erro) {
+    resposta.status(400).json({ mensagem: erro.name === 'SequelizeUniqueConstraintError' ? 'Este CPF já está em uso.' : 'Não foi possível atualizar suas informações.' });
+  }
+}
+
+async function alterarSenha(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const senha = requisicao.body?.senha;
+  const confirmacaoSenha = requisicao.body?.confirmacaoSenha;
+  if (!senha || senha.length < 6) { resposta.status(400).json({ mensagem: 'A nova senha deve possuir pelo menos 6 caracteres.' }); return; }
+  if (senha !== confirmacaoSenha) { resposta.status(400).json({ mensagem: 'As senhas precisam ser iguais.' }); return; }
+  const tokenAcesso = extrairTokenAcesso(requisicao);
+  try {
+    const atualizacao = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+      method: 'PUT', headers: { apikey: process.env.SUPABASE_ANON_KEY, Authorization: `Bearer ${tokenAcesso}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: senha }),
+    });
+    if (!atualizacao.ok) throw new Error();
+    resposta.status(200).json({ mensagem: 'Senha alterada com sucesso.' });
+  } catch { resposta.status(400).json({ mensagem: 'Não foi possível alterar a senha agora.' }); }
+}
+
 function agruparServicos(linhasServicos) {
   const servicosPorId = new Map();
 
@@ -129,9 +173,11 @@ async function listarSaloesProximos(requisicao, resposta) {
             u.tp_categoria AS categoria,
             u.ds_rua AS rua,
             u.nu_endereco AS numeroEndereco,
+            u.ds_complemento AS complemento,
             u.ds_bairro AS bairro,
             u.ds_municipio AS municipio,
             u.ds_estado AS estado,
+            u.nu_cep AS cep,
             u.nu_latitude AS latitude,
             u.nu_longitude AS longitude,
             (6371 * ACOS(
@@ -499,6 +545,9 @@ async function excluirConta(requisicao, resposta) {
 }
 
 roteadorCliente.get('/saloes-proximos', listarSaloesProximos);
+roteadorCliente.get('/perfil', consultarPerfil);
+roteadorCliente.patch('/perfil', atualizarPerfil);
+roteadorCliente.patch('/senha', alterarSenha);
 roteadorCliente.get('/sugestoes-saloes', sugerirSaloes);
 roteadorCliente.get('/saloes/:idUnidade/servicos', listarServicosSalao);
 roteadorCliente.post('/agendamentos', criarAgendamento);

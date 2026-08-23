@@ -2,7 +2,8 @@ import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
-import { sincronizarUsuario } from '../servicos/usuarios.js';
+import { cnpjValido, cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
+import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -45,8 +46,10 @@ async function obterAdministradorAutenticado(requisicao, resposta) {
 
 async function obterSalaoAdministrador(idUsuario) {
   const saloes = await bancoDeDados.query(
-    `SELECT id_salao AS idSalao, nm_salao AS nome, ds_email AS email, nu_telefone AS telefone
-     FROM tb_salao WHERE fk_usuario_administrador = :idUsuario AND st_ativo = TRUE LIMIT 1`,
+    `SELECT s.id_salao AS idSalao, s.nm_salao AS nome, s.ds_email AS email, s.nu_telefone AS telefone,
+            u.ds_email AS emailConta
+     FROM tb_salao s INNER JOIN tb_usuario u ON u.id_usuario = s.fk_usuario_administrador
+     WHERE s.fk_usuario_administrador = :idUsuario AND s.st_ativo = TRUE LIMIT 1`,
     { replacements: { idUsuario }, type: QueryTypes.SELECT },
   );
   return saloes[0] ?? null;
@@ -67,10 +70,7 @@ async function consultarEnderecoPorCep(cep) {
   };
 }
 
-async function buscarEnderecosMapbox(endereco) {
-  const tokenMapbox = process.env.MAPBOX_ACCESS_TOKEN;
-  if (!tokenMapbox) throw new Error('A localização de filiais ainda não está configurada.');
-
+async function buscarEnderecosNominatim(endereco) {
   const consulta = [
     endereco.numero,
     endereco.rua,
@@ -80,32 +80,41 @@ async function buscarEnderecosMapbox(endereco) {
     endereco.cep,
     'Brasil',
   ].filter(Boolean).join(', ');
-  const url = new URL('https://api.mapbox.com/search/geocode/v6/forward');
+  const url = new URL('https://nominatim.openstreetmap.org/search');
   url.search = new URLSearchParams({
-    access_token: tokenMapbox,
-    country: 'br',
+    addressdetails: '1',
+    countrycodes: 'br',
+    format: 'jsonv2',
     limit: '3',
-    permanent: 'true',
     q: consulta,
   }).toString();
 
-  let respostaMapbox;
+  let respostaNominatim;
   try {
-    respostaMapbox = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    respostaNominatim = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+        // A política pública do Nominatim exige identificar a aplicação que consulta o serviço.
+        'User-Agent': 'AgendeAki/1.0 (+https://agendeaki.atlasstak.io)',
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
   } catch {
     throw new Error('Não foi possível consultar a localização agora. Tente novamente.');
   }
-  if (!respostaMapbox.ok) throw new Error('Não foi possível consultar a localização agora. Tente novamente.');
+  if (!respostaNominatim.ok) throw new Error('Não foi possível consultar a localização agora. Tente novamente.');
 
-  const dados = await respostaMapbox.json();
-  return (dados.features ?? []).map((resultado) => {
-    const [longitude, latitude] = resultado.geometry?.coordinates ?? [];
+  const dados = await respostaNominatim.json();
+  return dados.map((resultado) => {
+    const latitude = Number(resultado.lat);
+    const longitude = Number(resultado.lon);
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
     return {
-      id: resultado.id,
+      id: String(resultado.place_id),
       latitude,
       longitude,
-      endereco: resultado.properties?.full_address ?? resultado.place_name ?? consulta,
+      endereco: resultado.display_name ?? consulta,
     };
   }).filter(Boolean);
 }
@@ -157,7 +166,7 @@ async function consultarCoordenadasFilial(requisicao, resposta) {
 
   try {
     const endereco = await consultarEnderecoPorCep(requisicao.query.cep);
-    const sugestoes = await buscarEnderecosMapbox({ ...endereco, numero });
+    const sugestoes = await buscarEnderecosNominatim({ ...endereco, numero });
     if (!sugestoes.length) {
       resposta.status(404).json({ mensagem: 'Nenhum endereço foi encontrado. Confira o CEP e o número.' });
       return;
@@ -193,6 +202,42 @@ async function atualizarSalao(requisicao, resposta) {
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do salão.' }); return; }
   await bancoDeDados.query('UPDATE tb_salao SET nm_salao = :nome, ds_email = :email, nu_telefone = :telefone WHERE id_salao = :idSalao', { replacements: { idSalao: salao.idSalao, nome: nome.trim(), email: email?.trim() || null, telefone: telefone?.trim() || null } });
   resposta.status(200).json({ mensagem: 'Informações do salão atualizadas.' });
+}
+
+async function consultarPerfil(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const perfil = await obterDadosCadastraisUsuario(administrador.idUsuario);
+  resposta.status(200).json({ perfil, cadastroIncompleto: !perfil?.dataNascimento || !perfil?.tipoDocumento || !perfil?.documento });
+}
+
+async function atualizarPerfil(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const { dataNascimento, nome, tipoDocumento } = requisicao.body ?? {};
+  const documento = somenteNumeros(requisicao.body?.documento);
+  const documentoValido = tipoDocumento === 'CPF' ? cpfValido(documento) : tipoDocumento === 'CNPJ' && cnpjValido(documento);
+  if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do responsável.' }); return; }
+  if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Informe uma data de nascimento válida.' }); return; }
+  if (!documentoValido) { resposta.status(400).json({ mensagem: `Informe um ${tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido.` }); return; }
+  try {
+    const perfil = await atualizarDadosCadastraisUsuario(administrador.idUsuario, { cpf: tipoDocumento === 'CPF' ? documento : null, dataNascimento, documento, nome, tipoDocumento });
+    resposta.status(200).json({ mensagem: 'Informações da conta atualizadas.', perfil, cadastroIncompleto: false });
+  } catch (erro) { resposta.status(400).json({ mensagem: erro.name === 'SequelizeUniqueConstraintError' ? 'Este documento já está em uso.' : 'Não foi possível atualizar suas informações.' }); }
+}
+
+async function alterarSenha(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const senha = requisicao.body?.senha;
+  const confirmacaoSenha = requisicao.body?.confirmacaoSenha;
+  if (!senha || senha.length < 6) { resposta.status(400).json({ mensagem: 'A nova senha deve possuir pelo menos 6 caracteres.' }); return; }
+  if (senha !== confirmacaoSenha) { resposta.status(400).json({ mensagem: 'As senhas precisam ser iguais.' }); return; }
+  const tokenAcesso = extrairTokenAcesso(requisicao);
+  try {
+    const atualizacao = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+      method: 'PUT', headers: { apikey: process.env.SUPABASE_ANON_KEY, Authorization: `Bearer ${tokenAcesso}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: senha }),
+    });
+    if (!atualizacao.ok) throw new Error();
+    resposta.status(200).json({ mensagem: 'Senha alterada com sucesso.' });
+  } catch { resposta.status(400).json({ mensagem: 'Não foi possível alterar a senha agora.' }); }
 }
 
 async function excluirConta(requisicao, resposta) {
@@ -492,6 +537,7 @@ async function indicadores(requisicao, resposta) {
 roteadorSalao.get('/enderecos/:cep', consultarCep);
 roteadorSalao.get('/coordenadas', consultarCoordenadasFilial);
 roteadorSalao.post('/saloes', criarSalao); roteadorSalao.get('/saloes/atual', consultarSalao); roteadorSalao.patch('/saloes/atual', atualizarSalao); roteadorSalao.delete('/conta', excluirConta);
+roteadorSalao.get('/perfil', consultarPerfil); roteadorSalao.patch('/perfil', atualizarPerfil); roteadorSalao.patch('/senha', alterarSenha);
 roteadorSalao.get('/filiais', listarFiliais); roteadorSalao.post('/filiais', (requisicao, resposta) => salvarFilial(requisicao, resposta)); roteadorSalao.patch('/filiais/:idUnidade', (requisicao, resposta) => salvarFilial(requisicao, resposta, Number(requisicao.params.idUnidade))); roteadorSalao.delete('/filiais/:idUnidade', excluirFilial);
 roteadorSalao.post('/servicos', criarServico); roteadorSalao.get('/servicos', listarServicos); roteadorSalao.patch('/servicos/:idServico', atualizarServico); roteadorSalao.delete('/servicos/:idServico', excluirServico);
 roteadorSalao.post('/funcionarios', criarFuncionario); roteadorSalao.get('/funcionarios', listarFuncionarios); roteadorSalao.patch('/funcionarios/:idFuncionario', atualizarFuncionario); roteadorSalao.delete('/funcionarios/:idFuncionario', excluirFuncionario);

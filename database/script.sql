@@ -17,6 +17,8 @@ CREATE TABLE tb_usuario (
   ds_email VARCHAR(254) NOT NULL,
   nu_cpf CHAR(11) NULL,
   dt_nascimento DATE NULL,
+  tp_documento ENUM('CPF', 'CNPJ') NULL,
+  nu_documento VARCHAR(14) NULL,
 
   tp_usuario ENUM(
     'CLIENTE',
@@ -40,6 +42,9 @@ CREATE TABLE tb_usuario (
 
   CONSTRAINT uk_usuario_cpf
     UNIQUE (nu_cpf),
+
+  CONSTRAINT uk_usuario_documento
+    UNIQUE (nu_documento),
 
   CONSTRAINT uk_usuario_autenticacao_externa
     UNIQUE (id_autenticacao_externa)

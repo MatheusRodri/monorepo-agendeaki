@@ -1,8 +1,7 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import AlternadorTema from '../AlternadorTema/AlternadorTema';
+import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
 import MapaSaloes from '../MapaSaloes/MapaSaloes';
 import { lerRespostaApi, obterTokenAcesso, obterUrlApi } from '../../utils/respostaApi';
 
@@ -107,11 +106,7 @@ export default function AreaCliente() {
 
   return (
     <main className="area-cliente">
-      <header className="cabecalho-area">
-        <Link aria-label="AgendeAki: página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link>
-        <nav aria-label="Navegação do cliente"><Link className="navegacao-area__ativo" href="/cliente/inicio">Explorar</Link><Link href="/cliente/agendamentos">Agendamentos</Link><Link href="/cliente/configuracoes">Configurações</Link></nav>
-        <AlternadorTema />
-      </header>
+      <CabecalhoCliente secao="inicio" />
 
       <section className="area-cliente__conteudo">
         <aside className="painel-exploracao">
