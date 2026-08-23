@@ -4,6 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 
 const centroInicial = { latitude: -23.5505, longitude: -46.6333 };
 
+function formatarCep(cep) {
+  const numeros = String(cep ?? '').replace(/\D/g, '');
+  return numeros.length === 8 ? `${numeros.slice(0, 5)}-${numeros.slice(5)}` : cep;
+}
+
 function criarConteudoPopup(salao) {
   const conteudo = document.createElement('div');
   conteudo.className = 'popup-salao';
@@ -13,7 +18,11 @@ function criarConteudoPopup(salao) {
   const nomeUnidade = document.createElement('strong');
   nomeUnidade.textContent = salao.nomeUnidade;
   const endereco = document.createElement('p');
-  endereco.textContent = `${salao.nomeSalao} · ${salao.bairro}`;
+  const logradouro = [salao.rua, salao.numeroEndereco].filter(Boolean).join(', ');
+  const complemento = salao.complemento ? ` · ${salao.complemento}` : '';
+  const localidade = [salao.bairro, [salao.municipio, salao.estado].filter(Boolean).join('/')].filter(Boolean).join(', ');
+  const cep = formatarCep(salao.cep);
+  endereco.textContent = [logradouro && `${logradouro}${complemento}`, localidade, cep && `CEP ${cep}`].filter(Boolean).join(' — ');
   const link = document.createElement('a');
   link.href = `/cliente/saloes/${salao.idUnidade}`;
   link.textContent = 'Ver serviços →';
@@ -25,7 +34,7 @@ function criarConteudoPopup(salao) {
 export default function MapaSaloes({ aoSelecionarSalao, coordenadas, salaoSelecionado, saloes }) {
   const elementoMapa = useRef(null);
   const instanciaMapa = useRef(null);
-  const moduloMapbox = useRef(null);
+  const moduloMapa = useRef(null);
   const marcadoresPorUnidade = useRef(new Map());
   const [mapaPronto, definirMapaPronto] = useState(false);
   const [erro, definirErro] = useState('');
@@ -34,25 +43,18 @@ export default function MapaSaloes({ aoSelecionarSalao, coordenadas, salaoSeleci
     let estaAtivo = true;
 
     async function iniciarMapa() {
-      const tokenMapbox = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-      if (!tokenMapbox) {
-        definirErro('Não foi possível exibir o mapa no momento.');
-        return;
-      }
-
-      const pacoteMapbox = await import('mapbox-gl');
-      const mapboxgl = pacoteMapbox.default ?? pacoteMapbox;
+      const pacoteMapa = await import('maplibre-gl');
+      const maplibregl = pacoteMapa.default ?? pacoteMapa;
       if (!estaAtivo || !elementoMapa.current || instanciaMapa.current) return;
 
-      moduloMapbox.current = mapboxgl;
-      mapboxgl.accessToken = tokenMapbox;
-      instanciaMapa.current = new mapboxgl.Map({
+      moduloMapa.current = maplibregl;
+      instanciaMapa.current = new maplibregl.Map({
         center: [centroInicial.longitude, centroInicial.latitude],
         container: elementoMapa.current,
-        style: 'mapbox://styles/mapbox/streets-v12',
+        style: 'https://tiles.openfreemap.org/styles/liberty',
         zoom: 12,
       });
-      instanciaMapa.current.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+      instanciaMapa.current.addControl(new maplibregl.NavigationControl(), 'bottom-right');
       instanciaMapa.current.once('load', () => { if (estaAtivo) definirMapaPronto(true); });
     }
 
@@ -75,9 +77,9 @@ export default function MapaSaloes({ aoSelecionarSalao, coordenadas, salaoSeleci
   }, [coordenadas, mapaPronto]);
 
   useEffect(() => {
-    const mapboxgl = moduloMapbox.current;
+    const maplibregl = moduloMapa.current;
     const mapa = instanciaMapa.current;
-    if (!mapboxgl || !mapa || !mapaPronto) return;
+    if (!maplibregl || !mapa || !mapaPronto) return;
 
     marcadoresPorUnidade.current.forEach((marcador) => marcador.remove());
     marcadoresPorUnidade.current.clear();
@@ -94,8 +96,8 @@ export default function MapaSaloes({ aoSelecionarSalao, coordenadas, salaoSeleci
       elementoMarcador.setAttribute('aria-label', `Selecionar ${salao.nomeSalao}`);
       elementoMarcador.append(document.createElement('span'));
 
-      const popup = new mapboxgl.Popup({ closeButton: false, offset: 20 }).setDOMContent(criarConteudoPopup(salao));
-      const marcador = new mapboxgl.Marker({ element: elementoMarcador, anchor: 'bottom' })
+      const popup = new maplibregl.Popup({ closeButton: false, offset: 20 }).setDOMContent(criarConteudoPopup(salao));
+      const marcador = new maplibregl.Marker({ element: elementoMarcador, anchor: 'bottom' })
         .setLngLat([longitude, latitude])
         .setPopup(popup)
         .addTo(mapa);
@@ -115,5 +117,5 @@ export default function MapaSaloes({ aoSelecionarSalao, coordenadas, salaoSeleci
   }, [salaoSelecionado]);
 
   if (erro) return <p className="estado-lista">{erro}</p>;
-  return <div aria-label="Mapa de salões próximos" className="mapa-saloes" ref={elementoMapa} role="application" />;
+  return <div aria-label="Mapa de salões próximos" className="mapa-saloes maplibregl-map" ref={elementoMapa} role="application" />;
 }
