@@ -48,6 +48,12 @@ function extrairTokenAcesso(requisicao) {
   return cabecalhoAutorizacao.slice(7);
 }
 
+function obterUrlRedefinicaoSenha(perfil) {
+  const urlFrontend = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const caminho = perfil === perfis.cliente ? '/cliente/redefinir-senha' : '/salao/redefinir-senha';
+  return `${urlFrontend}${caminho}`;
+}
+
 async function criarConta(requisicao, resposta, perfil) {
   const dadosCadastro = requisicao.body ?? {};
   const mensagemValidacao = validarDadosCadastro(dadosCadastro, perfil);
@@ -167,12 +173,64 @@ async function realizarLogout(requisicao, resposta) {
   }
 }
 
+async function solicitarRedefinicaoSenha(requisicao, resposta, perfil) {
+  const email = requisicao.body?.email?.trim();
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+    resposta.status(400).json({ mensagem: 'Informe um e-mail válido.' });
+    return;
+  }
+
+  try {
+    const clienteSupabase = obterClienteSupabase();
+    const { error: erroAutenticacao } = await clienteSupabase.auth.resetPasswordForEmail(email, {
+      redirectTo: obterUrlRedefinicaoSenha(perfil),
+    });
+    if (erroAutenticacao) console.error('[Recuperação de senha] Falha no envio.', { mensagem: erroAutenticacao.message, perfil });
+    resposta.status(200).json({ mensagem: 'Se este e-mail estiver cadastrado, você receberá um link para redefinir a senha.' });
+  } catch (erro) {
+    console.error('[Recuperação de senha] Falha inesperada.', { mensagem: erro.message, perfil });
+    resposta.status(500).json({ mensagem: 'Não foi possível solicitar a redefinição de senha agora. Tente novamente.' });
+  }
+}
+
+async function redefinirSenha(requisicao, resposta, perfil) {
+  const tokenAcesso = extrairTokenAcesso(requisicao);
+  const senha = requisicao.body?.senha;
+  const confirmacaoSenha = requisicao.body?.confirmacaoSenha;
+  if (!tokenAcesso) { resposta.status(401).json({ mensagem: 'O link de redefinição é inválido ou expirou.' }); return; }
+  if (!senha || senha.length < 6) { resposta.status(400).json({ mensagem: 'A nova senha deve possuir pelo menos 6 caracteres.' }); return; }
+  if (senha !== confirmacaoSenha) { resposta.status(400).json({ mensagem: 'As senhas precisam ser iguais.' }); return; }
+
+  try {
+    const clienteSupabase = obterClienteSupabase(tokenAcesso);
+    const { data: dadosUsuario, error: erroUsuario } = await clienteSupabase.auth.getUser(tokenAcesso);
+    if (erroUsuario || dadosUsuario.user?.user_metadata?.perfil !== perfil) { resposta.status(401).json({ mensagem: 'O link de redefinição é inválido ou expirou.' }); return; }
+    const respostaAtualizacao = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+      method: 'PUT',
+      headers: {
+        apikey: process.env.SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${tokenAcesso}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ password: senha }),
+    });
+    if (!respostaAtualizacao.ok) { resposta.status(400).json({ mensagem: 'Não foi possível atualizar a senha. Solicite um novo link e tente novamente.' }); return; }
+    resposta.status(200).json({ mensagem: 'Senha redefinida com sucesso. Agora você já pode entrar.' });
+  } catch (erro) {
+    resposta.status(500).json({ mensagem: 'Não foi possível redefinir a senha agora. Tente novamente.' });
+  }
+}
+
 roteadorAutenticacao.post('/clientes/cadastro', (requisicao, resposta) => criarConta(requisicao, resposta, perfis.cliente));
 roteadorAutenticacao.post('/clientes/login', (requisicao, resposta) => realizarLogin(requisicao, resposta, perfis.cliente));
 roteadorAutenticacao.post('/clientes/logout', realizarLogout);
+roteadorAutenticacao.post('/clientes/recuperar-senha', (requisicao, resposta) => solicitarRedefinicaoSenha(requisicao, resposta, perfis.cliente));
+roteadorAutenticacao.post('/clientes/redefinir-senha', (requisicao, resposta) => redefinirSenha(requisicao, resposta, perfis.cliente));
 
 roteadorAutenticacao.post('/saloes/cadastro', (requisicao, resposta) => criarConta(requisicao, resposta, perfis.salao));
 roteadorAutenticacao.post('/saloes/login', (requisicao, resposta) => realizarLogin(requisicao, resposta, perfis.salao));
 roteadorAutenticacao.post('/saloes/logout', realizarLogout);
+roteadorAutenticacao.post('/saloes/recuperar-senha', (requisicao, resposta) => solicitarRedefinicaoSenha(requisicao, resposta, perfis.salao));
+roteadorAutenticacao.post('/saloes/redefinir-senha', (requisicao, resposta) => redefinirSenha(requisicao, resposta, perfis.salao));
 
 export default roteadorAutenticacao;

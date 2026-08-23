@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { armazenarSessao, obterUrlApi } from '../../utils/respostaApi';
+import CampoSenha from '../CampoSenha/CampoSenha';
 
 const configuracoesPerfil = {
   cliente: {
@@ -141,15 +142,9 @@ export default function FormularioAutenticacao({ modo, perfil }) {
               <span>E-mail</span>
               <input autoComplete="email" id="email" name="email" onChange={alterarCampo} placeholder="voce@exemplo.com" required type="email" value={dadosFormulario.email} />
             </label>
-            <label className="campo-formulario" htmlFor="senha">
-              <span>Senha</span>
-              <input autoComplete={estaNoCadastro ? 'new-password' : 'current-password'} id="senha" minLength="6" name="senha" onChange={alterarCampo} placeholder="No mínimo 6 caracteres" required type="password" value={dadosFormulario.senha} />
-            </label>
+            <CampoSenha aoMudar={alterarCampo} autoComplete={estaNoCadastro ? 'new-password' : 'current-password'} id="senha" nome="senha" placeholder="No mínimo 6 caracteres" rotulo="Senha" valor={dadosFormulario.senha} />
             {estaNoCadastro && (
-              <label className="campo-formulario" htmlFor="confirmacaoSenha">
-                <span>Confirme sua senha</span>
-                <input autoComplete="new-password" id="confirmacaoSenha" name="confirmacaoSenha" onChange={alterarCampo} placeholder="Repita sua senha" required type="password" value={dadosFormulario.confirmacaoSenha} />
-              </label>
+              <CampoSenha aoMudar={alterarCampo} autoComplete="new-password" id="confirmacaoSenha" nome="confirmacaoSenha" placeholder="Repita sua senha" rotulo="Confirme sua senha" valor={dadosFormulario.confirmacaoSenha} />
             )}
 
             {mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`} role="alert">{mensagem}</p>}
@@ -165,6 +160,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
               {estaNoCadastro ? 'Fazer login' : 'Criar conta'}
             </Link>
           </p>
+          {!estaNoCadastro && <p className="alternativa-autenticacao"><Link href={`/${configuracao.caminho}/recuperar-senha`}>Esqueci minha senha</Link></p>}
         </div>
       </section>
     </main>
