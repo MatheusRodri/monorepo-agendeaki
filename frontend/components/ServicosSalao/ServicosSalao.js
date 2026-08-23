@@ -31,7 +31,7 @@ export default function ServicosSalao({ idUnidade }) {
 
   return (
     <main className="pagina-servicos">
-      <header className="cabecalho-area"><Link aria-label="AgendeAki: página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><nav aria-label="Navegação do cliente"><Link href="/cliente/inicio">Explorar</Link><Link href="/cliente/agendamentos">Agendamentos</Link></nav><AlternadorTema /></header>
+      <header className="cabecalho-area"><Link aria-label="AgendeAki: página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><nav aria-label="Navegação do cliente"><Link href="/cliente/inicio">Explorar</Link><Link href="/cliente/agendamentos">Agendamentos</Link><Link href="/cliente/configuracoes">Configurações</Link></nav><AlternadorTema /></header>
       <section className="conteudo-servicos conteudo-limitado">
         <Link className="voltar-home" href="/cliente/inicio">← Voltar para o mapa</Link>
         <p className="sobretitulo">Escolha seu cuidado</p><h1>Serviços disponíveis nesta unidade.</h1>

@@ -1899,11 +1899,26 @@ h1 em {
 
 @media (max-width: 480px) {
   .cabecalho-area {
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .55rem;
     padding-inline: 1rem;
   }
 
   .cabecalho-area nav {
-    display: none;
+    display: flex;
+    flex-basis: 100%;
+    gap: 1rem;
+    justify-content: space-between;
+    margin: 0;
+    overflow-x: auto;
+    padding-bottom: .25rem;
+    white-space: nowrap;
+  }
+
+  .mapa-area,
+  .mapa-saloes {
+    min-height: 320px;
   }
 
   .painel-exploracao {
