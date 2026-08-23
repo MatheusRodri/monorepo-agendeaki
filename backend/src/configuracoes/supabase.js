@@ -14,3 +14,16 @@ export function obterClienteSupabase(tokenAcesso) {
 
   return createClient(urlSupabase, chaveAnonimaSupabase, opcoes);
 }
+
+export function obterClienteAdministrativoSupabase() {
+  const urlSupabase = process.env.SUPABASE_URL;
+  const chaveServicoSupabase = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!urlSupabase || !chaveServicoSupabase) {
+    throw new Error('Configure SUPABASE_SECRET_KEY para excluir contas.');
+  }
+
+  return createClient(urlSupabase, chaveServicoSupabase, {
+    auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
+  });
+}

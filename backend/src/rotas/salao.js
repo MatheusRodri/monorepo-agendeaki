@@ -1,7 +1,7 @@
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
-import { obterClienteSupabase } from '../configuracoes/supabase.js';
+import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { sincronizarUsuario } from '../servicos/usuarios.js';
 
 const roteadorSalao = Router();
@@ -34,7 +34,8 @@ async function obterAdministradorAutenticado(requisicao, resposta) {
       return null;
     }
     console.info('[Autenticação salão] Usuário autenticado.', { rota: requisicao.originalUrl, idUsuario: dadosUsuario.user.id });
-    return sincronizarUsuario({ email: dadosUsuario.user.email, idAutenticacaoExterna: dadosUsuario.user.id, nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email, perfil: 'ADMIN_SALAO' });
+    const administrador = await sincronizarUsuario({ email: dadosUsuario.user.email, idAutenticacaoExterna: dadosUsuario.user.id, nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email, perfil: 'ADMIN_SALAO' });
+    return { ...administrador, idAutenticacaoExterna: dadosUsuario.user.id };
   } catch (erro) {
     console.error('[Autenticação salão] Falha inesperada.', { rota: requisicao.originalUrl, mensagem: erro.message });
     resposta.status(500).json({ mensagem: erro.message });
@@ -54,10 +55,7 @@ async function obterSalaoAdministrador(idUsuario) {
 async function consultarEnderecoPorCep(cep) {
   const cepNormalizado = String(cep ?? '').replace(/\D/g, '');
   if (cepNormalizado.length !== 8) throw new Error('Informe um CEP com 8 números.');
-  const [respostaCep, coordenadasAproximadas] = await Promise.all([
-    fetch(`https://viacep.com.br/ws/${cepNormalizado}/json/`),
-    consultarCoordenadasAproximadasPorCep(cepNormalizado),
-  ]);
+  const respostaCep = await fetch(`https://viacep.com.br/ws/${cepNormalizado}/json/`);
   const endereco = await respostaCep.json();
   if (!respostaCep.ok || endereco.erro) throw new Error('CEP não encontrado.');
   return {
@@ -66,21 +64,50 @@ async function consultarEnderecoPorCep(cep) {
     bairro: endereco.bairro,
     municipio: endereco.localidade,
     estado: endereco.uf,
-    coordenadasAproximadas,
   };
 }
 
-async function consultarCoordenadasAproximadasPorCep(cep) {
+async function buscarEnderecosMapbox(endereco) {
+  const tokenMapbox = process.env.MAPBOX_ACCESS_TOKEN;
+  if (!tokenMapbox) throw new Error('A localização de filiais ainda não está configurada.');
+
+  const consulta = [
+    endereco.numero,
+    endereco.rua,
+    endereco.bairro,
+    endereco.municipio,
+    endereco.estado,
+    endereco.cep,
+    'Brasil',
+  ].filter(Boolean).join(', ');
+  const url = new URL('https://api.mapbox.com/search/geocode/v6/forward');
+  url.search = new URLSearchParams({
+    access_token: tokenMapbox,
+    country: 'br',
+    limit: '3',
+    permanent: 'true',
+    q: consulta,
+  }).toString();
+
+  let respostaMapbox;
   try {
-    const resposta = await fetch(`https://brasilapi.com.br/api/cep/v2/${cep}`, { signal: AbortSignal.timeout(10_000) });
-    if (!resposta.ok) return null;
-    const dados = await resposta.json();
-    const latitude = Number(dados.location?.coordinates?.latitude);
-    const longitude = Number(dados.location?.coordinates?.longitude);
-    return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
+    respostaMapbox = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   } catch {
-    return null;
+    throw new Error('Não foi possível consultar a localização agora. Tente novamente.');
   }
+  if (!respostaMapbox.ok) throw new Error('Não foi possível consultar a localização agora. Tente novamente.');
+
+  const dados = await respostaMapbox.json();
+  return (dados.features ?? []).map((resultado) => {
+    const [longitude, latitude] = resultado.geometry?.coordinates ?? [];
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    return {
+      id: resultado.id,
+      latitude,
+      longitude,
+      endereco: resultado.properties?.full_address ?? resultado.place_name ?? consulta,
+    };
+  }).filter(Boolean);
 }
 
 function normalizarHorariosUnidade(horarios) {
@@ -110,7 +137,7 @@ async function salvarHorariosUnidade(idUnidade, horarios, transacao) {
   for (const horario of horarios) {
     await bancoDeDados.query(
       'INSERT INTO tb_horario_unidade (fk_unidade, nr_dia_semana, hr_abertura, hr_fechamento, st_fechado) VALUES (:idUnidade, :diaSemana, :abertura, :fechamento, :fechado)',
-      { replacements: { idUnidade, ...horario }, transaction: transacao },
+      { replacements: { ...horario, idUnidade }, transaction: transacao },
     );
   }
 }
@@ -125,15 +152,17 @@ async function consultarCep(requisicao, resposta) {
 async function consultarCoordenadasFilial(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta);
   if (!administrador) return;
+  const numero = String(requisicao.query.numero ?? '').trim();
+  if (!numero) { resposta.status(400).json({ mensagem: 'Informe o número do endereço para localizar a filial.' }); return; }
 
   try {
     const endereco = await consultarEnderecoPorCep(requisicao.query.cep);
-    const coordenadas = endereco.coordenadasAproximadas;
-    if (!coordenadas) {
-      resposta.status(422).json({ mensagem: 'Não foi possível localizar este CEP automaticamente.' });
+    const sugestoes = await buscarEnderecosMapbox({ ...endereco, numero });
+    if (!sugestoes.length) {
+      resposta.status(404).json({ mensagem: 'Nenhum endereço foi encontrado. Confira o CEP e o número.' });
       return;
     }
-    resposta.status(200).json({ coordenadas, endereco, localizacaoAproximada: true });
+    resposta.status(200).json({ endereco, sugestoes });
   } catch (erro) {
     resposta.status(422).json({ mensagem: erro.message });
   }
@@ -166,6 +195,62 @@ async function atualizarSalao(requisicao, resposta) {
   resposta.status(200).json({ mensagem: 'Informações do salão atualizadas.' });
 }
 
+async function excluirConta(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta);
+  if (!administrador) return;
+
+  let clienteAdministrativo;
+  try {
+    clienteAdministrativo = obterClienteAdministrativoSupabase();
+  } catch (erro) {
+    resposta.status(503).json({ mensagem: erro.message });
+    return;
+  }
+
+  const transacao = await bancoDeDados.transaction();
+  try {
+    const saloes = await bancoDeDados.query(
+      'SELECT id_salao AS idSalao FROM tb_salao WHERE fk_usuario_administrador = :idUsuario',
+      { replacements: administrador, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    const idsSaloes = saloes.map((salao) => salao.idSalao);
+    const unidades = idsSaloes.length
+      ? await bancoDeDados.query('SELECT id_unidade AS idUnidade FROM tb_unidade WHERE fk_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao, type: QueryTypes.SELECT })
+      : [];
+    const idsUnidades = unidades.map((unidade) => unidade.idUnidade);
+    const condicoesAgendamento = ['fk_usuario = :idUsuario'];
+    if (idsUnidades.length) condicoesAgendamento.push('fk_unidade IN (:idsUnidades)');
+    const agendamentos = await bancoDeDados.query(
+      `SELECT id_agendamento AS idAgendamento FROM tb_agendamento WHERE ${condicoesAgendamento.join(' OR ')}`,
+      { replacements: { idUsuario: administrador.idUsuario, idsUnidades }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    const idsAgendamentos = agendamentos.map((agendamento) => agendamento.idAgendamento);
+
+    await bancoDeDados.query('UPDATE tb_agendamento SET fk_usuario_cancelamento = NULL WHERE fk_usuario_cancelamento = :idUsuario', { replacements: administrador, transaction: transacao });
+    if (idsAgendamentos.length) {
+      await bancoDeDados.query('DELETE FROM tb_pagamento WHERE fk_agendamento IN (:idsAgendamentos)', { replacements: { idsAgendamentos }, transaction: transacao });
+      await bancoDeDados.query('DELETE FROM tb_agendamento WHERE id_agendamento IN (:idsAgendamentos)', { replacements: { idsAgendamentos }, transaction: transacao });
+    }
+    if (idsUnidades.length) {
+      await bancoDeDados.query('DELETE FROM tb_funcionario WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
+      await bancoDeDados.query('DELETE FROM tb_servico WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
+      await bancoDeDados.query('DELETE FROM tb_unidade WHERE id_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
+    }
+    if (idsSaloes.length) await bancoDeDados.query('DELETE FROM tb_salao WHERE id_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao });
+    await bancoDeDados.query('DELETE FROM tb_usuario WHERE id_usuario = :idUsuario', { replacements: administrador, transaction: transacao });
+
+    const { error: erroSupabase } = await clienteAdministrativo.auth.admin.deleteUser(administrador.idAutenticacaoExterna);
+    if (erroSupabase) throw new Error('Não foi possível excluir a conta no Supabase. Nenhum dado local foi removido.');
+
+    await transacao.commit();
+    resposta.status(200).json({ mensagem: 'Conta e todos os dados vinculados foram excluídos.' });
+  } catch (erro) {
+    await transacao.rollback();
+    console.error('[Exclusão de conta] Falha ao excluir conta.', { idUsuario: administrador.idUsuario, mensagem: erro.message });
+    resposta.status(500).json({ mensagem: erro.message });
+  }
+}
+
 async function listarFiliais(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
@@ -195,23 +280,18 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
   if (!dadosFilial.nome?.trim() || !dadosFilial.numero?.trim() || !categoriasPermitidas.includes(dadosFilial.categoria)) { resposta.status(400).json({ mensagem: 'Informe nome, número e categoria válidos para a filial.' }); return; }
   let horarios;
   try { horarios = normalizarHorariosUnidade(dadosFilial.horarios); } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); return; }
-  const latitudeManual = Number(dadosFilial.latitude);
-  const longitudeManual = Number(dadosFilial.longitude);
-  const possuiCoordenadasManuais = dadosFilial.latitude !== undefined && dadosFilial.longitude !== undefined;
-  if (possuiCoordenadasManuais && (!Number.isFinite(latitudeManual) || !Number.isFinite(longitudeManual) || latitudeManual < -90 || latitudeManual > 90 || longitudeManual < -180 || longitudeManual > 180)) { resposta.status(400).json({ mensagem: 'As coordenadas ajustadas no mapa são inválidas.' }); return; }
+  const latitude = Number(dadosFilial.latitude);
+  const longitude = Number(dadosFilial.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) { resposta.status(400).json({ mensagem: 'Selecione um endereço válido para localizar a filial.' }); return; }
   let enderecoCep;
-  let coordenadas;
   try {
     enderecoCep = await consultarEnderecoPorCep(dadosFilial.cep);
-    coordenadas = possuiCoordenadasManuais
-      ? { latitude: latitudeManual, longitude: longitudeManual }
-      : enderecoCep.coordenadasAproximadas;
-    if (!coordenadas) throw new Error('Não foi possível localizar este CEP automaticamente.');
   } catch (erro) {
     resposta.status(422).json({ mensagem: erro.message });
     return;
   }
-  const valores = { idSalao: salao.idSalao, idUnidade, ...dadosFilial, ...enderecoCep, ...coordenadas };
+  const coordenadas = { latitude, longitude };
+  const valores = { ...dadosFilial, ...enderecoCep, ...coordenadas, idSalao: salao.idSalao, idUnidade };
   const transacao = await bancoDeDados.transaction();
   if (idUnidade) {
     try {
@@ -224,11 +304,14 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
     } catch (erro) { await transacao.rollback(); resposta.status(500).json({ mensagem: erro.message }); return; }
   }
   try {
-    const resultado = await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
-    await salvarHorariosUnidade(resultado[0].insertId, horarios, transacao);
+    await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
+    const unidadesCriadas = await bancoDeDados.query('SELECT LAST_INSERT_ID() AS idUnidade', { transaction: transacao, type: QueryTypes.SELECT });
+    const idUnidadeCriada = Number(unidadesCriadas[0]?.idUnidade);
+    if (!idUnidadeCriada) throw new Error('Não foi possível identificar a filial criada.');
+    await salvarHorariosUnidade(idUnidadeCriada, horarios, transacao);
     await transacao.commit();
     resposta.status(201).json({ mensagem: 'Filial criada com localização e horários salvos.', coordenadas });
-  } catch (erro) { await transacao.rollback(); resposta.status(500).json({ mensagem: erro.message }); }
+  } catch (erro) { await transacao.rollback(); console.error('[Cadastro filial] Falha ao salvar.', { mensagem: erro.message }); resposta.status(500).json({ mensagem: erro.message }); }
 }
 
 async function criarServico(requisicao, resposta) {
@@ -408,7 +491,7 @@ async function indicadores(requisicao, resposta) {
 
 roteadorSalao.get('/enderecos/:cep', consultarCep);
 roteadorSalao.get('/coordenadas', consultarCoordenadasFilial);
-roteadorSalao.post('/saloes', criarSalao); roteadorSalao.get('/saloes/atual', consultarSalao); roteadorSalao.patch('/saloes/atual', atualizarSalao);
+roteadorSalao.post('/saloes', criarSalao); roteadorSalao.get('/saloes/atual', consultarSalao); roteadorSalao.patch('/saloes/atual', atualizarSalao); roteadorSalao.delete('/conta', excluirConta);
 roteadorSalao.get('/filiais', listarFiliais); roteadorSalao.post('/filiais', (requisicao, resposta) => salvarFilial(requisicao, resposta)); roteadorSalao.patch('/filiais/:idUnidade', (requisicao, resposta) => salvarFilial(requisicao, resposta, Number(requisicao.params.idUnidade))); roteadorSalao.delete('/filiais/:idUnidade', excluirFilial);
 roteadorSalao.post('/servicos', criarServico); roteadorSalao.get('/servicos', listarServicos); roteadorSalao.patch('/servicos/:idServico', atualizarServico); roteadorSalao.delete('/servicos/:idServico', excluirServico);
 roteadorSalao.post('/funcionarios', criarFuncionario); roteadorSalao.get('/funcionarios', listarFuncionarios); roteadorSalao.patch('/funcionarios/:idFuncionario', atualizarFuncionario); roteadorSalao.delete('/funcionarios/:idFuncionario', excluirFuncionario);

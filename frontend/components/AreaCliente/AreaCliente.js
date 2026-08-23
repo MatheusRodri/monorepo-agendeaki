@@ -109,7 +109,7 @@ export default function AreaCliente() {
     <main className="area-cliente">
       <header className="cabecalho-area">
         <Link aria-label="AgendeAki: página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link>
-        <nav aria-label="Navegação do cliente"><Link className="navegacao-area__ativo" href="/cliente/inicio">Explorar</Link><Link href="/cliente/agendamentos">Agendamentos</Link></nav>
+        <nav aria-label="Navegação do cliente"><Link className="navegacao-area__ativo" href="/cliente/inicio">Explorar</Link><Link href="/cliente/agendamentos">Agendamentos</Link><Link href="/cliente/configuracoes">Configurações</Link></nav>
         <AlternadorTema />
       </header>
 
@@ -138,7 +138,7 @@ export default function AreaCliente() {
             {!carregando && !mensagem && !saloesFiltrados.length && <p className="estado-lista">Nenhum salão desse tipo foi encontrado neste raio.</p>}
             {saloesFiltrados.map((salao) => (
               <button className={salaoSelecionado?.idUnidade === salao.idUnidade ? 'cartao-salao cartao-salao--selecionado' : 'cartao-salao'} key={salao.idUnidade} onClick={() => definirSalaoSelecionado(salao)} type="button">
-                <span className="cartao-salao__icone">✦</span><span><strong>{salao.nomeSalao}</strong><small>{salao.nomeUnidade} · {Number(salao.distanciaKm).toFixed(1)} km</small><em>{salao.categoria.toLowerCase()}</em></span>
+                <span className="cartao-salao__icone">✦</span><span><strong>{salao.nomeUnidade}</strong><small>{salao.nomeSalao} · {Number(salao.distanciaKm).toFixed(1)} km</small><em>{salao.categoria.toLowerCase()}</em></span>
               </button>
             ))}
           </div>
