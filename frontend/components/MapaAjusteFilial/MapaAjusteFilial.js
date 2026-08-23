@@ -1,61 +1,62 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-const coordenadasIniciais = { latitude: -23.5505, longitude: -46.6333 };
+const centroInicial = { latitude: -23.5505, longitude: -46.6333 };
 
-function criarIconePino(leaflet) {
-  return leaflet.divIcon({
-    className: 'mapa-ajuste-filial__icone-pino',
-    html: '<span aria-hidden="true"></span>',
-    iconAnchor: [15, 30],
-    iconSize: [30, 30],
-  });
-}
-
-export default function MapaAjusteFilial({ coordenadas, aoAlterarCoordenadas }) {
+export default function MapaAjusteFilial({ coordenadas }) {
   const elementoMapa = useRef(null);
   const instanciaMapa = useRef(null);
   const marcador = useRef(null);
-  const moduloLeaflet = useRef(null);
-  const aoAlterarCoordenadasRef = useRef(aoAlterarCoordenadas);
-
-  useEffect(() => { aoAlterarCoordenadasRef.current = aoAlterarCoordenadas; }, [aoAlterarCoordenadas]);
+  const moduloMapbox = useRef(null);
+  const [mapaPronto, definirMapaPronto] = useState(false);
+  const [erro, definirErro] = useState('');
 
   useEffect(() => {
     let estaAtivo = true;
 
     async function iniciarMapa() {
-      const pacoteLeaflet = await import('leaflet');
-      const leaflet = pacoteLeaflet.default ?? pacoteLeaflet;
+      const tokenMapbox = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+      if (!tokenMapbox) {
+        definirErro('Configure o token público do Mapbox para exibir o mapa.');
+        return;
+      }
+
+      const pacoteMapbox = await import('mapbox-gl');
+      const mapboxgl = pacoteMapbox.default ?? pacoteMapbox;
       if (!estaAtivo || !elementoMapa.current || instanciaMapa.current) return;
 
-      moduloLeaflet.current = leaflet;
-      const posicaoInicial = coordenadas ?? coordenadasIniciais;
-      instanciaMapa.current = leaflet.map(elementoMapa.current, { zoomControl: true }).setView([posicaoInicial.latitude, posicaoInicial.longitude], coordenadas ? 18 : 11);
-      leaflet.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(instanciaMapa.current);
-
-      marcador.current = leaflet.marker([posicaoInicial.latitude, posicaoInicial.longitude], { draggable: true, icon: criarIconePino(leaflet) }).addTo(instanciaMapa.current);
-      marcador.current.on('dragend', () => {
-        const posicao = marcador.current.getLatLng();
-        aoAlterarCoordenadasRef.current({ latitude: posicao.lat, longitude: posicao.lng });
+      moduloMapbox.current = mapboxgl;
+      mapboxgl.accessToken = tokenMapbox;
+      const posicaoInicial = coordenadas ?? centroInicial;
+      instanciaMapa.current = new mapboxgl.Map({
+        center: [posicaoInicial.longitude, posicaoInicial.latitude],
+        container: elementoMapa.current,
+        style: 'mapbox://styles/mapbox/streets-v12',
+        zoom: coordenadas ? 17 : 10,
       });
-      instanciaMapa.current.on('click', (evento) => {
-        marcador.current.setLatLng(evento.latlng);
-        aoAlterarCoordenadasRef.current({ latitude: evento.latlng.lat, longitude: evento.latlng.lng });
-      });
+      instanciaMapa.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+      definirMapaPronto(true);
     }
 
-    iniciarMapa();
-    return () => { estaAtivo = false; instanciaMapa.current?.remove(); instanciaMapa.current = null; marcador.current = null; };
+    iniciarMapa().catch(() => { if (estaAtivo) definirErro('Não foi possível carregar o mapa agora.'); });
+    return () => {
+      estaAtivo = false;
+      instanciaMapa.current?.remove();
+      instanciaMapa.current = null;
+      marcador.current = null;
+    };
   }, []);
 
   useEffect(() => {
-    if (!coordenadas || !instanciaMapa.current || !marcador.current) return;
-    const posicao = [coordenadas.latitude, coordenadas.longitude];
-    marcador.current.setLatLng(posicao);
-    instanciaMapa.current.setView(posicao, 18);
-  }, [coordenadas]);
+    const mapboxgl = moduloMapbox.current;
+    if (!coordenadas || !mapboxgl || !instanciaMapa.current) return;
+    const posicao = [coordenadas.longitude, coordenadas.latitude];
+    if (!marcador.current) marcador.current = new mapboxgl.Marker({ color: '#e55353' }).setLngLat(posicao).addTo(instanciaMapa.current);
+    else marcador.current.setLngLat(posicao);
+    instanciaMapa.current.flyTo({ center: posicao, essential: true, zoom: 17 });
+  }, [coordenadas, mapaPronto]);
 
-  return <div aria-label="Mapa para ajustar a localização da filial" className="mapa-ajuste-filial" ref={elementoMapa} />;
+  if (erro) return <p className="estado-localizacao">{erro}</p>;
+  return <div aria-label="Mapa da localização da filial" className="mapa-ajuste-filial" ref={elementoMapa} />;
 }

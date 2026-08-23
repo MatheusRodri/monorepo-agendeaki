@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap');
+@import 'mapbox-gl/dist/mapbox-gl.css';
 @import 'leaflet/dist/leaflet.css';
 
 :root {
@@ -1257,8 +1258,10 @@ h1 em {
   border-radius: 50% 50% 50% 0;
   box-shadow: 0 5px 14px rgba(84, 34, 72, .25);
   color: #fff;
+  cursor: pointer;
   display: flex;
   justify-content: center;
+  padding: 0;
   transform: rotate(-45deg);
 }
 
@@ -1266,10 +1269,21 @@ h1 em {
   transform: rotate(45deg);
 }
 
-.leaflet-popup-content-wrapper {
+.mapboxgl-popup-content {
   background: var(--cartao);
+  border-radius: 12px;
+  box-shadow: var(--sombra);
   color: var(--texto);
   font-family: 'DM Sans', sans-serif;
+  padding: .75rem;
+}
+
+.mapboxgl-popup-tip {
+  border-top-color: var(--cartao);
+}
+
+.mapboxgl-popup-close-button {
+  color: var(--texto-suave);
 }
 
 .detalhe-salao {
@@ -2088,6 +2102,65 @@ h1 em {
   height: 270px;
   overflow: hidden;
   width: 100%;
+}
+
+.estado-localizacao {
+  align-items: center;
+  background: var(--fundo-suave);
+  border: 1px dashed var(--borda);
+  border-radius: 12px;
+  color: var(--texto-suave);
+  display: flex;
+  font-size: .85rem;
+  justify-content: center;
+  margin: 0;
+  min-height: 270px;
+  padding: 1rem;
+  text-align: center;
+}
+
+.campo-formulario__entrada-com-acao {
+  display: flex;
+  gap: .6rem;
+}
+
+.campo-formulario__entrada-com-acao input {
+  min-width: 0;
+}
+
+.campo-formulario__entrada-com-acao .botao-secundario {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: .65rem .85rem;
+}
+
+.sugestoes-endereco {
+  border: 1px solid var(--borda);
+  border-radius: 12px;
+  display: grid;
+  gap: .55rem;
+  grid-column: 1 / -1;
+  padding: 1rem;
+}
+
+.sugestoes-endereco p {
+  color: var(--texto-suave);
+  font-size: .8rem;
+  margin: 0;
+}
+
+.sugestoes-endereco button {
+  background: var(--fundo-suave);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  color: var(--texto);
+  cursor: pointer;
+  padding: .75rem;
+  text-align: left;
+}
+
+.sugestoes-endereco button:hover {
+  border-color: var(--cor-destaque);
 }
 
 .mapa-ajuste-filial__icone-pino {
