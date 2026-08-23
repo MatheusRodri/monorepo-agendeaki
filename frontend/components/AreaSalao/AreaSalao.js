@@ -4,7 +4,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import AlternadorTema from '../AlternadorTema/AlternadorTema';
+import CampoSenha from '../CampoSenha/CampoSenha';
+import FormularioDadosSalao from '../FormularioDadosSalao/FormularioDadosSalao';
 import FormularioFilial from '../FormularioFilial/FormularioFilial';
+import { dataParaExibicao, dataParaIso, formatarCnpj, formatarCpf, formatarData } from '../../utils/formatadores';
 import { limparSessao, lerRespostaApi, obterTokenAcesso, obterUrlApi } from '../../utils/respostaApi';
 
 const navegacao = [['dashboard', 'Visão geral', '/salao/dashboard'], ['salao', 'Meu salão', '/salao/meu-salao'], ['filiais', 'Filiais', '/salao/filiais'], ['servicos', 'Serviços', '/salao/servicos'], ['funcionarios', 'Profissionais', '/salao/funcionarios'], ['clientes', 'Clientes', '/salao/clientes'], ['agendamentos', 'Agenda', '/salao/agendamentos'], ['configuracoes', 'Configurações', '/salao/configuracoes']];
@@ -40,7 +43,17 @@ export default function AreaSalao({ secao }) {
         const parametros = new URLSearchParams(Object.entries(filtrosDashboard).filter(([, valor]) => valor));
         definirDados(await requisitar(`/indicadores?${parametros}`));
       }
-      if (secao === 'salao' || secao === 'configuracoes') definirDados(await requisitar('/saloes/atual'));
+      if (secao === 'salao') {
+        const dadosPerfil = await requisitar('/perfil');
+        try {
+          const dadosSalao = await requisitar('/saloes/atual');
+          definirDados(dadosSalao);
+        } catch (erro) {
+          if (erro.status !== 404) throw erro;
+          definirDados({ emailConta: dadosPerfil.perfil.email, salao: null });
+        }
+      }
+      if (secao === 'configuracoes') { const [dadosSalao, dadosPerfil] = await Promise.all([requisitar('/saloes/atual'), requisitar('/perfil')]); definirDados({ ...dadosSalao, perfil: dadosPerfil.perfil }); }
       if (secao === 'filiais') definirDados(await requisitar('/filiais'));
       if (secao === 'servicos') { const [filiais, servicos] = await Promise.all([requisitar('/filiais'), requisitar('/servicos')]); definirDados({ filiais: filiais.filiais, servicos: servicos.servicos }); }
       if (secao === 'funcionarios') { const [filiais, servicos, funcionarios] = await Promise.all([requisitar('/filiais'), requisitar('/servicos'), requisitar('/funcionarios')]); definirDados({ filiais: filiais.filiais, servicos: servicos.servicos, funcionarios: funcionarios.funcionarios }); }
@@ -92,14 +105,14 @@ export default function AreaSalao({ secao }) {
   async function buscarCoordenadas(cep, numero) { try { return await requisitar(`/coordenadas?cep=${encodeURIComponent(cep)}&numero=${encodeURIComponent(numero)}`); } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); return null; } }
 
   const enderecoCep = dados.enderecoCep ?? filialEdicao ?? {};
-  return <main className="area-salao"><header className="cabecalho-area"><Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><p className="titulo-area-salao">Painel do salão</p><AlternadorTema /></header><div className="estrutura-salao"><aside className="menu-salao">{navegacao.map(([chave, titulo, caminho]) => <Link className={secao === chave ? 'menu-salao__ativo' : ''} href={caminho} key={chave}>{titulo}</Link>)}</aside><section className="conteudo-salao">{mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`}>{mensagem}</p>}{carregando ? <p className="estado-lista">Carregando...</p> : <ConteudoSalao dados={dados} enderecoCep={enderecoCep} enviarFormulario={enviarFormulario} excluirConta={excluirConta} excluirItem={excluirItem} buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} filialEdicao={filialEdicao} definirFilialEdicao={definirFilialEdicao} servicoEdicao={servicoEdicao} definirServicoEdicao={definirServicoEdicao} funcionarioEdicao={funcionarioEdicao} definirFuncionarioEdicao={definirFuncionarioEdicao} idFilialProfissional={idFilialProfissional} definirIdFilialProfissional={definirIdFilialProfissional} secao={secao} tipoAgenda={tipoAgenda} definirTipoAgenda={definirTipoAgenda} filtrosDashboard={filtrosDashboard} definirFiltrosDashboard={definirFiltrosDashboard} />}</section></div></main>;
+  return <main className="area-salao"><header className="cabecalho-area"><Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><p className="titulo-area-salao">Painel do salão</p><AlternadorTema /></header><div className="estrutura-salao"><aside className="menu-salao">{navegacao.map(([chave, titulo, caminho]) => <Link className={secao === chave ? 'menu-salao__ativo' : ''} href={caminho} key={chave}>{titulo}</Link>)}</aside><section className="conteudo-salao">{mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`}>{mensagem}</p>}{carregando ? <p className="estado-lista">Carregando...</p> : <ConteudoSalao dados={dados} enderecoCep={enderecoCep} enviarFormulario={enviarFormulario} excluirConta={excluirConta} excluirItem={excluirItem} buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} filialEdicao={filialEdicao} definirFilialEdicao={definirFilialEdicao} requisitar={requisitar} servicoEdicao={servicoEdicao} definirServicoEdicao={definirServicoEdicao} funcionarioEdicao={funcionarioEdicao} definirFuncionarioEdicao={definirFuncionarioEdicao} idFilialProfissional={idFilialProfissional} definirIdFilialProfissional={definirIdFilialProfissional} secao={secao} tipoAgenda={tipoAgenda} definirTipoAgenda={definirTipoAgenda} filtrosDashboard={filtrosDashboard} definirFiltrosDashboard={definirFiltrosDashboard} />}</section></div></main>;
 }
 
 function ConteudoSalao(propriedades) {
   const { dados, secao } = propriedades;
   if (secao === 'dashboard') return <Dashboard dados={dados} {...propriedades} />;
-  if (secao === 'salao') { const salao = dados.salao; return <><p className="sobretitulo">{salao ? 'Informações gerais' : 'Primeiro passo'}</p><h1>{salao ? 'Dados do seu salão.' : 'Vamos criar seu salão.'}</h1><form className="formulario-salao" onSubmit={(evento) => propriedades.enviarFormulario(evento, salao ? '/saloes/atual' : '/saloes', salao ? 'PATCH' : 'POST')}><Campo nome="nome" rotulo="Nome do salão" valor={salao?.nome} /><Campo nome="email" rotulo="E-mail" tipo="email" valor={salao?.email} /><Campo nome="telefone" rotulo="Telefone" valor={salao?.telefone} /><button className="botao-enviar">{salao ? 'Salvar alterações' : 'Criar salão'} <span>→</span></button></form></>; }
-  if (secao === 'configuracoes') return <Configuracoes excluirConta={propriedades.excluirConta} salao={dados.salao} />;
+  if (secao === 'salao') { const salao = dados.salao; return <><p className="sobretitulo">{salao ? 'Informações gerais' : 'Primeiro passo'}</p><h1>{salao ? 'Dados do seu salão.' : 'Vamos criar seu salão.'}</h1><FormularioDadosSalao emailConta={salao?.emailConta ?? dados.emailConta} salao={salao} salvar={propriedades.enviarFormulario} /></>; }
+  if (secao === 'configuracoes') return <Configuracoes excluirConta={propriedades.excluirConta} perfil={dados.perfil} requisitar={propriedades.requisitar} salao={dados.salao} />;
   if (secao === 'filiais') return <Filiais dados={dados} {...propriedades} />;
   if (secao === 'servicos') return <Servicos dados={dados} {...propriedades} />;
   if (secao === 'funcionarios') return <Funcionarios dados={dados} {...propriedades} />;
@@ -107,19 +120,32 @@ function ConteudoSalao(propriedades) {
   return <Agenda dados={dados} {...propriedades} />;
 }
 
-function Configuracoes({ excluirConta, salao }) {
+function Configuracoes({ excluirConta, perfil, requisitar, salao }) {
+  const [dadosPerfil, definirDadosPerfil] = useState({ nome: perfil?.nome ?? '', dataNascimento: dataParaExibicao(perfil?.dataNascimento), tipoDocumento: perfil?.tipoDocumento ?? 'CPF', documento: perfil?.tipoDocumento === 'CNPJ' ? formatarCnpj(perfil?.documento) : formatarCpf(perfil?.documento) });
+  const [senhas, definirSenhas] = useState({ senha: '', confirmacaoSenha: '' });
   const [confirmacao, definirConfirmacao] = useState('');
   const [excluindo, definirExcluindo] = useState(false);
+  const [mensagem, definirMensagem] = useState('');
   const podeExcluir = confirmacao === 'EXCLUIR MINHA CONTA';
+
+  useEffect(() => { definirDadosPerfil({ nome: perfil?.nome ?? '', dataNascimento: dataParaExibicao(perfil?.dataNascimento), tipoDocumento: perfil?.tipoDocumento ?? 'CPF', documento: perfil?.tipoDocumento === 'CNPJ' ? formatarCnpj(perfil?.documento) : formatarCpf(perfil?.documento) }); }, [perfil]);
+
+  async function salvarPerfil(evento) {
+    evento.preventDefault();
+    try { const resultado = await requisitar('/perfil', { method: 'PATCH', body: JSON.stringify({ ...dadosPerfil, dataNascimento: dataParaIso(dadosPerfil.dataNascimento) }) }); definirMensagem(resultado.mensagem); } catch (erro) { definirMensagem(erro.message); }
+  }
+
+  async function salvarSenha(evento) {
+    evento.preventDefault();
+    try { const resultado = await requisitar('/senha', { method: 'PATCH', body: JSON.stringify(senhas) }); definirMensagem(resultado.mensagem); definirSenhas({ senha: '', confirmacaoSenha: '' }); } catch (erro) { definirMensagem(erro.message); }
+  }
 
   async function confirmarExclusao() {
     if (!podeExcluir || !window.confirm('Esta ação é irreversível. Deseja excluir a conta e todos os dados do salão?')) return;
-    definirExcluindo(true);
-    const excluida = await excluirConta();
-    if (!excluida) definirExcluindo(false);
+    definirExcluindo(true); const excluida = await excluirConta(); if (!excluida) definirExcluindo(false);
   }
 
-  return <><p className="sobretitulo">Configurações</p><h1>Sua conta.</h1><section className="zona-perigo"><div><strong>Excluir conta permanentemente</strong><p>Isso remove o salão, filiais, profissionais, serviços, horários, agendamentos, pagamentos e o acesso da conta. Não é possível desfazer.</p>{salao?.email && <small>Conta: {salao.email}</small>}</div><label className="campo-formulario"><span>Digite <b>EXCLUIR MINHA CONTA</b> para confirmar</span><input disabled={excluindo} onChange={(evento) => definirConfirmacao(evento.target.value)} value={confirmacao} /></label><button className="botao-perigo" disabled={!podeExcluir || excluindo} onClick={confirmarExclusao} type="button">{excluindo ? 'Excluindo conta...' : 'Excluir minha conta'}</button></section></>;
+  return <><p className="sobretitulo">Configurações</p><h1>Sua conta.</h1>{mensagem && <p className="mensagem-formulario">{mensagem}</p>}<section className="secao-configuracoes"><h2>Informações da conta</h2><form className="grade-formulario" onSubmit={salvarPerfil}><label className="campo-formulario"><span>Nome do responsável</span><input onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, nome: evento.target.value })} required value={dadosPerfil.nome} /></label><label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, dataNascimento: formatarData(evento.target.value) })} placeholder="DD/MM/AAAA" required value={dadosPerfil.dataNascimento} /></label><label className="campo-formulario"><span>Tipo de documento</span><select onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, tipoDocumento: evento.target.value, documento: '' })} value={dadosPerfil.tipoDocumento}><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option></select></label><label className="campo-formulario"><span>Número do {dadosPerfil.tipoDocumento}</span><input inputMode="numeric" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, documento: dadosPerfil.tipoDocumento === 'CNPJ' ? formatarCnpj(evento.target.value) : formatarCpf(evento.target.value) })} required value={dadosPerfil.documento} /></label><button className="botao-enviar">Salvar informações →</button></form></section><section className="secao-configuracoes"><h2>Alterar senha</h2><form className="grade-formulario" onSubmit={salvarSenha}><CampoSenha aoMudar={(evento) => definirSenhas({ ...senhas, senha: evento.target.value })} id="novaSenhaSalao" nome="novaSenhaSalao" rotulo="Nova senha" valor={senhas.senha} /><CampoSenha aoMudar={(evento) => definirSenhas({ ...senhas, confirmacaoSenha: evento.target.value })} id="confirmacaoSenhaSalao" nome="confirmacaoSenhaSalao" rotulo="Confirme a nova senha" valor={senhas.confirmacaoSenha} /><button className="botao-enviar">Alterar senha →</button></form></section><section className="zona-perigo"><div><strong>Excluir conta permanentemente</strong><p>Isso remove o salão, filiais, profissionais, serviços, horários, agendamentos, pagamentos e o acesso da conta. Não é possível desfazer.</p>{salao?.email && <small>Conta: {salao.email}</small>}</div><label className="campo-formulario"><span>Digite <b>EXCLUIR MINHA CONTA</b> para confirmar</span><input disabled={excluindo} onChange={(evento) => definirConfirmacao(evento.target.value)} value={confirmacao} /></label><button className="botao-perigo" disabled={!podeExcluir || excluindo} onClick={confirmarExclusao} type="button">{excluindo ? 'Excluindo conta...' : 'Excluir minha conta'}</button></section></>;
 }
 
 function Dashboard({ dados, filtrosDashboard, definirFiltrosDashboard }) {

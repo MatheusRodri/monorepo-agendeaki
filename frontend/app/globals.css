@@ -1,5 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap');
-@import 'mapbox-gl/dist/mapbox-gl.css';
+@import 'maplibre-gl/dist/maplibre-gl.css';
 @import 'leaflet/dist/leaflet.css';
 
 :root {
@@ -936,6 +936,39 @@ h1 em {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--coral) 17%, transparent);
 }
 
+.campo-formulario select {
+  background-color: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 11px;
+  color: var(--texto);
+  cursor: pointer;
+  font: inherit;
+  min-height: 51px;
+  padding: .75rem .9rem;
+  transition: border-color .2s ease, box-shadow .2s ease;
+  width: 100%;
+}
+
+.campo-formulario select:not([multiple]) {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 1.15rem) 50%, calc(100% - .85rem) 50%;
+  background-repeat: no-repeat;
+  background-size: .35rem .35rem, .35rem .35rem;
+  padding-right: 2.6rem;
+}
+
+.campo-formulario select:focus {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--coral) 17%, transparent);
+  outline: none;
+}
+
+.campo-formulario select:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
 .campo-senha {
   position: relative;
 }
@@ -1126,6 +1159,96 @@ h1 em {
   color: var(--coral);
 }
 
+.titulo-area-cliente {
+  color: var(--texto-suave);
+  font-size: .84rem;
+  font-weight: 700;
+  margin: 0 auto;
+}
+
+.menu-cliente {
+  border-bottom: 1px solid var(--borda);
+  display: flex;
+  gap: .35rem;
+  overflow-x: auto;
+  padding: .7rem max(1rem, 4vw);
+}
+
+.menu-cliente a {
+  border-radius: 9px;
+  color: var(--texto-suave);
+  flex: 0 0 auto;
+  font-size: .82rem;
+  font-weight: 700;
+  padding: .7rem .85rem;
+}
+
+.menu-cliente a:hover,
+.menu-cliente a.menu-cliente__ativo {
+  background: var(--creme);
+  color: var(--coral-escuro);
+}
+
+.modal-conta {
+  align-items: center;
+  background: rgba(47, 25, 44, .58);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 1rem;
+  position: fixed;
+  z-index: 1000;
+}
+
+.modal-conta > section {
+  background: var(--cartao);
+  border-radius: 18px;
+  box-shadow: var(--sombra);
+  max-width: 560px;
+  padding: clamp(1.5rem, 4vw, 2.3rem);
+  width: 100%;
+}
+
+.modal-conta h2,
+.secao-configuracoes h2 {
+  color: var(--ameixa);
+  font-family: 'Playfair Display', Georgia, serif;
+  margin: .35rem 0 .65rem;
+}
+
+.modal-conta p:not(.sobretitulo),
+.secao-configuracoes > p {
+  color: var(--texto-suave);
+  line-height: 1.5;
+}
+
+.secao-configuracoes {
+  border: 1px solid var(--borda);
+  border-radius: 15px;
+  margin-bottom: 1.25rem;
+  padding: 1.2rem;
+}
+
+.secao-configuracoes .botao-enviar {
+  grid-column: 1 / -1;
+  justify-self: center;
+  max-width: 390px;
+  width: 100%;
+}
+
+.campo-formulario--checkbox {
+  align-items: center;
+  color: var(--texto-suave);
+  display: flex;
+  font-size: .82rem;
+  gap: .55rem;
+}
+
+.campo-formulario--checkbox input {
+  height: 1rem;
+  width: 1rem;
+}
+
 .area-cliente__conteudo {
   display: grid;
   grid-template-columns: minmax(320px, 390px) 1fr;
@@ -1298,7 +1421,7 @@ h1 em {
   transform: rotate(45deg);
 }
 
-.mapboxgl-popup-content {
+.maplibregl-popup-content {
   background: var(--cartao);
   border-radius: 12px;
   box-shadow: var(--sombra);
@@ -1307,11 +1430,11 @@ h1 em {
   padding: .75rem;
 }
 
-.mapboxgl-popup-tip {
+.maplibregl-popup-tip {
   border-top-color: var(--cartao);
 }
 
-.mapboxgl-popup-close-button {
+.maplibregl-popup-close-button {
   color: var(--texto-suave);
 }
 
@@ -2148,6 +2271,20 @@ h1 em {
   width: 100%;
 }
 
+.mapa-ajuste-filial--ajustavel {
+  cursor: crosshair;
+}
+
+.botao-ajuste-localizacao {
+  justify-self: start;
+}
+
+.botao-ajuste-localizacao--ativo {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+}
+
 .estado-localizacao {
   align-items: center;
   background: var(--fundo-suave);
@@ -2470,8 +2607,9 @@ h1 em {
   border-radius: 15px;
   display: grid;
   gap: 1rem;
-  max-width: 680px;
+  max-width: none;
   padding: 1.2rem;
+  width: 100%;
 }
 
 .zona-perigo strong,
