@@ -72,6 +72,19 @@ export default function AreaSalao({ secao }) {
     try { const resultado = await requisitar(caminho, { method: 'DELETE' }); definirMensagem(resultado.mensagem); definirTipoMensagem('sucesso'); definirFilialEdicao(null); definirServicoEdicao(null); definirFuncionarioEdicao(null); carregarDados(); } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); }
   }
 
+  async function excluirConta() {
+    try {
+      await requisitar('/conta', { method: 'DELETE' });
+      limparSessao();
+      roteador.replace('/');
+      return true;
+    } catch (erro) {
+      definirMensagem(erro.message);
+      definirTipoMensagem('erro');
+      return false;
+    }
+  }
+
   async function buscarCep(valorCep) {
     const cep = String(valorCep ?? '').replace(/\D/g, ''); if (cep.length !== 8) return null;
     try { const endereco = await requisitar(`/enderecos/${cep}`); definirDados((dadosAtuais) => ({ ...dadosAtuais, enderecoCep: endereco })); return endereco; } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); return null; }
@@ -79,18 +92,34 @@ export default function AreaSalao({ secao }) {
   async function buscarCoordenadas(cep, numero) { try { return await requisitar(`/coordenadas?cep=${encodeURIComponent(cep)}&numero=${encodeURIComponent(numero)}`); } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); return null; } }
 
   const enderecoCep = dados.enderecoCep ?? filialEdicao ?? {};
-  return <main className="area-salao"><header className="cabecalho-area"><Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><p className="titulo-area-salao">Painel do salão</p><AlternadorTema /></header><div className="estrutura-salao"><aside className="menu-salao">{navegacao.map(([chave, titulo, caminho]) => <Link className={secao === chave ? 'menu-salao__ativo' : ''} href={caminho} key={chave}>{titulo}</Link>)}</aside><section className="conteudo-salao">{mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`}>{mensagem}</p>}{carregando ? <p className="estado-lista">Carregando...</p> : <ConteudoSalao dados={dados} enderecoCep={enderecoCep} enviarFormulario={enviarFormulario} excluirItem={excluirItem} buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} filialEdicao={filialEdicao} definirFilialEdicao={definirFilialEdicao} servicoEdicao={servicoEdicao} definirServicoEdicao={definirServicoEdicao} funcionarioEdicao={funcionarioEdicao} definirFuncionarioEdicao={definirFuncionarioEdicao} idFilialProfissional={idFilialProfissional} definirIdFilialProfissional={definirIdFilialProfissional} secao={secao} tipoAgenda={tipoAgenda} definirTipoAgenda={definirTipoAgenda} filtrosDashboard={filtrosDashboard} definirFiltrosDashboard={definirFiltrosDashboard} />}</section></div></main>;
+  return <main className="area-salao"><header className="cabecalho-area"><Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><p className="titulo-area-salao">Painel do salão</p><AlternadorTema /></header><div className="estrutura-salao"><aside className="menu-salao">{navegacao.map(([chave, titulo, caminho]) => <Link className={secao === chave ? 'menu-salao__ativo' : ''} href={caminho} key={chave}>{titulo}</Link>)}</aside><section className="conteudo-salao">{mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`}>{mensagem}</p>}{carregando ? <p className="estado-lista">Carregando...</p> : <ConteudoSalao dados={dados} enderecoCep={enderecoCep} enviarFormulario={enviarFormulario} excluirConta={excluirConta} excluirItem={excluirItem} buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} filialEdicao={filialEdicao} definirFilialEdicao={definirFilialEdicao} servicoEdicao={servicoEdicao} definirServicoEdicao={definirServicoEdicao} funcionarioEdicao={funcionarioEdicao} definirFuncionarioEdicao={definirFuncionarioEdicao} idFilialProfissional={idFilialProfissional} definirIdFilialProfissional={definirIdFilialProfissional} secao={secao} tipoAgenda={tipoAgenda} definirTipoAgenda={definirTipoAgenda} filtrosDashboard={filtrosDashboard} definirFiltrosDashboard={definirFiltrosDashboard} />}</section></div></main>;
 }
 
 function ConteudoSalao(propriedades) {
   const { dados, secao } = propriedades;
   if (secao === 'dashboard') return <Dashboard dados={dados} {...propriedades} />;
-  if (secao === 'salao' || secao === 'configuracoes') { const salao = dados.salao; return <><p className="sobretitulo">{salao ? 'Informações gerais' : 'Primeiro passo'}</p><h1>{salao ? 'Dados do seu salão.' : 'Vamos criar seu salão.'}</h1><form className="formulario-salao" onSubmit={(evento) => propriedades.enviarFormulario(evento, salao ? '/saloes/atual' : '/saloes', salao ? 'PATCH' : 'POST')}><Campo nome="nome" rotulo="Nome do salão" valor={salao?.nome} /><Campo nome="email" rotulo="E-mail" tipo="email" valor={salao?.email} /><Campo nome="telefone" rotulo="Telefone" valor={salao?.telefone} /><button className="botao-enviar">{salao ? 'Salvar alterações' : 'Criar salão'} <span>→</span></button></form></>; }
+  if (secao === 'salao') { const salao = dados.salao; return <><p className="sobretitulo">{salao ? 'Informações gerais' : 'Primeiro passo'}</p><h1>{salao ? 'Dados do seu salão.' : 'Vamos criar seu salão.'}</h1><form className="formulario-salao" onSubmit={(evento) => propriedades.enviarFormulario(evento, salao ? '/saloes/atual' : '/saloes', salao ? 'PATCH' : 'POST')}><Campo nome="nome" rotulo="Nome do salão" valor={salao?.nome} /><Campo nome="email" rotulo="E-mail" tipo="email" valor={salao?.email} /><Campo nome="telefone" rotulo="Telefone" valor={salao?.telefone} /><button className="botao-enviar">{salao ? 'Salvar alterações' : 'Criar salão'} <span>→</span></button></form></>; }
+  if (secao === 'configuracoes') return <Configuracoes excluirConta={propriedades.excluirConta} salao={dados.salao} />;
   if (secao === 'filiais') return <Filiais dados={dados} {...propriedades} />;
   if (secao === 'servicos') return <Servicos dados={dados} {...propriedades} />;
   if (secao === 'funcionarios') return <Funcionarios dados={dados} {...propriedades} />;
   if (secao === 'clientes') return <><p className="sobretitulo">Relacionamento</p><h1>Clientes que já passaram por aqui.</h1><ListaSimples itens={dados.clientes} campo="nome" vazio="Os clientes aparecerão após os primeiros agendamentos." /></>;
   return <Agenda dados={dados} {...propriedades} />;
+}
+
+function Configuracoes({ excluirConta, salao }) {
+  const [confirmacao, definirConfirmacao] = useState('');
+  const [excluindo, definirExcluindo] = useState(false);
+  const podeExcluir = confirmacao === 'EXCLUIR MINHA CONTA';
+
+  async function confirmarExclusao() {
+    if (!podeExcluir || !window.confirm('Esta ação é irreversível. Deseja excluir a conta e todos os dados do salão?')) return;
+    definirExcluindo(true);
+    const excluida = await excluirConta();
+    if (!excluida) definirExcluindo(false);
+  }
+
+  return <><p className="sobretitulo">Configurações</p><h1>Sua conta.</h1><section className="zona-perigo"><div><strong>Excluir conta permanentemente</strong><p>Isso remove o salão, filiais, profissionais, serviços, horários, agendamentos, pagamentos e o acesso da conta. Não é possível desfazer.</p>{salao?.email && <small>Conta: {salao.email}</small>}</div><label className="campo-formulario"><span>Digite <b>EXCLUIR MINHA CONTA</b> para confirmar</span><input disabled={excluindo} onChange={(evento) => definirConfirmacao(evento.target.value)} value={confirmacao} /></label><button className="botao-perigo" disabled={!podeExcluir || excluindo} onClick={confirmarExclusao} type="button">{excluindo ? 'Excluindo conta...' : 'Excluir minha conta'}</button></section></>;
 }
 
 function Dashboard({ dados, filtrosDashboard, definirFiltrosDashboard }) {

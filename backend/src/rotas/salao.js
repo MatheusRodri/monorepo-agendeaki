@@ -1,7 +1,7 @@
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
-import { obterClienteSupabase } from '../configuracoes/supabase.js';
+import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { sincronizarUsuario } from '../servicos/usuarios.js';
 
 const roteadorSalao = Router();
@@ -34,7 +34,8 @@ async function obterAdministradorAutenticado(requisicao, resposta) {
       return null;
     }
     console.info('[Autenticação salão] Usuário autenticado.', { rota: requisicao.originalUrl, idUsuario: dadosUsuario.user.id });
-    return sincronizarUsuario({ email: dadosUsuario.user.email, idAutenticacaoExterna: dadosUsuario.user.id, nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email, perfil: 'ADMIN_SALAO' });
+    const administrador = await sincronizarUsuario({ email: dadosUsuario.user.email, idAutenticacaoExterna: dadosUsuario.user.id, nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email, perfil: 'ADMIN_SALAO' });
+    return { ...administrador, idAutenticacaoExterna: dadosUsuario.user.id };
   } catch (erro) {
     console.error('[Autenticação salão] Falha inesperada.', { rota: requisicao.originalUrl, mensagem: erro.message });
     resposta.status(500).json({ mensagem: erro.message });
@@ -192,6 +193,62 @@ async function atualizarSalao(requisicao, resposta) {
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do salão.' }); return; }
   await bancoDeDados.query('UPDATE tb_salao SET nm_salao = :nome, ds_email = :email, nu_telefone = :telefone WHERE id_salao = :idSalao', { replacements: { idSalao: salao.idSalao, nome: nome.trim(), email: email?.trim() || null, telefone: telefone?.trim() || null } });
   resposta.status(200).json({ mensagem: 'Informações do salão atualizadas.' });
+}
+
+async function excluirConta(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta);
+  if (!administrador) return;
+
+  let clienteAdministrativo;
+  try {
+    clienteAdministrativo = obterClienteAdministrativoSupabase();
+  } catch (erro) {
+    resposta.status(503).json({ mensagem: erro.message });
+    return;
+  }
+
+  const transacao = await bancoDeDados.transaction();
+  try {
+    const saloes = await bancoDeDados.query(
+      'SELECT id_salao AS idSalao FROM tb_salao WHERE fk_usuario_administrador = :idUsuario',
+      { replacements: administrador, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    const idsSaloes = saloes.map((salao) => salao.idSalao);
+    const unidades = idsSaloes.length
+      ? await bancoDeDados.query('SELECT id_unidade AS idUnidade FROM tb_unidade WHERE fk_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao, type: QueryTypes.SELECT })
+      : [];
+    const idsUnidades = unidades.map((unidade) => unidade.idUnidade);
+    const condicoesAgendamento = ['fk_usuario = :idUsuario'];
+    if (idsUnidades.length) condicoesAgendamento.push('fk_unidade IN (:idsUnidades)');
+    const agendamentos = await bancoDeDados.query(
+      `SELECT id_agendamento AS idAgendamento FROM tb_agendamento WHERE ${condicoesAgendamento.join(' OR ')}`,
+      { replacements: { idUsuario: administrador.idUsuario, idsUnidades }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    const idsAgendamentos = agendamentos.map((agendamento) => agendamento.idAgendamento);
+
+    await bancoDeDados.query('UPDATE tb_agendamento SET fk_usuario_cancelamento = NULL WHERE fk_usuario_cancelamento = :idUsuario', { replacements: administrador, transaction: transacao });
+    if (idsAgendamentos.length) {
+      await bancoDeDados.query('DELETE FROM tb_pagamento WHERE fk_agendamento IN (:idsAgendamentos)', { replacements: { idsAgendamentos }, transaction: transacao });
+      await bancoDeDados.query('DELETE FROM tb_agendamento WHERE id_agendamento IN (:idsAgendamentos)', { replacements: { idsAgendamentos }, transaction: transacao });
+    }
+    if (idsUnidades.length) {
+      await bancoDeDados.query('DELETE FROM tb_funcionario WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
+      await bancoDeDados.query('DELETE FROM tb_servico WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
+      await bancoDeDados.query('DELETE FROM tb_unidade WHERE id_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
+    }
+    if (idsSaloes.length) await bancoDeDados.query('DELETE FROM tb_salao WHERE id_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao });
+    await bancoDeDados.query('DELETE FROM tb_usuario WHERE id_usuario = :idUsuario', { replacements: administrador, transaction: transacao });
+
+    const { error: erroSupabase } = await clienteAdministrativo.auth.admin.deleteUser(administrador.idAutenticacaoExterna);
+    if (erroSupabase) throw new Error('Não foi possível excluir a conta no Supabase. Nenhum dado local foi removido.');
+
+    await transacao.commit();
+    resposta.status(200).json({ mensagem: 'Conta e todos os dados vinculados foram excluídos.' });
+  } catch (erro) {
+    await transacao.rollback();
+    console.error('[Exclusão de conta] Falha ao excluir conta.', { idUsuario: administrador.idUsuario, mensagem: erro.message });
+    resposta.status(500).json({ mensagem: erro.message });
+  }
 }
 
 async function listarFiliais(requisicao, resposta) {
@@ -434,7 +491,7 @@ async function indicadores(requisicao, resposta) {
 
 roteadorSalao.get('/enderecos/:cep', consultarCep);
 roteadorSalao.get('/coordenadas', consultarCoordenadasFilial);
-roteadorSalao.post('/saloes', criarSalao); roteadorSalao.get('/saloes/atual', consultarSalao); roteadorSalao.patch('/saloes/atual', atualizarSalao);
+roteadorSalao.post('/saloes', criarSalao); roteadorSalao.get('/saloes/atual', consultarSalao); roteadorSalao.patch('/saloes/atual', atualizarSalao); roteadorSalao.delete('/conta', excluirConta);
 roteadorSalao.get('/filiais', listarFiliais); roteadorSalao.post('/filiais', (requisicao, resposta) => salvarFilial(requisicao, resposta)); roteadorSalao.patch('/filiais/:idUnidade', (requisicao, resposta) => salvarFilial(requisicao, resposta, Number(requisicao.params.idUnidade))); roteadorSalao.delete('/filiais/:idUnidade', excluirFilial);
 roteadorSalao.post('/servicos', criarServico); roteadorSalao.get('/servicos', listarServicos); roteadorSalao.patch('/servicos/:idServico', atualizarServico); roteadorSalao.delete('/servicos/:idServico', excluirServico);
 roteadorSalao.post('/funcionarios', criarFuncionario); roteadorSalao.get('/funcionarios', listarFuncionarios); roteadorSalao.patch('/funcionarios/:idFuncionario', atualizarFuncionario); roteadorSalao.delete('/funcionarios/:idFuncionario', excluirFuncionario);

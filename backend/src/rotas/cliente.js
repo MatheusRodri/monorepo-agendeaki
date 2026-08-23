@@ -1,7 +1,7 @@
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
-import { obterClienteSupabase } from '../configuracoes/supabase.js';
+import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { sincronizarUsuario } from '../servicos/usuarios.js';
 
 const roteadorCliente = Router();
@@ -34,12 +34,13 @@ async function obterClienteAutenticado(requisicao, resposta) {
       return null;
     }
 
-    return sincronizarUsuario({
+    const cliente = await sincronizarUsuario({
       email: dadosUsuario.user.email,
       idAutenticacaoExterna: dadosUsuario.user.id,
       nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email,
       perfil: 'CLIENTE',
     });
+    return { ...cliente, idAutenticacaoExterna: dadosUsuario.user.id };
   } catch (erro) {
     resposta.status(500).json({ mensagem: erro.message });
     return null;
@@ -446,12 +447,64 @@ async function atualizarAgendamento(requisicao, resposta) {
   } catch (erro) { await transacao.rollback(); resposta.status(400).json({ mensagem: erro.message }); }
 }
 
+async function excluirConta(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+
+  let clienteAdministrativo;
+  try {
+    clienteAdministrativo = obterClienteAdministrativoSupabase();
+  } catch (erro) {
+    resposta.status(503).json({ mensagem: erro.message });
+    return;
+  }
+
+  const transacao = await bancoDeDados.transaction();
+  try {
+    const agendamentos = await bancoDeDados.query(
+      'SELECT id_agendamento AS idAgendamento FROM tb_agendamento WHERE fk_usuario = :idUsuario',
+      { replacements: cliente, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    const idsAgendamentos = agendamentos.map((agendamento) => agendamento.idAgendamento);
+
+    await bancoDeDados.query(
+      'UPDATE tb_agendamento SET fk_usuario_cancelamento = NULL WHERE fk_usuario_cancelamento = :idUsuario',
+      { replacements: cliente, transaction: transacao },
+    );
+    if (idsAgendamentos.length) {
+      await bancoDeDados.query(
+        'DELETE FROM tb_pagamento WHERE fk_agendamento IN (:idsAgendamentos)',
+        { replacements: { idsAgendamentos }, transaction: transacao },
+      );
+      await bancoDeDados.query(
+        'DELETE FROM tb_agendamento WHERE id_agendamento IN (:idsAgendamentos)',
+        { replacements: { idsAgendamentos }, transaction: transacao },
+      );
+    }
+    await bancoDeDados.query(
+      'DELETE FROM tb_usuario WHERE id_usuario = :idUsuario',
+      { replacements: cliente, transaction: transacao },
+    );
+
+    const { error: erroSupabase } = await clienteAdministrativo.auth.admin.deleteUser(cliente.idAutenticacaoExterna);
+    if (erroSupabase) throw new Error('Não foi possível excluir a conta no Supabase. Nenhum dado local foi removido.');
+
+    await transacao.commit();
+    resposta.status(200).json({ mensagem: 'Conta, agendamentos e dados vinculados foram excluídos.' });
+  } catch (erro) {
+    await transacao.rollback();
+    console.error('[Exclusão de conta cliente] Falha ao excluir conta.', { idUsuario: cliente.idUsuario, mensagem: erro.message });
+    resposta.status(500).json({ mensagem: erro.message });
+  }
+}
+
 roteadorCliente.get('/saloes-proximos', listarSaloesProximos);
 roteadorCliente.get('/sugestoes-saloes', sugerirSaloes);
 roteadorCliente.get('/saloes/:idUnidade/servicos', listarServicosSalao);
 roteadorCliente.post('/agendamentos', criarAgendamento);
 roteadorCliente.patch('/agendamentos/:idAgendamento', atualizarAgendamento);
 roteadorCliente.patch('/agendamentos/:idAgendamento/cancelar', cancelarAgendamento);
+roteadorCliente.delete('/conta', excluirConta);
 roteadorCliente.get('/agendamentos/futuros', (requisicao, resposta) => listarAgendamentos(requisicao, resposta, 'futuros'));
 roteadorCliente.get('/agendamentos/historico', (requisicao, resposta) => listarAgendamentos(requisicao, resposta, 'historico'));
 

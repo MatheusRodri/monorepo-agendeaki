@@ -2449,6 +2449,47 @@ h1 em {
   color: #b33c48;
 }
 
+.zona-perigo {
+  background: color-mix(in srgb, #b33c48 8%, var(--cartao));
+  border: 1px solid color-mix(in srgb, #b33c48 45%, var(--borda));
+  border-radius: 15px;
+  display: grid;
+  gap: 1rem;
+  max-width: 680px;
+  padding: 1.2rem;
+}
+
+.zona-perigo strong,
+.zona-perigo .campo-formulario span {
+  color: #a62f3d;
+}
+
+.zona-perigo p,
+.zona-perigo small {
+  color: var(--texto-suave);
+  display: block;
+  font-size: .84rem;
+  line-height: 1.5;
+  margin: .4rem 0 0;
+}
+
+.zona-perigo .botao-perigo {
+  background: #b33c48;
+  border: 1px solid #b33c48;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font-size: .8rem;
+  font-weight: 700;
+  justify-self: start;
+  padding: .7rem .9rem;
+}
+
+.zona-perigo .botao-perigo:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
 .acoes-formulario {
   grid-column: 1 / -1;
 }
