@@ -1,0 +1,100 @@
+@media (max-width: 780px) {
+  .cabecalho-area {
+    min-height: 68px;
+  }
+
+  .cabecalho-area nav {
+    gap: .8rem;
+    margin-right: .9rem;
+  }
+
+  .cabecalho-area nav a {
+    font-size: .69rem;
+  }
+
+  .area-cliente__conteudo {
+    display: block;
+    height: auto;
+  }
+
+  .painel-exploracao {
+    border-bottom: 1px solid var(--borda);
+    border-right: 0;
+    max-height: none;
+  }
+
+  .mapa-area,
+  .mapa-saloes {
+    min-height: 460px;
+  }
+
+  .grade-servicos {
+    grid-template-columns: 1fr;
+  }
+
+  .cartao-agendamento-lista {
+    grid-template-columns: 52px 1fr;
+  }
+
+  .cartao-agendamento-lista>strong {
+    grid-column: 2;
+  }
+
+  .detalhe-salao {
+    bottom: 1rem;
+    left: 1rem;
+    right: 1rem;
+    max-width: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .cabecalho-area {
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .55rem;
+    padding-inline: 1rem;
+  }
+
+  .cabecalho-area nav {
+    display: flex;
+    flex-basis: 100%;
+    gap: 1rem;
+    justify-content: space-between;
+    margin: 0;
+    overflow-x: auto;
+    padding-bottom: .25rem;
+    white-space: nowrap;
+  }
+
+  .mapa-area,
+  .mapa-saloes {
+    min-height: 320px;
+  }
+
+  .painel-exploracao {
+    padding: 1.8rem 1rem;
+  }
+
+  .painel-exploracao h1,
+  .conteudo-servicos h1,
+  .conteudo-agendamentos h1,
+  .conteudo-formulario-cliente h1 {
+    font-size: 2.1rem;
+  }
+
+  .conteudo-servicos,
+  .conteudo-agendamentos {
+    padding-block: 2.5rem;
+  }
+
+  .cartao-servico__rodape {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .profissionais-servico a {
+    text-align: left;
+  }
+}
+

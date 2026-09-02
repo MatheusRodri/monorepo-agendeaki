@@ -1,0 +1,120 @@
+.recursos {
+  padding-block: 7rem;
+}
+
+.titulo-secao {
+  display: grid;
+  gap: 1.1rem;
+  grid-template-columns: .75fr 1.25fr;
+  margin-bottom: 2.8rem;
+}
+
+.titulo-secao .sobretitulo {
+  margin: .65rem 0 0;
+}
+
+.titulo-secao h2,
+.chamada-salao h2 {
+  color: var(--ameixa);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(2.15rem, 3.6vw, 3.35rem);
+  line-height: 1.05;
+  margin: 0;
+  max-width: 650px;
+}
+
+.grade-recursos {
+  display: grid;
+  gap: 1.15rem;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.cartao-informacao {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 18px;
+  min-height: 210px;
+  padding: 1.55rem;
+  transition: box-shadow .2s ease, transform .2s ease;
+}
+
+.cartao-informacao:hover {
+  box-shadow: var(--sombra);
+  transform: translateY(-5px);
+}
+
+.cartao-informacao__icone {
+  align-items: center;
+  background: var(--creme);
+  border-radius: 50%;
+  color: var(--coral);
+  display: flex;
+  font-size: 1.35rem;
+  height: 43px;
+  justify-content: center;
+  margin-bottom: 2.5rem;
+  width: 43px;
+}
+
+.cartao-informacao h3 {
+  color: var(--ameixa);
+  font-size: 1rem;
+  letter-spacing: -.02em;
+  margin-bottom: .55rem;
+}
+
+.cartao-informacao p {
+  color: var(--texto-suave);
+  font-size: .86rem;
+  line-height: 1.55;
+  margin-bottom: 0;
+}
+
+.chamada-salao {
+  background: var(--fundo-chamada-salao);
+  padding-block: 4.5rem;
+}
+
+.chamada-salao__conteudo {
+  align-items: center;
+  display: flex;
+  gap: 2rem;
+  justify-content: space-between;
+}
+
+.chamada-salao .sobretitulo {
+  color: #f5b0a7;
+}
+
+.chamada-salao h2 {
+  color: var(--texto-chamada-salao);
+  font-size: clamp(2rem, 3.5vw, 3rem);
+  max-width: 710px;
+}
+
+.chamada-salao .botao-navegacao {
+  flex: 0 0 auto;
+}
+
+.rodape {
+  align-items: center;
+  color: var(--texto-suave);
+  display: flex;
+  font-size: .8rem;
+  justify-content: space-between;
+  min-height: 100px;
+}
+
+.rodape p {
+  margin: 0;
+}
+
+.marca--rodape {
+  font-size: 1rem;
+}
+
+.marca--rodape .marca__simbolo {
+  height: 25px;
+  width: 25px;
+}
+

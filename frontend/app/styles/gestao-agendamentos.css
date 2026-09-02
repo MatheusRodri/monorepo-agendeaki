@@ -1,0 +1,81 @@
+.lista-agendamentos-salao {
+  display: grid;
+  gap: .8rem;
+  max-width: 760px;
+}
+
+.cartao-agendamento-salao {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 15px;
+  padding: 1rem 1.1rem;
+}
+
+.cartao-agendamento-salao__cabecalho {
+  align-items: start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.cartao-agendamento-salao__cabecalho strong,
+.cartao-agendamento-salao__cabecalho span {
+  display: block;
+}
+
+.cartao-agendamento-salao__cabecalho strong {
+  color: var(--ameixa);
+}
+
+.cartao-agendamento-salao__cabecalho div>span {
+  color: var(--texto-suave);
+  font-size: .76rem;
+  margin-top: .2rem;
+}
+
+.cartao-agendamento-salao dl {
+  border-top: 1px solid var(--borda);
+  display: grid;
+  gap: .65rem 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: .9rem 0 0;
+  padding-top: .85rem;
+}
+
+.cartao-agendamento-salao dt {
+  color: var(--texto-suave);
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.cartao-agendamento-salao dd {
+  color: var(--texto);
+  font-size: .78rem;
+  line-height: 1.4;
+  margin: .16rem 0 0;
+}
+
+.selo-status {
+  border-radius: 999px;
+  font-size: .68rem !important;
+  font-weight: 700;
+  padding: .3rem .55rem;
+  white-space: nowrap;
+}
+
+.selo-status--agendado {
+  background: #e8edf8;
+  color: #395692 !important;
+}
+
+.selo-status--realizado {
+  background: #e0f2e8;
+  color: #28714c !important;
+}
+
+.selo-status--cancelado {
+  background: #f9e1e3;
+  color: #a23846 !important;
+}
+

@@ -1,0 +1,129 @@
+@media (max-width: 820px) {
+  .navegacao-principal {
+    display: none;
+  }
+
+  .apresentacao__conteudo {
+    gap: 2.5rem;
+    grid-template-columns: 1fr;
+    padding-block: 2.5rem 5rem;
+  }
+
+  .apresentacao__texto {
+    text-align: center;
+  }
+
+  .selo {
+    margin-inline: auto;
+  }
+
+  .apresentacao__descricao {
+    margin-inline: auto;
+  }
+
+  .apresentacao__acoes {
+    justify-content: center;
+  }
+
+  .composicao-visual {
+    min-height: 350px;
+  }
+
+  .titulo-secao {
+    grid-template-columns: 1fr;
+  }
+
+  .titulo-secao .sobretitulo {
+    margin: 0;
+  }
+
+  .grade-recursos {
+    grid-template-columns: 1fr;
+  }
+
+  .cartao-informacao {
+    min-height: 0;
+  }
+
+  .cartao-informacao__icone {
+    margin-bottom: 1.4rem;
+  }
+
+  .chamada-salao__conteudo {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .rodape {
+    flex-direction: column;
+    justify-content: center;
+    gap: .7rem;
+  }
+}
+
+@media (max-width: 520px) {
+  .conteudo-limitado {
+    width: min(100% - 32px, 1120px);
+  }
+
+  .cabecalho {
+    min-height: 76px;
+  }
+
+  .marca {
+    font-size: 1.1rem;
+  }
+
+  .marca__simbolo {
+    height: 27px;
+    width: 27px;
+  }
+
+  .alternador-tema__texto {
+    display: none;
+  }
+
+  .alternador-tema {
+    padding: .36rem;
+  }
+
+  .apresentacao {
+    min-height: auto;
+  }
+
+  .apresentacao__conteudo {
+    padding-block: 2.2rem 4.5rem;
+  }
+
+  .apresentacao__acoes {
+    flex-direction: column;
+  }
+
+  .botao-navegacao {
+    width: 100%;
+  }
+
+  .cartao-agendamento {
+    padding: 1.2rem;
+    transform: rotate(1.5deg);
+    width: min(100%, 335px);
+  }
+
+  .selo-flutuante {
+    bottom: 2%;
+    left: 3%;
+  }
+
+  .brilho--um {
+    right: -2%;
+  }
+
+  .recursos {
+    padding-block: 4.5rem;
+  }
+
+  .chamada-salao {
+    padding-block: 3.5rem;
+  }
+}
+

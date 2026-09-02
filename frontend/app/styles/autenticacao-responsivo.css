@@ -1,0 +1,49 @@
+@media (max-width: 760px) {
+  .pagina-autenticacao {
+    display: block;
+  }
+
+  .pagina-autenticacao__painel {
+    min-height: 250px;
+    padding: 1.5rem 1.5rem 2.5rem;
+  }
+
+  .pagina-autenticacao__texto {
+    margin: auto 0 0;
+  }
+
+  .pagina-autenticacao__icone,
+  .pagina-autenticacao__texto .sobretitulo,
+  .pagina-autenticacao__texto>p:last-of-type {
+    display: none;
+  }
+
+  .pagina-autenticacao__texto h1 {
+    font-size: clamp(2.15rem, 9vw, 3.25rem);
+    margin: 2.6rem 0 0;
+    max-width: 430px;
+  }
+
+  .pagina-autenticacao__formulario {
+    min-height: calc(100vh - 250px);
+    padding: 2.6rem 1.5rem;
+  }
+
+  .voltar-home {
+    display: none;
+  }
+
+  .pagina-autenticacao__detalhe--um {
+    height: 260px;
+    right: -115px;
+    top: 23px;
+    width: 260px;
+  }
+
+  .pagina-autenticacao__detalhe--dois {
+    height: 130px;
+    left: -58px;
+    width: 130px;
+  }
+}
+

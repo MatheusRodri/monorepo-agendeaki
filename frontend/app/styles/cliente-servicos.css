@@ -1,0 +1,155 @@
+.pagina-servicos,
+.pagina-agendamentos {
+  min-height: 100vh;
+}
+
+.conteudo-servicos,
+.conteudo-agendamentos {
+  padding-block: 3.5rem 5rem;
+}
+
+.conteudo-servicos .voltar-home {
+  margin-bottom: 2rem;
+}
+
+.grade-servicos {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 2rem;
+}
+
+.cartao-servico {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 18px;
+  display: grid;
+  gap: .8rem;
+  grid-template-columns: 46px 1fr;
+  padding: 1.25rem;
+}
+
+.cartao-servico__icone {
+  align-items: center;
+  background: var(--creme);
+  border-radius: 12px;
+  color: var(--coral);
+  display: flex;
+  font-size: 1.1rem;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+
+.cartao-servico h2,
+.cartao-agendamento-lista h2 {
+  color: var(--ameixa);
+  font-size: 1rem;
+  margin-bottom: .35rem;
+}
+
+.cartao-servico p {
+  color: var(--texto-suave);
+  font-size: .78rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.cartao-servico__rodape {
+  border-top: 1px solid var(--borda);
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  margin-top: .35rem;
+  padding-top: .85rem;
+}
+
+.cartao-servico__rodape>span strong,
+.cartao-servico__rodape>span small {
+  display: block;
+}
+
+.cartao-servico__rodape strong {
+  color: var(--coral-escuro);
+  font-size: .88rem;
+}
+
+.cartao-servico__rodape small {
+  color: var(--texto-suave);
+  font-size: .68rem;
+  margin-top: .15rem;
+}
+
+.profissionais-servico {
+  display: grid;
+  gap: .3rem;
+}
+
+.profissionais-servico a {
+  color: var(--ameixa);
+  font-size: .72rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.profissionais-servico a:hover {
+  color: var(--coral);
+}
+
+.pagina-formulario-cliente {
+  background: linear-gradient(135deg, var(--fundo), var(--creme));
+  min-height: 100vh;
+  padding: clamp(2rem, 7vw, 6rem) 1.5rem;
+}
+
+.conteudo-formulario-cliente {
+  margin-inline: auto;
+  max-width: 560px;
+}
+
+.conteudo-formulario-cliente>p:not(.sobretitulo) {
+  color: var(--texto-suave);
+  line-height: 1.65;
+  margin-bottom: 2rem;
+}
+
+.formulario-agendamento {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 18px;
+  padding: 1.4rem;
+}
+
+.campo-formulario textarea {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 11px;
+  color: var(--texto);
+  min-height: 105px;
+  outline: none;
+  padding: .75rem .9rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.campo-formulario textarea:focus {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--coral) 17%, transparent);
+}
+
+.campo-formulario small {
+  color: var(--texto-suave);
+  font-weight: 500;
+}
+
+.link-proximos {
+  color: var(--coral-escuro);
+  display: block;
+  font-size: .82rem;
+  font-weight: 700;
+  margin-top: 1.2rem;
+  text-align: center;
+}
+

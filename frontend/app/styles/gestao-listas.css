@@ -1,0 +1,149 @@
+.secao-painel {
+  margin-top: 2rem;
+}
+
+.secao-painel h2 {
+  margin: 0 0 .8rem;
+}
+
+.cabecalho-lista {
+  border-top: 1px solid var(--borda);
+  margin-top: 2.4rem;
+  padding-top: 1.35rem;
+}
+
+.cabecalho-lista h2 {
+  margin: 0;
+}
+
+.cabecalho-lista p {
+  color: var(--texto-suave);
+  font-size: .8rem;
+  margin: .3rem 0 1rem;
+}
+
+.grade-gestao {
+  display: grid;
+  gap: .75rem;
+  max-width: 760px;
+}
+
+.cartao-gestao {
+  align-items: center;
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 1rem;
+}
+
+.cartao-gestao strong,
+.cartao-gestao span,
+.cartao-gestao small {
+  display: block;
+}
+
+.cartao-gestao strong {
+  color: var(--ameixa);
+  font-size: .95rem;
+}
+
+.cartao-gestao span {
+  color: var(--texto-suave);
+  font-size: .78rem;
+  margin-top: .25rem;
+}
+
+.cartao-gestao small {
+  color: var(--texto-suave);
+  font-size: .74rem;
+  line-height: 1.45;
+  margin-top: .35rem;
+}
+
+.acoes-gestao,
+.acoes-formulario {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.acoes-gestao button,
+.botao-secundario {
+  background: transparent;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  color: var(--ameixa);
+  cursor: pointer;
+  font-size: .75rem;
+  font-weight: 700;
+  padding: .55rem .7rem;
+}
+
+.acoes-gestao button:hover,
+.botao-secundario:hover {
+  border-color: var(--coral);
+  color: var(--coral-escuro);
+}
+
+.acoes-gestao .botao-perigo {
+  color: #b33c48;
+}
+
+.zona-perigo {
+  background: color-mix(in srgb, #b33c48 8%, var(--cartao));
+  border: 1px solid color-mix(in srgb, #b33c48 45%, var(--borda));
+  border-radius: 15px;
+  display: grid;
+  gap: 1rem;
+  max-width: none;
+  padding: 1.2rem;
+  width: 100%;
+}
+
+.zona-perigo strong,
+.zona-perigo .campo-formulario span {
+  color: #a62f3d;
+}
+
+.zona-perigo p,
+.zona-perigo small {
+  color: var(--texto-suave);
+  display: block;
+  font-size: .84rem;
+  line-height: 1.5;
+  margin: .4rem 0 0;
+}
+
+.zona-perigo .botao-perigo {
+  background: #b33c48;
+  border: 1px solid #b33c48;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font-size: .8rem;
+  font-weight: 700;
+  justify-self: start;
+  padding: .7rem .9rem;
+}
+
+.zona-perigo .botao-perigo:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.acoes-formulario {
+  grid-column: 1 / -1;
+}
+
+.acoes-formulario .botao-enviar {
+  flex: 1;
+}
+
+.formulario-salao .acoes-formulario .botao-enviar {
+  grid-column: auto;
+}
+

@@ -1,0 +1,62 @@
+/* Gestão do salão */
+.filtros-dashboard {
+  align-items: end;
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 16px;
+  display: grid;
+  gap: .85rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  margin: 0 0 1rem;
+  padding: 1rem;
+}
+
+.filtros-dashboard .campo-formulario {
+  gap: .35rem;
+  margin: 0;
+}
+
+.filtros-dashboard input,
+.filtros-dashboard select {
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: 9px;
+  color: var(--texto);
+  min-height: 42px;
+  padding: .55rem .65rem;
+  width: 100%;
+}
+
+.grade-indicadores--tres {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.indicador {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 16px;
+  padding: 1.3rem;
+}
+
+.indicador span,
+.indicador strong {
+  display: block;
+}
+
+.indicador span {
+  color: var(--texto-suave);
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.indicador strong {
+  color: var(--coral-escuro);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(1.55rem, 2.5vw, 2.15rem);
+  margin-top: .4rem;
+}
+
+.indicador--neutra strong {
+  color: var(--ameixa);
+}
+
