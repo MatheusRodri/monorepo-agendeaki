@@ -1,46 +1,24 @@
 'use client';
 
-import Link from 'next/link';
-import { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
-import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
+import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { requisitarApi } from '../../utils/api';
 
 export default function FormularioAgendamento() {
   const parametros = useSearchParams();
-  const [dataHoraInicio, definirDataHoraInicio] = useState('');
-  const [observacao, definirObservacao] = useState('');
-  const [mensagem, definirMensagem] = useState('');
-  const [tipoMensagem, definirTipoMensagem] = useState('sucesso');
-  const [enviando, definirEnviando] = useState(false);
+  const roteador = useRouter();
+  const [mensagem, definirMensagem] = useState('Abrindo a agenda da filial...');
 
-  async function criarAgendamento(evento) {
-    evento.preventDefault();
-    definirEnviando(true);
-    definirMensagem('');
+  useEffect(() => {
+    const idUnidade = parametros.get('idUnidade');
+    if (!idUnidade) { definirMensagem('Informe uma filial para iniciar o agendamento.'); return; }
+    requisitarApi(`/api/publico/agendamento/unidade/${idUnidade}`).then((dados) => {
+      const destino = new URLSearchParams();
+      if (parametros.get('idServico')) destino.set('servico', parametros.get('idServico'));
+      if (parametros.get('idFuncionario')) destino.set('profissional', parametros.get('idFuncionario'));
+      roteador.replace(`${dados.caminho}${destino.size ? `?${destino}` : ''}`);
+    }).catch((erro) => definirMensagem(erro.message));
+  }, [parametros, roteador]);
 
-    try {
-      await requisitarApi('/api/clientes/agendamentos', {
-        dados: {
-          idUnidade: parametros.get('idUnidade'),
-          idServico: parametros.get('idServico'),
-          idFuncionario: parametros.get('idFuncionario'),
-          dataHoraInicio,
-          observacao,
-        },
-        metodo: 'POST',
-      });
-      definirMensagem('Agendamento confirmado! Veja seus próximos horários.');
-      definirTipoMensagem('sucesso');
-    } catch (erro) {
-      definirMensagem(erro.message);
-      definirTipoMensagem('erro');
-    } finally {
-      definirEnviando(false);
-    }
-  }
-
-  return (
-    <main className="pagina-formulario-cliente"><CabecalhoCliente secao="agendamentos" /><div className="conteudo-formulario-cliente"><Link className="voltar-home" href="/cliente/inicio">← Voltar para salões</Link><p className="sobretitulo">Reserve seu momento</p><h1>Escolha o melhor horário para você.</h1><p>Confirme a data desejada. Nós verificaremos a disponibilidade do profissional antes de reservar.</p><form className="formulario-agendamento" onSubmit={criarAgendamento}><label className="campo-formulario" htmlFor="dataHoraInicio"><span>Data e horário</span><input id="dataHoraInicio" min={new Date().toISOString().slice(0, 16)} onChange={(evento) => definirDataHoraInicio(evento.target.value)} required type="datetime-local" value={dataHoraInicio} /></label><label className="campo-formulario" htmlFor="observacao"><span>Alguma observação? <small>Opcional</small></span><textarea id="observacao" maxLength="500" onChange={(evento) => definirObservacao(evento.target.value)} placeholder="Conte ao profissional algo importante para o atendimento." value={observacao} /></label>{mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`}>{mensagem}</p>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Confirmando...' : 'Confirmar agendamento'} <span>→</span></button></form>{mensagem.startsWith('Agendamento confirmado') && <Link className="link-proximos" href="/cliente/agendamentos">Ver meus agendamentos →</Link>}</div></main>
-  );
+  return <main className="pagina-formulario-cliente"><p className="estado-lista">{mensagem}</p></main>;
 }

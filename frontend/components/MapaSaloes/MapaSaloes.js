@@ -25,7 +25,7 @@ function criarConteudoPopup(salao) {
   const cep = formatarCep(salao.cep);
   endereco.textContent = [logradouro && `${logradouro}${complemento}`, localidade, cep && `CEP ${cep}`].filter(Boolean).join(' — ');
   const link = document.createElement('a');
-  link.href = `/cliente/saloes/${salao.idUnidade}`;
+  link.href = `/${salao.slugSalao}/${salao.slugFilial}`;
   link.textContent = 'Ver serviços →';
 
   conteudo.append(categoria, nomeUnidade, endereco, link);
