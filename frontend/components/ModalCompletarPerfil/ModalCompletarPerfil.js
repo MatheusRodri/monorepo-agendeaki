@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { dataParaExibicao, dataParaIso, formatarCnpj, formatarCpf, formatarData } from '../../utils/formatadores';
-import { lerRespostaApi, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
 
 export default function ModalCompletarPerfil({ aoConcluir, perfil, rotaApi, tokenAcesso }) {
   const [dados, definirDados] = useState({
@@ -24,9 +24,7 @@ export default function ModalCompletarPerfil({ aoConcluir, perfil, rotaApi, toke
   async function salvar(evento) {
     evento.preventDefault(); definirMensagem(''); definirEnviando(true);
     try {
-      const resposta = await fetch(`${obterUrlApi()}/api/${salao ? 'salao' : 'clientes'}/perfil`, { method: 'PATCH', headers: { Authorization: `Bearer ${tokenAcesso}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...dados, dataNascimento: dataParaIso(dados.dataNascimento) }) });
-      const { dados: respostaDados, mensagem: mensagemResposta } = await lerRespostaApi(resposta);
-      if (!resposta.ok) throw new Error(respostaDados.mensagem ?? mensagemResposta ?? 'Não foi possível salvar seus dados.');
+      const respostaDados = await requisitarApi(`/api/${salao ? 'salao' : 'clientes'}/perfil`, { dados: { ...dados, dataNascimento: dataParaIso(dados.dataNascimento) }, metodo: 'PATCH', tokenAcesso });
       aoConcluir(respostaDados.perfil);
     } catch (erro) { definirMensagem(erro.message); } finally { definirEnviando(false); }
   }

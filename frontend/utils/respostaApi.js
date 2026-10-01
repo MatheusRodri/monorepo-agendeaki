@@ -1,16 +1,3 @@
-export async function lerRespostaApi(resposta) {
-  const tipoConteudo = resposta.headers.get('content-type');
-
-  if (!tipoConteudo?.includes('application/json')) {
-    return {
-      dados: {},
-      mensagem: 'Não foi possível conversar com a API agora. Verifique se o servidor está em execução e tente novamente.',
-    };
-  }
-
-  return { dados: await resposta.json(), mensagem: null };
-}
-
 export function obterUrlApi() {
   const estaEmAmbienteLocal = typeof window !== 'undefined'
     && ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -30,6 +17,8 @@ export function armazenarSessao(tokenAcesso, perfilUsuario) {
 }
 
 export function obterTokenAcesso() {
+  if (typeof window === 'undefined') return null;
+
   return sessionStorage.getItem('tokenAcesso') || localStorage.getItem('tokenAcesso');
 }
 

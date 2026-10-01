@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
 import MapaSaloes from '../MapaSaloes/MapaSaloes';
-import { lerRespostaApi, obterTokenAcesso, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
 
 export default function AreaCliente() {
   const [coordenadas, definirCoordenadas] = useState(null);
@@ -26,8 +26,6 @@ export default function AreaCliente() {
     definirCarregando(true);
     definirMensagem('');
     try {
-      const tokenAcesso = obterTokenAcesso();
-      const urlApi = obterUrlApi();
       const parametros = new URLSearchParams({
         latitude: coordenadas.latitude,
         longitude: coordenadas.longitude,
@@ -35,12 +33,7 @@ export default function AreaCliente() {
         busca: buscaAplicada,
         cidade: cidadeAplicada,
       });
-      const resposta = await fetch(`${urlApi}/api/clientes/saloes-proximos?${parametros}`, {
-        headers: tokenAcesso ? { Authorization: `Bearer ${tokenAcesso}` } : {},
-      });
-      const { dados: dadosResposta, mensagem: mensagemResposta } = await lerRespostaApi(resposta);
-
-      if (!resposta.ok) throw new Error(dadosResposta.mensagem ?? mensagemResposta ?? 'Não foi possível buscar os salões.');
+      const dadosResposta = await requisitarApi('/api/clientes/saloes-proximos', { parametros });
 
       definirSaloes(dadosResposta.saloes);
       definirCoordenadasMapa(dadosResposta.centroBusca);
@@ -74,9 +67,8 @@ export default function AreaCliente() {
     const atraso = window.setTimeout(async () => {
       try {
         const parametros = new URLSearchParams({ termo, cidade: cidade.trim() });
-        const resposta = await fetch(`${obterUrlApi()}/api/clientes/sugestoes-saloes?${parametros}`, { headers: { Authorization: `Bearer ${obterTokenAcesso()}` } });
-        const { dados } = await lerRespostaApi(resposta);
-        if (resposta.ok) definirSugestoes(dados.sugestoes ?? []);
+        const dados = await requisitarApi('/api/clientes/sugestoes-saloes', { parametros });
+        definirSugestoes(dados.sugestoes ?? []);
       } catch { definirSugestoes([]); }
     }, 250);
     return () => window.clearTimeout(atraso);

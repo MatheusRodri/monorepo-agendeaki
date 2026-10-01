@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
-import { lerRespostaApi, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
 
 export default function ServicosSalao({ idUnidade }) {
   const [servicos, definirServicos] = useState([]);
@@ -12,13 +12,7 @@ export default function ServicosSalao({ idUnidade }) {
   useEffect(() => {
     async function buscarServicos() {
       try {
-        const tokenAcesso = sessionStorage.getItem('tokenAcesso');
-        const urlApi = obterUrlApi();
-        const resposta = await fetch(`${urlApi}/api/clientes/saloes/${idUnidade}/servicos`, {
-          headers: tokenAcesso ? { Authorization: `Bearer ${tokenAcesso}` } : {},
-        });
-        const { dados: dadosResposta, mensagem: mensagemResposta } = await lerRespostaApi(resposta);
-        if (!resposta.ok) throw new Error(dadosResposta.mensagem ?? mensagemResposta ?? 'Não foi possível carregar os serviços.');
+        const dadosResposta = await requisitarApi(`/api/clientes/saloes/${idUnidade}/servicos`);
         definirServicos(dadosResposta.servicos);
         definirMensagem(dadosResposta.servicos.length ? '' : 'Esta unidade ainda não possui serviços disponíveis.');
       } catch (erro) {

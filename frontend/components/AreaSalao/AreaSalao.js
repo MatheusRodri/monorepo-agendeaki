@@ -8,7 +8,8 @@ import CampoSenha from '../CampoSenha/CampoSenha';
 import FormularioDadosSalao from '../FormularioDadosSalao/FormularioDadosSalao';
 import FormularioFilial from '../FormularioFilial/FormularioFilial';
 import { dataParaExibicao, dataParaIso, formatarCnpj, formatarCpf, formatarData } from '../../utils/formatadores';
-import { limparSessao, lerRespostaApi, obterTokenAcesso, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
+import { limparSessao, obterTokenAcesso } from '../../utils/respostaApi';
 
 const navegacao = [['dashboard', 'Visão geral', '/salao/dashboard'], ['salao', 'Meu salão', '/salao/meu-salao'], ['filiais', 'Filiais', '/salao/filiais'], ['servicos', 'Serviços', '/salao/servicos'], ['funcionarios', 'Profissionais', '/salao/funcionarios'], ['clientes', 'Clientes', '/salao/clientes'], ['agendamentos', 'Agenda', '/salao/agendamentos'], ['configuracoes', 'Configurações', '/salao/configuracoes']];
 const filtrosIniciais = { dataInicio: '', dataFim: '', idUnidade: '', idServico: '', idFuncionario: '' };
@@ -29,11 +30,15 @@ export default function AreaSalao({ secao }) {
   const requisitar = useCallback(async (caminho, opcoes = {}) => {
     const tokenAcesso = obterTokenAcesso();
     if (!tokenAcesso) { limparSessao(); roteador.push('/salao'); throw new Error('Sua sessão não foi encontrada. Faça login novamente.'); }
-    const resposta = await fetch(`${obterUrlApi()}/api/salao${caminho}`, { ...opcoes, headers: { ...(opcoes.body ? { 'Content-Type': 'application/json' } : {}), Authorization: `Bearer ${tokenAcesso}`, ...opcoes.headers } });
-    const { dados: dadosResposta, mensagem: mensagemResposta } = await lerRespostaApi(resposta);
-    if (resposta.status === 401) { limparSessao(); roteador.push('/salao'); throw new Error('Sua sessão expirou. Faça login novamente.'); }
-    if (!resposta.ok) { const erro = new Error(dadosResposta.mensagem ?? mensagemResposta ?? 'Não foi possível concluir a operação.'); erro.status = resposta.status; throw erro; }
-    return dadosResposta;
+    try {
+      return await requisitarApi(`/api/salao${caminho}`, {
+        dados: opcoes.body ? JSON.parse(opcoes.body) : undefined,
+        metodo: opcoes.method,
+      });
+    } catch (erro) {
+      if (erro.status === 401) { limparSessao(); roteador.push('/salao'); throw new Error('Sua sessão expirou. Faça login novamente.'); }
+      throw erro;
+    }
   }, [roteador]);
 
   const carregarDados = useCallback(async () => {

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
-import { lerRespostaApi, obterTokenAcesso, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
 
 export default function FormularioAgendamento() {
   const parametros = useSearchParams();
@@ -20,21 +20,16 @@ export default function FormularioAgendamento() {
     definirMensagem('');
 
     try {
-      const tokenAcesso = obterTokenAcesso();
-      const urlApi = obterUrlApi();
-      const resposta = await fetch(`${urlApi}/api/clientes/agendamentos`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(tokenAcesso ? { Authorization: `Bearer ${tokenAcesso}` } : {}) },
-        body: JSON.stringify({
+      await requisitarApi('/api/clientes/agendamentos', {
+        dados: {
           idUnidade: parametros.get('idUnidade'),
           idServico: parametros.get('idServico'),
           idFuncionario: parametros.get('idFuncionario'),
           dataHoraInicio,
           observacao,
-        }),
+        },
+        metodo: 'POST',
       });
-      const { dados: dadosResposta, mensagem: mensagemResposta } = await lerRespostaApi(resposta);
-      if (!resposta.ok) throw new Error(dadosResposta.mensagem ?? mensagemResposta ?? 'Não foi possível realizar o agendamento.');
       definirMensagem('Agendamento confirmado! Veja seus próximos horários.');
       definirTipoMensagem('sucesso');
     } catch (erro) {

@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { dataParaIso, formatarCnpj, formatarCpf, formatarData } from '../../utils/formatadores';
-import { armazenarSessao, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
+import { armazenarSessao } from '../../utils/respostaApi';
 import CampoSenha from '../CampoSenha/CampoSenha';
 import ModalCompletarPerfil from '../ModalCompletarPerfil/ModalCompletarPerfil';
 import ModalConfirmacaoEmail from '../ModalConfirmacaoEmail/ModalConfirmacaoEmail';
@@ -45,9 +46,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
       ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento: dataParaIso(dadosFormulario.dataNascimento), ...(perfil === 'cliente' ? { cpf: dadosFormulario.cpf } : { tipoDocumento: dadosFormulario.tipoDocumento, documento: dadosFormulario.documento }) }
       : { email: dadosFormulario.email, senha: dadosFormulario.senha };
     try {
-      const resposta = await fetch(`${obterUrlApi()}/api/${configuracao.rotaApi}/${estaNoCadastro ? 'cadastro' : 'login'}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dadosEnvio) });
-      const dadosResposta = resposta.headers.get('content-type')?.includes('application/json') ? await resposta.json() : {};
-      if (!resposta.ok) throw new Error(dadosResposta.mensagem ?? 'Não foi possível concluir a solicitação. Verifique se a API está em execução.');
+      const dadosResposta = await requisitarApi(`/api/${configuracao.rotaApi}/${estaNoCadastro ? 'cadastro' : 'login'}`, { dados: dadosEnvio, metodo: 'POST' });
       if (estaNoCadastro) { definirConfirmarEmail(dadosFormulario.email); return; }
       if (!dadosResposta.tokenAcesso) throw new Error('O login não retornou uma sessão válida.');
       armazenarSessao(dadosResposta.tokenAcesso, perfil);

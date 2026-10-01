@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
 import CampoSenha from '../CampoSenha/CampoSenha';
 import { dataParaExibicao, dataParaIso, formatarCpf, formatarData } from '../../utils/formatadores';
-import { limparSessao, lerRespostaApi, obterTokenAcesso, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
+import { limparSessao } from '../../utils/respostaApi';
 
 export default function ConfiguracoesCliente() {
   const [perfil, definirPerfil] = useState({ nome: '', cpf: '', dataNascimento: '' });
@@ -13,13 +14,11 @@ export default function ConfiguracoesCliente() {
   const [mensagem, definirMensagem] = useState('');
   const [tipoMensagem, definirTipoMensagem] = useState('sucesso');
   const [excluindo, definirExcluindo] = useState(false);
-  const tokenAcesso = () => obterTokenAcesso();
-
   async function requisitar(caminho, opcoes = {}) {
-    const resposta = await fetch(`${obterUrlApi()}/api/clientes${caminho}`, { ...opcoes, headers: { ...(opcoes.body ? { 'Content-Type': 'application/json' } : {}), Authorization: `Bearer ${tokenAcesso()}` } });
-    const { dados, mensagem: mensagemResposta } = await lerRespostaApi(resposta);
-    if (!resposta.ok) throw new Error(dados.mensagem ?? mensagemResposta ?? 'Não foi possível concluir a operação.');
-    return dados;
+    return requisitarApi(`/api/clientes${caminho}`, {
+      dados: opcoes.body ? JSON.parse(opcoes.body) : undefined,
+      metodo: opcoes.method,
+    });
   }
 
   useEffect(() => { requisitar('/perfil').then(({ perfil: dados }) => definirPerfil({ ...dados, cpf: formatarCpf(dados.cpf), dataNascimento: dataParaExibicao(dados.dataNascimento) })).catch((erro) => { definirMensagem(erro.message); definirTipoMensagem('erro'); }); }, []);

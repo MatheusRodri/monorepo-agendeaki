@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { lerRespostaApi, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
 
 const configuracoes = {
   cliente: { caminho: 'cliente', rotaApi: 'clientes', titulo: 'Recupere sua senha.' },
@@ -20,9 +20,7 @@ export default function FormularioRecuperacaoSenha({ perfil }) {
     evento.preventDefault();
     definirEnviando(true); definirMensagem('');
     try {
-      const resposta = await fetch(`${obterUrlApi()}/api/${configuracao.rotaApi}/recuperar-senha`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
-      const { dados, mensagem: mensagemResposta } = await lerRespostaApi(resposta);
-      if (!resposta.ok) throw new Error(dados.mensagem ?? mensagemResposta);
+      const dados = await requisitarApi(`/api/${configuracao.rotaApi}/recuperar-senha`, { dados: { email }, metodo: 'POST' });
       definirTipoMensagem('sucesso'); definirMensagem(dados.mensagem);
     } catch (erro) {
       definirTipoMensagem('erro'); definirMensagem(erro.message);

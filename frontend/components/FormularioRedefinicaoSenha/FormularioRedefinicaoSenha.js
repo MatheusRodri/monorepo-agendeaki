@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import CampoSenha from '../CampoSenha/CampoSenha';
-import { lerRespostaApi, obterUrlApi } from '../../utils/respostaApi';
+import { requisitarApi } from '../../utils/api';
 import { PaginaAcesso } from '../FormularioRecuperacaoSenha/FormularioRecuperacaoSenha';
 
 const configuracoes = {
@@ -37,9 +37,7 @@ export default function FormularioRedefinicaoSenha({ perfil }) {
     if (dadosFormulario.senha !== dadosFormulario.confirmacaoSenha) { definirTipoMensagem('erro'); definirMensagem('As senhas precisam ser iguais.'); return; }
     definirEnviando(true); definirMensagem('');
     try {
-      const resposta = await fetch(`${obterUrlApi()}/api/${configuracao.rotaApi}/redefinir-senha`, { method: 'POST', headers: { Authorization: `Bearer ${tokenAcesso}`, 'Content-Type': 'application/json' }, body: JSON.stringify(dadosFormulario) });
-      const { dados, mensagem: mensagemResposta } = await lerRespostaApi(resposta);
-      if (!resposta.ok) throw new Error(dados.mensagem ?? mensagemResposta);
+      const dados = await requisitarApi(`/api/${configuracao.rotaApi}/redefinir-senha`, { dados: dadosFormulario, metodo: 'POST', tokenAcesso });
       definirTipoMensagem('sucesso'); definirMensagem(dados.mensagem);
       window.setTimeout(() => roteador.replace(`/${configuracao.caminho}`), 1400);
     } catch (erro) {
