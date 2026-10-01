@@ -12,5 +12,6 @@ export const bancoDeDados = new Sequelize(
     port: portaBancoDeDados,
     dialect: 'mysql',
     logging: false,
+    timezone: '-03:00',
   },
 );
