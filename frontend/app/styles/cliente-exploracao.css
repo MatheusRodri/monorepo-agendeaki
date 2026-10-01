@@ -179,10 +179,10 @@
 
 .filtro-raio button,
 .filtro-tipo button {
-  background: transparent;
+  background: var(--cartao);
   border: 1px solid var(--borda);
   border-radius: 999px;
-  color: var(--texto-suave);
+  color: var(--ameixa);
   cursor: pointer;
   font-size: .7rem;
   font-weight: 700;
@@ -404,9 +404,9 @@
 }
 
 .busca-exploracao button+button {
-  background: transparent;
+  background: var(--cartao);
   border: 1px solid var(--borda);
-  color: var(--texto-suave);
+  color: var(--ameixa);
 }
 
 .marcador-salao {
@@ -472,7 +472,7 @@
 }
 
 .campo-busca-sugestoes ul {
-  background: var(--cartao);
+  background: var(--fundo);
   border: 1px solid var(--borda);
   border-radius: 10px;
   box-shadow: var(--sombra);
@@ -484,7 +484,7 @@
   position: absolute;
   right: 0;
   top: 100%;
-  z-index: 20;
+  z-index: 30;
 }
 
 .campo-busca-sugestoes li+li {
@@ -492,10 +492,10 @@
 }
 
 .campo-busca-sugestoes li button {
-  background: transparent;
+  background: var(--fundo);
   border: 0;
   border-radius: 6px;
-  color: var(--texto);
+  color: var(--ameixa);
   display: grid;
   font-size: .75rem;
   padding: .55rem;
@@ -513,8 +513,7 @@
 }
 
 .campo-busca-sugestoes li small {
-  color: var(--texto-suave);
+  color: var(--texto);
   font-size: .66rem;
   margin-top: .15rem;
 }
-

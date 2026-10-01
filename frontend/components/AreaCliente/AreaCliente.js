@@ -14,6 +14,7 @@ export default function AreaCliente() {
   const [cidade, definirCidade] = useState('');
   const [buscaAplicada, definirBuscaAplicada] = useState('');
   const [cidadeAplicada, definirCidadeAplicada] = useState('');
+  const [idUnidadeSelecionada, definirIdUnidadeSelecionada] = useState('');
   const [sugestoes, definirSugestoes] = useState([]);
   const [saloes, definirSaloes] = useState([]);
   const [salaoSelecionado, definirSalaoSelecionado] = useState(null);
@@ -33,6 +34,7 @@ export default function AreaCliente() {
         busca: buscaAplicada,
         cidade: cidadeAplicada,
       });
+      if (idUnidadeSelecionada) parametros.set('idUnidade', idUnidadeSelecionada);
       const dadosResposta = await requisitarApi('/api/clientes/saloes-proximos', { parametros });
 
       definirSaloes(dadosResposta.saloes);
@@ -44,7 +46,7 @@ export default function AreaCliente() {
     } finally {
       definirCarregando(false);
     }
-  }, [buscaAplicada, cidadeAplicada, coordenadas, raioKm]);
+  }, [buscaAplicada, cidadeAplicada, coordenadas, idUnidadeSelecionada, raioKm]);
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -62,6 +64,7 @@ export default function AreaCliente() {
   useEffect(() => { buscarSaloes(); }, [buscarSaloes]);
 
   useEffect(() => {
+    if (idUnidadeSelecionada) { definirSugestoes([]); return undefined; }
     const termo = busca.trim();
     if (termo.length < 2) { definirSugestoes([]); return undefined; }
     const atraso = window.setTimeout(async () => {
@@ -72,7 +75,7 @@ export default function AreaCliente() {
       } catch { definirSugestoes([]); }
     }, 250);
     return () => window.clearTimeout(atraso);
-  }, [busca, cidade]);
+  }, [busca, cidade, idUnidadeSelecionada]);
 
   const saloesFiltrados = tipoSalao === 'TODOS'
     ? saloes
@@ -82,16 +85,18 @@ export default function AreaCliente() {
     evento.preventDefault();
     definirBuscaAplicada(busca.trim());
     definirCidadeAplicada(cidade.trim());
+    definirIdUnidadeSelecionada('');
     definirSalaoSelecionado(null);
   }
 
   function limparBusca() {
-    definirBusca(''); definirCidade(''); definirBuscaAplicada(''); definirCidadeAplicada(''); definirSugestoes([]); definirSalaoSelecionado(null);
+    definirBusca(''); definirCidade(''); definirBuscaAplicada(''); definirCidadeAplicada(''); definirIdUnidadeSelecionada(''); definirSugestoes([]); definirSalaoSelecionado(null);
   }
 
   function escolherSugestao(sugestao) {
-    definirBusca(sugestao.nomeSalao);
-    definirBuscaAplicada(sugestao.nomeSalao);
+    definirBusca(`${sugestao.nomeSalao} · ${sugestao.nomeUnidade}`);
+    definirBuscaAplicada('');
+    definirIdUnidadeSelecionada(String(sugestao.idUnidade));
     definirSugestoes([]);
     definirSalaoSelecionado(null);
   }
@@ -106,7 +111,7 @@ export default function AreaCliente() {
           <h1>O seu próximo <em>momento</em> está por aqui.</h1>
           <form className="busca-exploracao" onSubmit={aplicarBusca}>
             <label><span>Para onde você vai?</span><input onChange={(evento) => definirCidade(evento.target.value)} placeholder="Cidade de destino" value={cidade} /></label>
-            <label className="campo-busca-sugestoes"><span>Busque um salão</span><input onChange={(evento) => definirBusca(evento.target.value)} placeholder="Nome do salão ou unidade" value={busca} />{sugestoes.length > 0 && <ul>{sugestoes.map((sugestao) => <li key={`${sugestao.nomeSalao}-${sugestao.nomeUnidade}`}><button onClick={() => escolherSugestao(sugestao)} type="button"><strong>{sugestao.nomeSalao}</strong><small>{sugestao.nomeUnidade} · {sugestao.municipio}</small></button></li>)}</ul>}</label>
+            <label className="campo-busca-sugestoes"><span>Busque um salão</span><input onChange={(evento) => { definirBusca(evento.target.value); definirIdUnidadeSelecionada(''); }} placeholder="Nome do salão ou unidade" value={busca} />{sugestoes.length > 0 && <ul>{sugestoes.map((sugestao) => <li key={sugestao.idUnidade}><button onClick={() => escolherSugestao(sugestao)} type="button"><strong>{sugestao.nomeSalao}</strong><small>{sugestao.nomeUnidade} · {sugestao.municipio}</small></button></li>)}</ul>}</label>
             <div><button type="submit">Buscar</button>{(cidadeAplicada || buscaAplicada) && <button onClick={limparBusca} type="button">Limpar</button>}</div>
           </form>
           <div className="filtros-exploracao">
