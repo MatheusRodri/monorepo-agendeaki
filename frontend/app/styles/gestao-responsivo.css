@@ -33,6 +33,11 @@
   .acoes-formulario .botao-enviar {
     flex-basis: 100%;
   }
+
+  .formulario-salao .acoes-formulario>.botao-secundario {
+    margin-top: 0;
+    width: 100%;
+  }
 }
 
 @media (max-width: 580px) {

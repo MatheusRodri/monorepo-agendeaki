@@ -10,8 +10,9 @@ O **AgendeAki** centraliza a rotina de agendamentos de salões de beleza. Client
 
 - Cadastro, login, recuperação e redefinição de senha para clientes e salões.
 - Busca de salões próximos e consulta de serviços disponíveis.
-- Criação e acompanhamento de agendamentos.
-- Área administrativa para gerenciar dados do salão, filiais, funcionários, clientes e serviços.
+- Agendamento por link público personalizado de cada filial.
+- Horários calculados pela duração do serviço e pela jornada de cada profissional.
+- Área administrativa para gerenciar dados do salão, filiais, funcionários, disponibilidade, bloqueios, clientes e serviços.
 - Integração com mapas para localização das unidades.
 
 ## Stack
@@ -62,6 +63,12 @@ mysql -u root -p < database/script.sql
 ```
 
 O script cria o banco `tcc_salao` e suas tabelas. Para uma base já existente, consulte os arquivos em `database/migrations/` antes de aplicar qualquer migração e faça um backup.
+
+Para atualizar uma base criada antes das URLs personalizadas e da nova disponibilidade:
+
+```bash
+mysql -u root -p < database/migrations/20261001_urls_e_disponibilidade.sql
+```
 
 ### 3. Configure as variáveis de ambiente
 
@@ -138,6 +145,7 @@ Abra [http://localhost:3000](http://localhost:3000) no navegador.
 | --- | --- | --- |
 | `backend/` | `npm run dev` | Inicia a API em modo de desenvolvimento, com recarga automática |
 | `backend/` | `npm start` | Inicia a API em modo normal |
+| `backend/` | `npm test` | Executa os testes do motor de horários |
 | `frontend/` | `npm run dev` | Inicia o Next.js em modo de desenvolvimento |
 | `frontend/` | `npm run build` | Gera a versão de produção do frontend |
 | `frontend/` | `npm start` | Serve o build de produção do frontend |

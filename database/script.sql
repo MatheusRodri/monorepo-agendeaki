@@ -61,6 +61,7 @@ CREATE TABLE tb_salao (
   fk_usuario_administrador BIGINT UNSIGNED NOT NULL,
 
   nm_salao VARCHAR(120) NOT NULL,
+  ds_slug VARCHAR(150) NOT NULL,
   ds_email VARCHAR(254) NULL,
   nu_telefone VARCHAR(20) NULL,
 
@@ -72,6 +73,9 @@ CREATE TABLE tb_salao (
     ON UPDATE CURRENT_TIMESTAMP,
 
   PRIMARY KEY (id_salao),
+
+  CONSTRAINT uk_salao_slug
+    UNIQUE (ds_slug),
 
   INDEX idx_salao_administrador (
     fk_usuario_administrador
@@ -95,6 +99,7 @@ CREATE TABLE tb_unidade (
   fk_salao BIGINT UNSIGNED NOT NULL,
 
   nm_unidade VARCHAR(120) NOT NULL,
+  ds_slug VARCHAR(150) NOT NULL,
 
   tp_categoria ENUM(
     'FEMININO',
@@ -128,6 +133,9 @@ CREATE TABLE tb_unidade (
 
   CONSTRAINT uk_unidade_nome_salao
     UNIQUE (fk_salao, nm_unidade),
+
+  CONSTRAINT uk_unidade_slug_salao
+    UNIQUE (fk_salao, ds_slug),
 
   INDEX idx_unidade_salao (
     fk_salao
@@ -392,6 +400,39 @@ CREATE TABLE tb_disponibilidade_funcionario (
     CHECK (
       hr_inicio < hr_fim
     )
+) ENGINE = InnoDB;
+
+
+-- =====================================================
+-- BLOQUEIOS DE AGENDA
+-- Sem funcionário, o bloqueio vale para toda a filial.
+-- =====================================================
+
+CREATE TABLE tb_bloqueio_agenda (
+  id_bloqueio BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  fk_unidade BIGINT UNSIGNED NOT NULL,
+  fk_funcionario BIGINT UNSIGNED NULL,
+  dt_inicio DATETIME NOT NULL,
+  dt_fim DATETIME NOT NULL,
+  ds_motivo VARCHAR(200) NULL,
+  st_ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  dt_atualizacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id_bloqueio),
+
+  INDEX idx_bloqueio_unidade_periodo (fk_unidade, dt_inicio, dt_fim),
+  INDEX idx_bloqueio_funcionario_periodo (fk_funcionario, dt_inicio, dt_fim),
+
+  CONSTRAINT fk_bloqueio_unidade
+    FOREIGN KEY (fk_unidade) REFERENCES tb_unidade (id_unidade)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+
+  CONSTRAINT fk_bloqueio_funcionario
+    FOREIGN KEY (fk_funcionario) REFERENCES tb_funcionario (id_funcionario)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+
+  CONSTRAINT ck_bloqueio_periodo CHECK (dt_inicio < dt_fim)
 ) ENGINE = InnoDB;
 
 

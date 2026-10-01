@@ -3,10 +3,12 @@ import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { cnpjValido, cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
+import { criarSlugSalaoUnico, criarSlugUnidadeUnico } from '../servicos/slugs.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
+const duracoesServicoPermitidas = [30, 45, 60, 90, 120];
 
 function extrairTokenAcesso(requisicao) {
   const cabecalhoAutorizacao = requisicao.headers.authorization;
@@ -46,7 +48,7 @@ async function obterAdministradorAutenticado(requisicao, resposta) {
 
 async function obterSalaoAdministrador(idUsuario) {
   const saloes = await bancoDeDados.query(
-    `SELECT s.id_salao AS idSalao, s.nm_salao AS nome, s.ds_email AS email, s.nu_telefone AS telefone,
+    `SELECT s.id_salao AS idSalao, s.nm_salao AS nome, s.ds_slug AS slug, s.ds_email AS email, s.nu_telefone AS telefone,
             u.ds_email AS emailConta
      FROM tb_salao s INNER JOIN tb_usuario u ON u.id_usuario = s.fk_usuario_administrador
      WHERE s.fk_usuario_administrador = :idUsuario AND s.st_ativo = TRUE LIMIT 1`,
@@ -188,7 +190,8 @@ async function criarSalao(requisicao, resposta) {
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do salão.' }); return; }
   const salaoExistente = await obterSalaoAdministrador(administrador.idUsuario);
   if (salaoExistente) { resposta.status(409).json({ mensagem: 'Já existe um salão cadastrado para este responsável.' }); return; }
-  await bancoDeDados.query('INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_email, nu_telefone) VALUES (:idUsuario, :nome, :email, :telefone)', { replacements: { idUsuario: administrador.idUsuario, nome: nome.trim(), email: email?.trim() || null, telefone: telefone?.trim() || null } });
+  const slug = await criarSlugSalaoUnico(nome);
+  await bancoDeDados.query('INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_slug, ds_email, nu_telefone) VALUES (:idUsuario, :nome, :slug, :email, :telefone)', { replacements: { idUsuario: administrador.idUsuario, nome: nome.trim(), slug, email: email?.trim() || null, telefone: telefone?.trim() || null } });
   resposta.status(201).json({ mensagem: 'Salão criado com sucesso.' });
 }
 
@@ -205,7 +208,8 @@ async function atualizarSalao(requisicao, resposta) {
   if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const { email = null, nome, telefone = null } = requisicao.body ?? {};
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do salão.' }); return; }
-  await bancoDeDados.query('UPDATE tb_salao SET nm_salao = :nome, ds_email = :email, nu_telefone = :telefone WHERE id_salao = :idSalao', { replacements: { idSalao: salao.idSalao, nome: nome.trim(), email: email?.trim() || null, telefone: telefone?.trim() || null } });
+  const slug = await criarSlugSalaoUnico(nome, { idSalao: salao.idSalao });
+  await bancoDeDados.query('UPDATE tb_salao SET nm_salao = :nome, ds_slug = :slug, ds_email = :email, nu_telefone = :telefone WHERE id_salao = :idSalao', { replacements: { idSalao: salao.idSalao, nome: nome.trim(), slug, email: email?.trim() || null, telefone: telefone?.trim() || null } });
   resposta.status(200).json({ mensagem: 'Informações do salão atualizadas.' });
 }
 
@@ -304,7 +308,7 @@ async function excluirConta(requisicao, resposta) {
 async function listarFiliais(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const filiais = await bancoDeDados.query(`SELECT id_unidade AS idUnidade, nm_unidade AS nome, tp_categoria AS categoria, ds_rua AS rua, nu_endereco AS numero, ds_complemento AS complemento, ds_bairro AS bairro, ds_municipio AS municipio, ds_estado AS estado, nu_cep AS cep, nu_telefone AS telefone, nu_latitude AS latitude, nu_longitude AS longitude FROM tb_unidade WHERE fk_salao = :idSalao AND st_ativo = TRUE ORDER BY nm_unidade`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT });
+  const filiais = await bancoDeDados.query(`SELECT id_unidade AS idUnidade, nm_unidade AS nome, ds_slug AS slugFilial, tp_categoria AS categoria, ds_rua AS rua, nu_endereco AS numero, ds_complemento AS complemento, ds_bairro AS bairro, ds_municipio AS municipio, ds_estado AS estado, nu_cep AS cep, nu_telefone AS telefone, nu_latitude AS latitude, nu_longitude AS longitude, :slugSalao AS slugSalao, (SELECT COUNT(DISTINCT se.id_servico) FROM tb_servico se INNER JOIN tb_funcionario_servico fs ON fs.fk_servico=se.id_servico INNER JOIN tb_funcionario f ON f.id_funcionario=fs.fk_funcionario AND f.fk_unidade=tb_unidade.id_unidade WHERE se.fk_unidade=tb_unidade.id_unidade AND se.st_ativo=TRUE AND f.st_ativo=TRUE) AS quantidadeOpcoesAgendamento FROM tb_unidade WHERE fk_salao = :idSalao AND st_ativo = TRUE ORDER BY nm_unidade`, { replacements: { idSalao: salao.idSalao, slugSalao: salao.slug }, type: QueryTypes.SELECT });
   const idsUnidades = filiais.map((filial) => filial.idUnidade);
   const horarios = idsUnidades.length
     ? await bancoDeDados.query('SELECT fk_unidade AS idUnidade, nr_dia_semana AS diaSemana, hr_abertura AS abertura, hr_fechamento AS fechamento, st_fechado AS fechado FROM tb_horario_unidade WHERE fk_unidade IN (:idsUnidades) ORDER BY nr_dia_semana', { replacements: { idsUnidades }, type: QueryTypes.SELECT })
@@ -347,14 +351,29 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
     try {
       const filiais = await bancoDeDados.query('SELECT id_unidade AS idUnidade FROM tb_unidade WHERE id_unidade = :idUnidade AND fk_salao = :idSalao LIMIT 1', { replacements: valores, transaction: transacao, type: QueryTypes.SELECT });
       if (!filiais.length) { await transacao.rollback(); resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
-      await bancoDeDados.query(`UPDATE tb_unidade SET nm_unidade=:nome, tp_categoria=:categoria, ds_rua=:rua, nu_endereco=:numero, ds_complemento=:complemento, ds_bairro=:bairro, ds_municipio=:municipio, ds_estado=:estado, nu_cep=:cep, nu_latitude=:latitude, nu_longitude=:longitude, nu_telefone=:telefone WHERE id_unidade=:idUnidade`, { replacements: valores, transaction: transacao });
+      const agendamentosFuturos = await bancoDeDados.query(
+        `SELECT DAYOFWEEK(dt_inicio)-1 AS diaSemana,
+                TIME_FORMAT(dt_inicio, '%H:%i') AS inicio,
+                TIME_FORMAT(dt_fim, '%H:%i') AS fim
+         FROM tb_agendamento WHERE fk_unidade=:idUnidade
+           AND cd_status='AGENDADO' AND dt_inicio>NOW()`,
+        { replacements: { idUnidade }, transaction: transacao, type: QueryTypes.SELECT },
+      );
+      const conflitoExpediente = agendamentosFuturos.find((agendamento) => {
+        const horario = horarios.find((item) => item.diaSemana === Number(agendamento.diaSemana));
+        return !horario || horario.fechado || agendamento.inicio < horario.abertura || agendamento.fim > horario.fechamento;
+      });
+      if (conflitoExpediente) { await transacao.rollback(); resposta.status(409).json({ mensagem: 'O novo expediente deixaria um agendamento confirmado fora do horário.' }); return; }
+      valores.slug = await criarSlugUnidadeUnico(dadosFilial.nome, salao.idSalao, { idUnidade, transaction: transacao });
+      await bancoDeDados.query(`UPDATE tb_unidade SET nm_unidade=:nome, ds_slug=:slug, tp_categoria=:categoria, ds_rua=:rua, nu_endereco=:numero, ds_complemento=:complemento, ds_bairro=:bairro, ds_municipio=:municipio, ds_estado=:estado, nu_cep=:cep, nu_latitude=:latitude, nu_longitude=:longitude, nu_telefone=:telefone WHERE id_unidade=:idUnidade`, { replacements: valores, transaction: transacao });
       await salvarHorariosUnidade(idUnidade, horarios, transacao);
       await transacao.commit();
       resposta.status(200).json({ mensagem: 'Filial, localização e horários atualizados.', coordenadas }); return;
     } catch (erro) { await transacao.rollback(); resposta.status(500).json({ mensagem: erro.message }); return; }
   }
   try {
-    await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
+    valores.slug = await criarSlugUnidadeUnico(dadosFilial.nome, salao.idSalao, { transaction: transacao });
+    await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, ds_slug, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :slug, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
     const unidadesCriadas = await bancoDeDados.query('SELECT LAST_INSERT_ID() AS idUnidade', { transaction: transacao, type: QueryTypes.SELECT });
     const idUnidadeCriada = Number(unidadesCriadas[0]?.idUnidade);
     if (!idUnidadeCriada) throw new Error('Não foi possível identificar a filial criada.');
@@ -368,7 +387,7 @@ async function criarServico(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const { descricao = null, duracaoMinutos, idUnidade, nome, valor } = requisicao.body ?? {};
-  if (!nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || Number(duracaoMinutos) <= 0) { resposta.status(400).json({ mensagem: 'Informe filial, nome, valor e duração válidos.' }); return; }
+  if (!nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || !duracoesServicoPermitidas.includes(Number(duracaoMinutos))) { resposta.status(400).json({ mensagem: 'Informe filial, nome, valor e uma duração permitida.' }); return; }
   const filial = await bancoDeDados.query('SELECT id_unidade FROM tb_unidade WHERE id_unidade=:idUnidade AND fk_salao=:idSalao AND st_ativo=TRUE LIMIT 1', { replacements: { idUnidade, idSalao: salao.idSalao }, type: QueryTypes.SELECT }); if (!filial.length) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
   await bancoDeDados.query('INSERT INTO tb_servico (fk_unidade, nm_servico, ds_servico, vl_servico, nu_duracao_minutos) VALUES (:idUnidade, :nome, :descricao, :valor, :duracaoMinutos)', { replacements: { idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null, valor, duracaoMinutos } }); resposta.status(201).json({ mensagem: 'Serviço criado com sucesso.' });
 }
@@ -392,7 +411,7 @@ async function atualizarServico(requisicao, resposta) {
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const idServico = Number(requisicao.params.idServico);
   const { descricao = null, duracaoMinutos, idUnidade, nome, valor } = requisicao.body ?? {};
-  if (!idServico || !nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || Number(duracaoMinutos) <= 0) { resposta.status(400).json({ mensagem: 'Informe filial, nome, valor e duração válidos.' }); return; }
+  if (!idServico || !nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || !duracoesServicoPermitidas.includes(Number(duracaoMinutos))) { resposta.status(400).json({ mensagem: 'Informe filial, nome, valor e uma duração permitida.' }); return; }
   if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
   const [resultado] = await bancoDeDados.query(
     `UPDATE tb_servico s INNER JOIN tb_unidade u ON u.id_unidade = s.fk_unidade
@@ -503,6 +522,175 @@ async function excluirFilial(requisicao, resposta) {
   resposta.status(200).json({ mensagem: 'Filial removida da descoberta. O histórico foi preservado.' });
 }
 
+function normalizarPeriodosFuncionario(periodos) {
+  if (!Array.isArray(periodos)) throw new Error('Informe os períodos de disponibilidade.');
+  const normalizados = periodos.map((periodo) => ({
+    diaSemana: Number(periodo.diaSemana),
+    fim: String(periodo.fim ?? '').slice(0, 5),
+    inicio: String(periodo.inicio ?? '').slice(0, 5),
+  }));
+  for (const periodo of normalizados) {
+    if (!Number.isInteger(periodo.diaSemana) || periodo.diaSemana < 0 || periodo.diaSemana > 6
+      || !/^\d{2}:\d{2}$/.test(periodo.inicio) || !/^\d{2}:\d{2}$/.test(periodo.fim)
+      || periodo.inicio >= periodo.fim) throw new Error('Há um período de disponibilidade inválido.');
+  }
+  normalizados.sort((a, b) => a.diaSemana - b.diaSemana || a.inicio.localeCompare(b.inicio));
+  for (let indice = 1; indice < normalizados.length; indice += 1) {
+    const anterior = normalizados[indice - 1];
+    const atual = normalizados[indice];
+    if (anterior.diaSemana === atual.diaSemana && atual.inicio < anterior.fim) throw new Error('Os períodos de um mesmo dia não podem se sobrepor.');
+  }
+  return normalizados;
+}
+
+async function listarDisponibilidade(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idUnidade = Number(requisicao.query.idUnidade);
+  if (!Number.isInteger(idUnidade) || !await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  const funcionarios = await bancoDeDados.query(
+    `SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS nome
+     FROM tb_funcionario f WHERE f.fk_unidade=:idUnidade AND f.st_ativo=TRUE ORDER BY f.nm_funcionario`,
+    { replacements: { idUnidade }, type: QueryTypes.SELECT },
+  );
+  const idsFuncionarios = funcionarios.map((item) => item.idFuncionario);
+  const periodos = idsFuncionarios.length ? await bancoDeDados.query(
+    `SELECT fk_funcionario AS idFuncionario, nr_dia_semana AS diaSemana,
+            hr_inicio AS inicio, hr_fim AS fim
+     FROM tb_disponibilidade_funcionario
+     WHERE fk_funcionario IN (:idsFuncionarios) AND st_ativo=TRUE
+     ORDER BY nr_dia_semana, hr_inicio`,
+    { replacements: { idsFuncionarios }, type: QueryTypes.SELECT },
+  ) : [];
+  const bloqueios = await bancoDeDados.query(
+    `SELECT b.id_bloqueio AS idBloqueio, b.fk_funcionario AS idFuncionario,
+            f.nm_funcionario AS profissional, b.dt_inicio AS dataHoraInicio,
+            b.dt_fim AS dataHoraFim, b.ds_motivo AS motivo
+     FROM tb_bloqueio_agenda b LEFT JOIN tb_funcionario f ON f.id_funcionario=b.fk_funcionario
+     WHERE b.fk_unidade=:idUnidade AND b.st_ativo=TRUE AND b.dt_fim>=NOW()
+     ORDER BY b.dt_inicio`,
+    { replacements: { idUnidade }, type: QueryTypes.SELECT },
+  );
+  funcionarios.forEach((funcionario) => {
+    funcionario.periodos = periodos.filter((periodo) => Number(periodo.idFuncionario) === Number(funcionario.idFuncionario));
+  });
+  resposta.status(200).json({ bloqueios, funcionarios });
+}
+
+async function salvarDisponibilidadeFuncionario(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idFuncionario = Number(requisicao.params.idFuncionario);
+  let periodos;
+  try { periodos = normalizarPeriodosFuncionario(requisicao.body?.periodos); } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); return; }
+  const profissionais = await bancoDeDados.query(
+    `SELECT f.id_funcionario AS idFuncionario, f.fk_unidade AS idUnidade
+     FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
+     WHERE f.id_funcionario=:idFuncionario AND f.st_ativo=TRUE AND u.fk_salao=:idSalao LIMIT 1`,
+    { replacements: { idFuncionario, idSalao: salao.idSalao }, type: QueryTypes.SELECT },
+  );
+  if (!profissionais.length) { resposta.status(404).json({ mensagem: 'Profissional não encontrado.' }); return; }
+  const agendamentos = await bancoDeDados.query(
+    `SELECT id_agendamento AS idAgendamento, DAYOFWEEK(dt_inicio)-1 AS diaSemana,
+            TIME_FORMAT(dt_inicio, '%H:%i') AS inicio, TIME_FORMAT(dt_fim, '%H:%i') AS fim
+     FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
+       AND cd_status='AGENDADO' AND dt_inicio>NOW()`,
+    { replacements: { idFuncionario }, type: QueryTypes.SELECT },
+  );
+  const foraDaNovaAgenda = agendamentos.find((agendamento) => !periodos.some((periodo) =>
+    periodo.diaSemana === Number(agendamento.diaSemana) && agendamento.inicio >= periodo.inicio && agendamento.fim <= periodo.fim));
+  if (foraDaNovaAgenda) { resposta.status(409).json({ mensagem: 'A nova jornada deixaria um agendamento confirmado fora do expediente.' }); return; }
+  const transacao = await bancoDeDados.transaction();
+  try {
+    await bancoDeDados.query('DELETE FROM tb_disponibilidade_funcionario WHERE fk_funcionario=:idFuncionario', { replacements: { idFuncionario }, transaction: transacao });
+    for (const periodo of periodos) await bancoDeDados.query(
+      `INSERT INTO tb_disponibilidade_funcionario
+       (fk_funcionario, nr_dia_semana, hr_inicio, hr_fim)
+       VALUES (:idFuncionario, :diaSemana, :inicio, :fim)`,
+      { replacements: { idFuncionario, ...periodo }, transaction: transacao },
+    );
+    await transacao.commit();
+    resposta.status(200).json({ mensagem: 'Disponibilidade atualizada com sucesso.' });
+  } catch (erro) { await transacao.rollback(); resposta.status(400).json({ mensagem: erro.message }); }
+}
+
+function dataHoraBanco(valor) {
+  const texto = String(valor ?? '');
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(texto) ? `${texto.replace('T', ' ')}:00` : null;
+}
+
+async function criarBloqueio(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idUnidade = Number(requisicao.body?.idUnidade);
+  const idFuncionario = requisicao.body?.idFuncionario ? Number(requisicao.body.idFuncionario) : null;
+  const dataHoraInicio = dataHoraBanco(requisicao.body?.dataHoraInicio);
+  const dataHoraFim = dataHoraBanco(requisicao.body?.dataHoraFim);
+  if (!Number.isInteger(idUnidade) || !dataHoraInicio || !dataHoraFim || dataHoraInicio >= dataHoraFim) { resposta.status(400).json({ mensagem: 'Informe filial e período válidos para o bloqueio.' }); return; }
+  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  if (idFuncionario) {
+    const profissionais = await bancoDeDados.query('SELECT id_funcionario FROM tb_funcionario WHERE id_funcionario=:idFuncionario AND fk_unidade=:idUnidade AND st_ativo=TRUE LIMIT 1', { replacements: { idFuncionario, idUnidade }, type: QueryTypes.SELECT });
+    if (!profissionais.length) { resposta.status(404).json({ mensagem: 'Profissional não encontrado nesta filial.' }); return; }
+  }
+  const motivo = requisicao.body?.motivo?.trim() || null;
+  const transacao = await bancoDeDados.transaction();
+  try {
+    const conflitos = await bancoDeDados.query(
+      `SELECT id_agendamento AS idAgendamento FROM tb_agendamento
+       WHERE fk_unidade=:idUnidade AND cd_status='AGENDADO'
+         AND (:idFuncionario IS NULL OR fk_funcionario=:idFuncionario)
+         AND dt_inicio<:dataHoraFim AND dt_fim>:dataHoraInicio
+         AND dt_fim>NOW() FOR UPDATE`,
+      { replacements: { dataHoraFim, dataHoraInicio, idFuncionario, idUnidade }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    const idsAgendamentos = conflitos.map((item) => item.idAgendamento);
+    if (idsAgendamentos.length) {
+      await bancoDeDados.query(
+        `UPDATE tb_agendamento SET cd_status='CANCELADO', dt_cancelamento=NOW(),
+                fk_usuario_cancelamento=:idUsuario,
+                ds_motivo_cancelamento=:motivoCancelamento
+         WHERE id_agendamento IN (:idsAgendamentos) AND cd_status='AGENDADO'`,
+        {
+          replacements: {
+            idUsuario: administrador.idUsuario,
+            idsAgendamentos,
+            motivoCancelamento: motivo ? `Bloqueio de agenda: ${motivo}` : 'Bloqueio emergencial da agenda pelo salão.',
+          },
+          transaction: transacao,
+        },
+      );
+    }
+    await bancoDeDados.query(
+      `INSERT INTO tb_bloqueio_agenda
+       (fk_unidade, fk_funcionario, dt_inicio, dt_fim, ds_motivo)
+       VALUES (:idUnidade, :idFuncionario, :dataHoraInicio, :dataHoraFim, :motivo)`,
+      { replacements: { dataHoraFim, dataHoraInicio, idFuncionario, idUnidade, motivo }, transaction: transacao },
+    );
+    await transacao.commit();
+    resposta.status(201).json({
+      mensagem: idsAgendamentos.length
+        ? `Bloqueio criado e ${idsAgendamentos.length} agendamento(s) cancelado(s).`
+        : 'Bloqueio criado com sucesso.',
+      quantidadeAgendamentosCancelados: idsAgendamentos.length,
+    });
+  } catch (erro) {
+    await transacao.rollback();
+    resposta.status(500).json({ mensagem: 'Não foi possível bloquear a agenda agora.' });
+  }
+}
+
+async function excluirBloqueio(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const [resultado] = await bancoDeDados.query(
+    `UPDATE tb_bloqueio_agenda b INNER JOIN tb_unidade u ON u.id_unidade=b.fk_unidade
+     SET b.st_ativo=FALSE WHERE b.id_bloqueio=:idBloqueio AND u.fk_salao=:idSalao AND b.st_ativo=TRUE`,
+    { replacements: { idBloqueio: Number(requisicao.params.idBloqueio), idSalao: salao.idSalao } },
+  );
+  if (!resultado.affectedRows) { resposta.status(404).json({ mensagem: 'Bloqueio não encontrado.' }); return; }
+  resposta.status(200).json({ mensagem: 'Bloqueio removido.' });
+}
+
 async function listarClientes(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return; const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const clientes = await bancoDeDados.query(`SELECT DISTINCT u.id_usuario AS idUsuario, u.nm_usuario AS nome, u.ds_email AS email, MAX(a.dt_inicio) AS ultimoAgendamento FROM tb_agendamento a INNER JOIN tb_unidade un ON un.id_unidade=a.fk_unidade INNER JOIN tb_usuario u ON u.id_usuario=a.fk_usuario WHERE un.fk_salao=:idSalao GROUP BY u.id_usuario, u.nm_usuario, u.ds_email ORDER BY ultimoAgendamento DESC`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ clientes });
@@ -546,6 +734,8 @@ roteadorSalao.get('/perfil', consultarPerfil); roteadorSalao.patch('/perfil', at
 roteadorSalao.get('/filiais', listarFiliais); roteadorSalao.post('/filiais', (requisicao, resposta) => salvarFilial(requisicao, resposta)); roteadorSalao.patch('/filiais/:idUnidade', (requisicao, resposta) => salvarFilial(requisicao, resposta, Number(requisicao.params.idUnidade))); roteadorSalao.delete('/filiais/:idUnidade', excluirFilial);
 roteadorSalao.post('/servicos', criarServico); roteadorSalao.get('/servicos', listarServicos); roteadorSalao.patch('/servicos/:idServico', atualizarServico); roteadorSalao.delete('/servicos/:idServico', excluirServico);
 roteadorSalao.post('/funcionarios', criarFuncionario); roteadorSalao.get('/funcionarios', listarFuncionarios); roteadorSalao.patch('/funcionarios/:idFuncionario', atualizarFuncionario); roteadorSalao.delete('/funcionarios/:idFuncionario', excluirFuncionario);
+roteadorSalao.get('/disponibilidade', listarDisponibilidade); roteadorSalao.put('/funcionarios/:idFuncionario/disponibilidade', salvarDisponibilidadeFuncionario);
+roteadorSalao.post('/bloqueios', criarBloqueio); roteadorSalao.delete('/bloqueios/:idBloqueio', excluirBloqueio);
 roteadorSalao.get('/clientes', listarClientes); roteadorSalao.get('/agendamentos', listarAgendamentos); roteadorSalao.get('/indicadores', indicadores);
 
 export default roteadorSalao;

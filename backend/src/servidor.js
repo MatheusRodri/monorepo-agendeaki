@@ -4,6 +4,7 @@ import express from 'express';
 import { bancoDeDados } from './configuracoes/bancoDeDados.js';
 import roteadorAutenticacao from './rotas/autenticacao.js';
 import roteadorCliente from './rotas/cliente.js';
+import roteadorPublico from './rotas/publico.js';
 import roteadorSalao from './rotas/salao.js';
 
 const aplicacao = express();
@@ -35,6 +36,7 @@ aplicacao.use((requisicao, resposta, proximo) => {
 });
 aplicacao.use('/api', roteadorAutenticacao);
 aplicacao.use('/api/clientes', roteadorCliente);
+aplicacao.use('/api/publico', roteadorPublico);
 aplicacao.use('/api/salao', roteadorSalao);
 
 aplicacao.get('/saude', (_requisicao, resposta) => {
