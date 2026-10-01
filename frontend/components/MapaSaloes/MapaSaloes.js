@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { obterEstiloMapaHere } from '../../utils/here';
 
 const centroInicial = { latitude: -23.5505, longitude: -46.6333 };
 
@@ -43,22 +44,26 @@ export default function MapaSaloes({ aoSelecionarSalao, coordenadas, salaoSeleci
     let estaAtivo = true;
 
     async function iniciarMapa() {
+      const estiloHere = obterEstiloMapaHere();
+      if (!estiloHere) throw new Error('Configure a chave pública da HERE para carregar o mapa.');
+
       const pacoteMapa = await import('maplibre-gl');
       const maplibregl = pacoteMapa.default ?? pacoteMapa;
       if (!estaAtivo || !elementoMapa.current || instanciaMapa.current) return;
 
+      maplibregl.setWorkerUrl('/maplibre/maplibre-gl-worker.mjs');
       moduloMapa.current = maplibregl;
       instanciaMapa.current = new maplibregl.Map({
         center: [centroInicial.longitude, centroInicial.latitude],
         container: elementoMapa.current,
-        style: 'https://tiles.openfreemap.org/styles/liberty',
+        style: estiloHere,
         zoom: 12,
       });
       instanciaMapa.current.addControl(new maplibregl.NavigationControl(), 'bottom-right');
       instanciaMapa.current.once('load', () => { if (estaAtivo) definirMapaPronto(true); });
     }
 
-    iniciarMapa().catch(() => { if (estaAtivo) definirErro('Não foi possível carregar o mapa agora.'); });
+    iniciarMapa().catch((causa) => { if (estaAtivo) definirErro(causa.message || 'Não foi possível carregar o mapa agora.'); });
     return () => {
       estaAtivo = false;
       marcadoresPorUnidade.current.clear();

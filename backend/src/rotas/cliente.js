@@ -49,11 +49,28 @@ async function obterClienteAutenticado(requisicao, resposta) {
 }
 
 async function localizarCidade(cidade) {
-  const consulta = encodeURIComponent(`${cidade}, Brasil`);
-  const resposta = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=br&q=${consulta}`, { headers: { 'User-Agent': 'AgendeAki/1.0 (contato@agendeaki.local)' } });
-  const resultados = await resposta.json();
-  if (!resposta.ok || !resultados.length) throw new Error('Não foi possível localizar essa cidade.');
-  return { latitude: Number(resultados[0].lat), longitude: Number(resultados[0].lon) };
+  const chaveHere = process.env.HERE_API_KEY;
+  if (!chaveHere) throw new Error('A busca de localização ainda não foi configurada. Configure a chave da HERE.');
+
+  const url = new URL('https://geocode.search.hereapi.com/v1/geocode');
+  url.search = new URLSearchParams({
+    apiKey: chaveHere,
+    lang: 'pt-BR',
+    limit: '1',
+    qq: `city=${cidade};country=BRA`,
+    types: 'city',
+  }).toString();
+
+  let resposta;
+  try {
+    resposta = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+  } catch {
+    throw new Error('Não foi possível localizar essa cidade agora. Tente novamente.');
+  }
+  const dados = await resposta.json();
+  const resultado = dados.items?.[0];
+  if (!resposta.ok || !resultado?.position) throw new Error('Não foi possível localizar essa cidade.');
+  return { latitude: Number(resultado.position.lat), longitude: Number(resultado.position.lng) };
 }
 
 async function obterCoordenadas(requisicao) {

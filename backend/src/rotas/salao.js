@@ -70,51 +70,56 @@ async function consultarEnderecoPorCep(cep) {
   };
 }
 
-async function buscarEnderecosNominatim(endereco) {
-  const consulta = [
-    endereco.numero,
-    endereco.rua,
-    endereco.bairro,
-    endereco.municipio,
-    endereco.estado,
-    endereco.cep,
-    'Brasil',
-  ].filter(Boolean).join(', ');
-  const url = new URL('https://nominatim.openstreetmap.org/search');
+async function buscarEnderecosHere(endereco) {
+  const chaveHere = process.env.HERE_API_KEY;
+  if (!chaveHere) throw new Error('A busca de endereços ainda não foi configurada. Configure a chave da HERE.');
+
+  // A busca estruturada mantém o número separado da rua, evitando a aproximação
+  // por CEP/trecho de via que acontecia no geocodificador anterior.
+  const url = new URL('https://geocode.search.hereapi.com/v1/geocode');
+  const partesConsulta = [
+    ['houseNumber', endereco.numero],
+    ['street', endereco.rua],
+    ['district', endereco.bairro],
+    ['city', endereco.municipio],
+    ['state', endereco.estado],
+    ['postalCode', endereco.cep],
+    ['country', 'BRA'],
+  ].filter(([, valor]) => valor).map(([campo, valor]) => `${campo}=${valor}`);
   url.search = new URLSearchParams({
-    addressdetails: '1',
-    countrycodes: 'br',
-    format: 'jsonv2',
-    limit: '3',
-    q: consulta,
+    apiKey: chaveHere,
+    lang: 'pt-BR',
+    limit: '5',
+    qq: partesConsulta.join(';'),
+    types: 'address,houseNumber,street',
   }).toString();
 
-  let respostaNominatim;
+  let respostaHere;
   try {
-    respostaNominatim = await fetch(url, {
+    respostaHere = await fetch(url, {
       headers: {
         Accept: 'application/json',
-        'Accept-Language': 'pt-BR,pt;q=0.9',
-        // A política pública do Nominatim exige identificar a aplicação que consulta o serviço.
-        'User-Agent': 'AgendeAki/1.0 (+https://agendeaki.atlasstak.io)',
       },
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
     throw new Error('Não foi possível consultar a localização agora. Tente novamente.');
   }
-  if (!respostaNominatim.ok) throw new Error('Não foi possível consultar a localização agora. Tente novamente.');
+  if (!respostaHere.ok) {
+    console.error('[HERE] Falha ao geocodificar endereço.', { status: respostaHere.status });
+    throw new Error('Não foi possível consultar a localização agora. Tente novamente.');
+  }
 
-  const dados = await respostaNominatim.json();
-  return dados.map((resultado) => {
-    const latitude = Number(resultado.lat);
-    const longitude = Number(resultado.lon);
+  const dados = await respostaHere.json();
+  return (dados.items ?? []).map((resultado) => {
+    const latitude = Number(resultado.position?.lat);
+    const longitude = Number(resultado.position?.lng);
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
     return {
-      id: String(resultado.place_id),
+      id: String(resultado.id ?? `${latitude},${longitude}`),
       latitude,
       longitude,
-      endereco: resultado.display_name ?? consulta,
+      endereco: resultado.title ?? resultado.address?.label ?? [endereco.numero, endereco.rua, endereco.municipio, endereco.estado, endereco.cep].filter(Boolean).join(', '),
     };
   }).filter(Boolean);
 }
@@ -166,7 +171,7 @@ async function consultarCoordenadasFilial(requisicao, resposta) {
 
   try {
     const endereco = await consultarEnderecoPorCep(requisicao.query.cep);
-    const sugestoes = await buscarEnderecosNominatim({ ...endereco, numero });
+    const sugestoes = await buscarEnderecosHere({ ...endereco, numero });
     if (!sugestoes.length) {
       resposta.status(404).json({ mensagem: 'Nenhum endereço foi encontrado. Confira o CEP e o número.' });
       return;

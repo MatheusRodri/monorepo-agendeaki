@@ -85,6 +85,7 @@ Depois, preencha os valores adequados em cada arquivo.
 | `SUPABASE_URL` | URL do projeto Supabase |
 | `SUPABASE_ANON_KEY` | Chave anônima do Supabase |
 | `SUPABASE_SECRET_KEY` | Chave secreta do Supabase, usada somente no servidor |
+| `HERE_API_KEY` | Chave privada da HERE, usada pela API para geocodificar endereços e cidades |
 
 **`frontend/.env.local`**
 
@@ -93,8 +94,9 @@ Depois, preencha os valores adequados em cada arquivo.
 | `NEXT_PUBLIC_API_URL` | URL da API (ex.: `http://localhost:3001`) |
 | `NEXT_PUBLIC_SUPABASE_URL` | URL pública do projeto Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Chave anônima pública do Supabase |
+| `NEXT_PUBLIC_HERE_API_KEY` | Chave HERE para exibir os tiles no navegador; restrinja-a ao domínio do frontend |
 
-> Nunca versione arquivos `.env` reais ou exponha a `SUPABASE_SECRET_KEY` no frontend.
+> Nunca versione arquivos `.env` reais ou exponha a `SUPABASE_SECRET_KEY` ou `HERE_API_KEY` no frontend. A chave `NEXT_PUBLIC_HERE_API_KEY` fica visível no navegador por necessidade do mapa; use uma chave própria, limitada ao domínio do frontend no painel da HERE.
 
 ### 4. Instale as dependências
 

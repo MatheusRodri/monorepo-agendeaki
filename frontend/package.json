@@ -3,15 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "prebuild": "node scripts/copy-maplibre-worker.mjs",
+    "predev": "node scripts/copy-maplibre-worker.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next build"
   },
   "dependencies": {
-    "axios": "^1.8.0",
-    "leaflet": "^1.9.4",
-    "maplibre-gl": "^5.16.0",
+    "axios": "^1.20.0",
+    "maplibre-gl": "^6.11.2",
     "next": "^16.3.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
