@@ -645,7 +645,7 @@ async function criarBloqueio(requisicao, resposta) {
       `SELECT id_agendamento AS idAgendamento FROM tb_agendamento
        WHERE fk_unidade=:idUnidade AND cd_status='AGENDADO'
          AND (:idFuncionario IS NULL OR fk_funcionario=:idFuncionario)
-         AND dt_inicio<:dataHoraFim AND dt_fim>:dataHoraInicio
+       AND dt_inicio < :dataHoraFim AND dt_fim > :dataHoraInicio
          AND dt_fim>NOW() FOR UPDATE`,
       { replacements: { dataHoraFim, dataHoraInicio, idFuncionario, idUnidade }, transaction: transacao, type: QueryTypes.SELECT },
     );
@@ -765,7 +765,7 @@ async function criarAgendamentoSalao(requisicao, resposta) {
     const conflitos = await bancoDeDados.query(
       `SELECT id_agendamento FROM tb_agendamento
        WHERE fk_funcionario=:idFuncionario AND cd_status='AGENDADO'
-         AND dt_inicio<:dataFimBanco AND dt_fim>:dataInicioBanco FOR UPDATE`,
+       AND dt_inicio < :dataFimBanco AND dt_fim > :dataInicioBanco FOR UPDATE`,
       { replacements: reserva, transaction: transacao, type: QueryTypes.SELECT },
     );
     if (conflitos.length) { const erro = new Error('Este horário acabou de ser reservado. Escolha outro horário.'); erro.status = 409; throw erro; }
