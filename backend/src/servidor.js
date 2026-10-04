@@ -6,11 +6,13 @@ import roteadorAutenticacao from './rotas/autenticacao.js';
 import roteadorCliente from './rotas/cliente.js';
 import roteadorPublico from './rotas/publico.js';
 import roteadorSalao from './rotas/salao.js';
+import roteadorWebhooks from './rotas/webhooks.js';
 
 const aplicacao = express();
 const porta = Number(process.env.PORT ?? 3001);
 
 aplicacao.use(cors());
+aplicacao.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 aplicacao.use(express.json());
 aplicacao.use((requisicao, resposta, proximo) => {
   const cabecalhoAutorizacao = requisicao.headers.authorization;
@@ -38,6 +40,7 @@ aplicacao.use('/api', roteadorAutenticacao);
 aplicacao.use('/api/clientes', roteadorCliente);
 aplicacao.use('/api/publico', roteadorPublico);
 aplicacao.use('/api/salao', roteadorSalao);
+aplicacao.use('/api/webhooks', roteadorWebhooks);
 
 aplicacao.get('/saude', (_requisicao, resposta) => {
   resposta.status(200).json({ status: 'online' });

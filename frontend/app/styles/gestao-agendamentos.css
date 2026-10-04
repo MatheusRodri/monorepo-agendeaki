@@ -4,6 +4,89 @@
   max-width: 760px;
 }
 
+.cabecalho-agenda-salao {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 1.1rem;
+  max-width: 760px;
+}
+
+.cabecalho-agenda-salao .filtro-agendamentos {
+  margin-bottom: 0;
+}
+
+.formulario-agendamento-manual {
+  margin: 0 0 1.2rem;
+  max-width: 760px;
+  width: 100%;
+}
+
+.formulario-agendamento-manual h2 {
+  margin: .2rem 0 .4rem;
+}
+
+.formulario-agendamento-manual > p {
+  color: var(--texto-suave);
+  font-size: .82rem;
+  margin: 0 0 1.2rem;
+}
+
+.formulario-agendamento-manual .grade-formulario {
+  margin-bottom: .9rem;
+}
+
+.formulario-agendamento-manual .campo-formulario:has(textarea) {
+  margin-top: .8rem;
+}
+
+.selecao-cliente-manual {
+  border: 1px solid var(--borda);
+  border-radius: 12px;
+  margin: .4rem 0 .9rem;
+  padding: .8rem 1rem;
+}
+
+.selecao-cliente-manual legend {
+  color: var(--ameixa);
+  font-size: .82rem;
+  font-weight: 700;
+  padding: 0 .25rem;
+}
+
+.opcoes-cliente-manual {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1.2rem;
+  margin-bottom: .8rem;
+}
+
+.opcoes-cliente-manual label {
+  align-items: center;
+  color: var(--texto);
+  display: flex;
+  font-size: .82rem;
+  gap: .4rem;
+}
+
+.opcoes-cliente-manual input {
+  accent-color: var(--coral-escuro);
+}
+
+.formulario-agendamento-manual .acoes-formulario {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .7rem;
+  margin-top: .9rem;
+}
+
+.formulario-agendamento-manual .acoes-formulario .botao-enviar {
+  width: auto;
+}
+
 .cartao-agendamento-salao {
   background: var(--cartao);
   border: 1px solid var(--borda);
@@ -31,6 +114,30 @@
   color: var(--texto-suave);
   font-size: .76rem;
   margin-top: .2rem;
+}
+
+.cartao-agendamento-salao__acoes {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+}
+
+.botao-confirmar-atendimento {
+  background: transparent;
+  border: 1px solid var(--ameixa);
+  border-radius: 9px;
+  color: var(--ameixa);
+  cursor: pointer;
+  font: inherit;
+  font-size: .74rem;
+  font-weight: 700;
+  padding: .45rem .65rem;
+}
+
+.botao-confirmar-atendimento:disabled {
+  cursor: not-allowed;
+  opacity: .5;
 }
 
 .cartao-agendamento-salao dl {
@@ -78,4 +185,3 @@
   background: #f9e1e3;
   color: #a23846 !important;
 }
-

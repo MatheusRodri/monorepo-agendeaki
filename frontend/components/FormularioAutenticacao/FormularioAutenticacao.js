@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { dataParaIso, formatarCnpj, formatarCpf, formatarData } from '../../utils/formatadores';
+import { dataNascimentoMaiorDeIdade, dataParaIso, formatarCnpj, formatarCpf, formatarData } from '../../utils/formatadores';
 import { requisitarApi } from '../../utils/api';
 import { armazenarSessao } from '../../utils/respostaApi';
 import CampoSenha from '../CampoSenha/CampoSenha';
@@ -52,9 +52,11 @@ export default function FormularioAutenticacao({ modo, perfil }) {
     evento.preventDefault();
     definirMensagem('');
     if (estaNoCadastro && dadosFormulario.senha !== dadosFormulario.confirmacaoSenha) { definirTipoMensagem('erro'); definirMensagem('As senhas precisam ser iguais.'); return; }
+    const dataNascimento = dataParaIso(dadosFormulario.dataNascimento);
+    if (estaNoCadastro && !dataNascimentoMaiorDeIdade(dataNascimento)) { definirTipoMensagem('erro'); definirMensagem('Você precisa ter pelo menos 18 anos para criar uma conta.'); return; }
     definirEnviando(true);
     const dadosEnvio = estaNoCadastro
-      ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento: dataParaIso(dadosFormulario.dataNascimento), ...(perfil === 'cliente' ? { cpf: dadosFormulario.cpf } : { tipoDocumento: dadosFormulario.tipoDocumento, documento: dadosFormulario.documento }) }
+      ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento, ...(perfil === 'cliente' ? { cpf: dadosFormulario.cpf } : { tipoDocumento: dadosFormulario.tipoDocumento, documento: dadosFormulario.documento }) }
       : { email: dadosFormulario.email, senha: dadosFormulario.senha };
     try {
       const dadosResposta = await requisitarApi(`/api/${configuracao.rotaApi}/${estaNoCadastro ? 'cadastro' : 'login'}`, { dados: dadosEnvio, metodo: 'POST' });

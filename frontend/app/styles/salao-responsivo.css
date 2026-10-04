@@ -32,5 +32,17 @@
   .grade-indicadores {
     grid-template-columns: 1fr;
   }
-}
 
+  .grade-planos {
+    grid-template-columns: 1fr;
+  }
+
+  .status-assinatura {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .opcoes-premium .botao-enviar {
+    width: auto;
+  }
+}

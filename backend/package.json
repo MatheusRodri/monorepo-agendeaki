@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/servidor.js",
-    "start": "node src/servidor.js",
-    "test": "node --test testes/*.test.js"
+    "start": "node src/servidor.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",
@@ -14,6 +13,7 @@
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "mysql2": "^3.14.3",
-    "sequelize": "^6.37.7"
+    "sequelize": "^6.37.7",
+    "stripe": "^23.0.0"
   }
 }

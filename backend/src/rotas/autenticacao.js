@@ -37,7 +37,7 @@ function validarDadosCadastro(dadosCadastro, perfil) {
   }
 
   if (!dataNascimentoValida(dadosCadastro.dataNascimento)) {
-    return 'Informe uma data de nascimento válida.';
+    return 'Você precisa ter pelo menos 18 anos para criar uma conta.';
   }
 
   if (perfil === perfis.cliente && !cpfValido(dadosCadastro.cpf)) {

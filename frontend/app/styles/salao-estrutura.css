@@ -10,6 +10,34 @@
   margin: 0 auto 0 1.3rem;
 }
 
+.acoes-cabecalho-salao {
+  align-items: center;
+  display: flex;
+  gap: .65rem;
+}
+
+.botao-assinatura {
+  background: var(--ameixa);
+  border: 1px solid var(--ameixa);
+  border-radius: 999px;
+  color: #fff;
+  font-size: .75rem;
+  font-weight: 700;
+  padding: .48rem .8rem;
+}
+
+.botao-assinatura:hover,
+.botao-assinatura--ativo {
+  background: var(--coral-escuro);
+  border-color: var(--coral-escuro);
+}
+
+.botao-assinatura--assinante,
+.botao-assinatura--assinante:hover {
+  background: #2f8f62;
+  border-color: #2f8f62;
+}
+
 .estrutura-salao {
   display: grid;
   grid-template-columns: 220px 1fr;
@@ -58,6 +86,183 @@
   color: var(--ameixa);
   font-size: 1rem;
   margin: 2.4rem 0 1rem;
+}
+
+.descricao-assinatura,
+.aviso-recursos-premium {
+  color: var(--texto-suave);
+  line-height: 1.55;
+  margin: -1rem 0 1.5rem;
+  max-width: 650px;
+}
+
+.grade-planos {
+  align-items: stretch;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cartao-plano {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  padding: 1.4rem;
+}
+
+.cartao-plano--premium {
+  border-color: color-mix(in srgb, var(--coral) 55%, var(--borda));
+  box-shadow: var(--sombra);
+}
+
+.cartao-plano h2 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.6rem;
+  margin: .2rem 0 1rem;
+}
+
+.preco-plano {
+  color: var(--coral-escuro);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 2rem;
+}
+
+.teste-plano {
+  color: var(--coral-escuro);
+  font-size: .84rem;
+  font-weight: 700;
+  margin: 0 0 .85rem;
+}
+
+.titulo-recursos-premium {
+  color: var(--texto-suave);
+  font-size: .75rem;
+  font-weight: 700;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.cartao-plano ul {
+  color: var(--texto-suave);
+  display: grid;
+  gap: .7rem;
+  list-style: none;
+  margin: 1.25rem 0;
+  padding: 0;
+}
+
+.cartao-plano li {
+  font-size: .86rem;
+}
+
+.recurso-em-breve small {
+  color: var(--coral-escuro);
+  display: block;
+  font-size: .7rem;
+  font-weight: 700;
+  margin: .25rem 0 0 1.1rem;
+}
+
+.lista-recursos-premium li > div {
+  align-items: baseline;
+  color: var(--texto);
+  display: flex;
+  gap: .3rem;
+}
+
+.lista-recursos-premium b {
+  color: var(--coral-escuro);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.lista-recursos-premium small {
+  color: var(--texto-suave);
+  display: block;
+  font-size: .7rem;
+  margin-top: .25rem;
+}
+
+.plano-atual {
+  color: var(--texto-suave);
+  font-size: .8rem;
+  font-weight: 700;
+  margin-top: auto;
+}
+
+.opcoes-premium {
+  display: grid;
+  gap: .65rem;
+  margin-top: auto;
+}
+
+.opcoes-premium section {
+  align-items: center;
+  border-top: 1px solid var(--borda);
+  display: flex;
+  gap: .7rem;
+  justify-content: space-between;
+  padding-top: .75rem;
+}
+
+.opcoes-premium section > div {
+  flex: 0 0 92px;
+}
+
+.opcoes-premium strong,
+.opcoes-premium span {
+  display: block;
+}
+
+.opcoes-premium strong {
+  color: var(--ameixa);
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+
+.opcoes-premium span {
+  color: var(--texto-suave);
+  font-size: .72rem;
+  margin-top: .15rem;
+}
+
+.opcoes-premium .botao-enviar {
+  font-size: .75rem;
+  margin: 0;
+  min-height: 42px;
+  padding: .55rem .85rem;
+  white-space: nowrap;
+  width: min(190px, 100%);
+}
+
+.status-assinatura {
+  align-items: center;
+  background: var(--creme);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin: 0 0 1.25rem;
+  padding: 1rem 1.15rem;
+}
+
+.status-assinatura strong { color: var(--ameixa); }
+
+.status-assinatura p,
+.status-assinatura small {
+  color: var(--texto-suave);
+  display: block;
+  font-size: .8rem;
+  line-height: 1.45;
+  margin: .25rem 0 0;
+}
+
+.aviso-recursos-premium {
+  font-size: .82rem;
+  margin: 1.3rem 0 0;
 }
 
 .grade-indicadores {
@@ -166,4 +371,3 @@
   color: var(--texto-suave);
   font-size: .72rem;
 }
-

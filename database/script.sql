@@ -11,7 +11,7 @@ USE tcc_salao;
 -- USUÁRIOS
 -- =====================================================
 
-CREATE TABLE tb_usuario (
+CREATE TABLE IF NOT EXISTS tb_usuario (
   id_usuario BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   nm_usuario VARCHAR(120) NOT NULL,
   ds_email VARCHAR(254) NOT NULL,
@@ -56,7 +56,7 @@ CREATE TABLE tb_usuario (
 -- Representa a marca ou estabelecimento geral.
 -- =====================================================
 
-CREATE TABLE tb_salao (
+CREATE TABLE IF NOT EXISTS tb_salao (
   id_salao BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_usuario_administrador BIGINT UNSIGNED NOT NULL,
 
@@ -66,6 +66,7 @@ CREATE TABLE tb_salao (
   nu_telefone VARCHAR(20) NULL,
 
   st_ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  st_teste_premium_utilizado BOOLEAN NOT NULL DEFAULT FALSE,
 
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   dt_atualizacao DATETIME NOT NULL
@@ -90,11 +91,84 @@ CREATE TABLE tb_salao (
 
 
 -- =====================================================
+-- CLIENTES CADASTRADOS DIRETAMENTE PELO SALÃO
+-- Estas fichas não representam contas de acesso.
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS tb_cliente_salao (
+  id_cliente_salao BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  fk_salao BIGINT UNSIGNED NOT NULL,
+  nm_cliente VARCHAR(120) NOT NULL,
+  ds_email VARCHAR(254) NULL,
+  nu_telefone VARCHAR(20) NULL,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  dt_atualizacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id_cliente_salao),
+  INDEX idx_cliente_salao_salao_nome (fk_salao, nm_cliente),
+
+  CONSTRAINT fk_cliente_salao_salao
+    FOREIGN KEY (fk_salao)
+    REFERENCES tb_salao (id_salao)
+    ON DELETE RESTRICT
+    ON UPDATE CASCADE
+) ENGINE = InnoDB;
+
+
+-- =====================================================
+-- ASSINATURAS DOS SALÕES
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS tb_assinatura_salao (
+  id_assinatura_salao BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  fk_salao BIGINT UNSIGNED NOT NULL,
+
+  cd_periodicidade ENUM('MENSAL', 'ANUAL') NOT NULL,
+  cd_periodicidade_pendente ENUM('MENSAL', 'ANUAL') NULL,
+  cd_status ENUM(
+    'PENDENTE',
+    'EM_TESTE',
+    'AUTORIZADA',
+    'PAUSADA',
+    'PAGAMENTO_PENDENTE',
+    'CANCELAMENTO_AGENDADO',
+    'CANCELADA'
+  ) NOT NULL DEFAULT 'PENDENTE',
+  vl_assinatura DECIMAL(10, 2) NOT NULL,
+  st_teste_gratis BOOLEAN NOT NULL DEFAULT FALSE,
+
+  ds_provedor VARCHAR(20) NOT NULL DEFAULT 'STRIPE',
+  id_cliente_provedor VARCHAR(150) NULL,
+  id_preco_provedor VARCHAR(150) NOT NULL,
+  id_assinatura_provedor VARCHAR(150) NULL,
+  id_checkout_provedor VARCHAR(150) NULL,
+  ds_referencia_externa CHAR(36) NOT NULL,
+
+  dt_inicio DATETIME NULL,
+  dt_proxima_cobranca DATETIME NULL,
+  dt_cancelamento_solicitado DATETIME NULL,
+  dt_cancelamento DATETIME NULL,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  dt_atualizacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id_assinatura_salao),
+  CONSTRAINT uk_assinatura_salao_referencia UNIQUE (ds_referencia_externa),
+  CONSTRAINT uk_assinatura_salao_provedor UNIQUE (id_assinatura_provedor),
+  INDEX idx_assinatura_salao_status (fk_salao, cd_status),
+  CONSTRAINT fk_assinatura_salao_salao
+    FOREIGN KEY (fk_salao) REFERENCES tb_salao (id_salao)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT ck_assinatura_salao_valor CHECK (vl_assinatura >= 0)
+) ENGINE = InnoDB;
+
+
+-- =====================================================
 -- UNIDADES
 -- Representa cada endereço físico de um salão.
 -- =====================================================
 
-CREATE TABLE tb_unidade (
+CREATE TABLE IF NOT EXISTS tb_unidade (
   id_unidade BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_salao BIGINT UNSIGNED NOT NULL,
 
@@ -179,7 +253,7 @@ CREATE TABLE tb_unidade (
 -- 6 = sábado
 -- =====================================================
 
-CREATE TABLE tb_horario_unidade (
+CREATE TABLE IF NOT EXISTS tb_horario_unidade (
   id_horario_unidade BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_unidade BIGINT UNSIGNED NOT NULL,
 
@@ -233,7 +307,7 @@ CREATE TABLE tb_horario_unidade (
 -- Cada serviço pertence a uma unidade.
 -- =====================================================
 
-CREATE TABLE tb_servico (
+CREATE TABLE IF NOT EXISTS tb_servico (
   id_servico BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_unidade BIGINT UNSIGNED NOT NULL,
 
@@ -282,7 +356,7 @@ CREATE TABLE tb_servico (
 -- Cada funcionário pertence a uma unidade.
 -- =====================================================
 
-CREATE TABLE tb_funcionario (
+CREATE TABLE IF NOT EXISTS tb_funcionario (
   id_funcionario BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_unidade BIGINT UNSIGNED NOT NULL,
 
@@ -316,7 +390,7 @@ CREATE TABLE tb_funcionario (
 -- Um serviço pode ser realizado por vários funcionários.
 -- =====================================================
 
-CREATE TABLE tb_funcionario_servico (
+CREATE TABLE IF NOT EXISTS tb_funcionario_servico (
   fk_funcionario BIGINT UNSIGNED NOT NULL,
   fk_servico BIGINT UNSIGNED NOT NULL,
 
@@ -354,7 +428,7 @@ CREATE TABLE tb_funcionario_servico (
 -- 13:00 até 18:00
 -- =====================================================
 
-CREATE TABLE tb_disponibilidade_funcionario (
+CREATE TABLE IF NOT EXISTS tb_disponibilidade_funcionario (
   id_disponibilidade BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_funcionario BIGINT UNSIGNED NOT NULL,
 
@@ -408,7 +482,7 @@ CREATE TABLE tb_disponibilidade_funcionario (
 -- Sem funcionário, o bloqueio vale para toda a filial.
 -- =====================================================
 
-CREATE TABLE tb_bloqueio_agenda (
+CREATE TABLE IF NOT EXISTS tb_bloqueio_agenda (
   id_bloqueio BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_unidade BIGINT UNSIGNED NOT NULL,
   fk_funcionario BIGINT UNSIGNED NULL,
@@ -443,10 +517,11 @@ CREATE TABLE tb_bloqueio_agenda (
 -- no agendamento para preservar o histórico.
 -- =====================================================
 
-CREATE TABLE tb_agendamento (
+CREATE TABLE IF NOT EXISTS tb_agendamento (
   id_agendamento BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 
-  fk_usuario BIGINT UNSIGNED NOT NULL,
+  fk_usuario BIGINT UNSIGNED NULL,
+  fk_cliente_salao BIGINT UNSIGNED NULL,
   fk_unidade BIGINT UNSIGNED NOT NULL,
   fk_funcionario BIGINT UNSIGNED NOT NULL,
   fk_servico BIGINT UNSIGNED NOT NULL,
@@ -481,6 +556,10 @@ CREATE TABLE tb_agendamento (
     fk_usuario
   ),
 
+  INDEX idx_agendamento_cliente_salao (
+    fk_cliente_salao
+  ),
+
   INDEX idx_agendamento_unidade (
     fk_unidade
   ),
@@ -502,6 +581,12 @@ CREATE TABLE tb_agendamento (
   CONSTRAINT fk_agendamento_usuario
     FOREIGN KEY (fk_usuario)
     REFERENCES tb_usuario (id_usuario)
+    ON DELETE RESTRICT
+    ON UPDATE CASCADE,
+
+  CONSTRAINT fk_agendamento_cliente_salao
+    FOREIGN KEY (fk_cliente_salao)
+    REFERENCES tb_cliente_salao (id_cliente_salao)
     ON DELETE RESTRICT
     ON UPDATE CASCADE,
 
@@ -553,7 +638,7 @@ CREATE TABLE tb_agendamento (
 -- de pagamento.
 -- =====================================================
 
-CREATE TABLE tb_pagamento (
+CREATE TABLE IF NOT EXISTS tb_pagamento (
   id_pagamento BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_agendamento BIGINT UNSIGNED NOT NULL,
 
