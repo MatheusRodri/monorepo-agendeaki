@@ -62,13 +62,7 @@ Crie a estrutura do banco executando o script abaixo no MySQL:
 mysql -u root -p < database/script.sql
 ```
 
-O script cria o banco `tcc_salao` e suas tabelas. Para uma base já existente, consulte os arquivos em `database/migrations/` antes de aplicar qualquer migração e faça um backup.
-
-Para atualizar uma base criada antes das URLs personalizadas e da nova disponibilidade:
-
-```bash
-mysql -u root -p < database/migrations/20261001_urls_e_disponibilidade.sql
-```
+O script prepara uma instalação nova. Em uma base existente, atualize o esquema manualmente antes de publicar mudanças que alterem tabelas.
 
 ### 3. Configure as variáveis de ambiente
 

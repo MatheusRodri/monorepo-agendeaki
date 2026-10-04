@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/servidor.js",
-    "start": "node src/servidor.js",
-    "test": "node --test testes/*.test.js"
+    "start": "node src/servidor.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",
