@@ -794,6 +794,7 @@ async function listarClientes(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const busca = String(requisicao.query.busca ?? '').trim();
+  const filtroBusca = busca ? 'WHERE (cliente.nome LIKE :busca OR cliente.email LIKE :busca OR cliente.telefone LIKE :busca)' : '';
   const clientes = await bancoDeDados.query(
     `SELECT cliente.idClienteSalao, cliente.idUsuario, cliente.nome, cliente.email, cliente.telefone,
             MAX(cliente.ultimoAgendamento) AS ultimoAgendamento
@@ -813,10 +814,10 @@ async function listarClientes(requisicao, resposta) {
        WHERE c.fk_salao=:idSalao
        GROUP BY c.id_cliente_salao, c.nm_cliente, c.ds_email, c.nu_telefone
      ) cliente
-     WHERE (:buscaVazia=TRUE OR cliente.nome LIKE :busca OR cliente.email LIKE :busca OR cliente.telefone LIKE :busca)
+     ${filtroBusca}
      GROUP BY cliente.idClienteSalao, cliente.idUsuario, cliente.nome, cliente.email, cliente.telefone
      ORDER BY MAX(cliente.ultimoAgendamento) DESC, cliente.nome`,
-    { replacements: { idSalao: salao.idSalao, busca: `%${busca}%`, buscaVazia: !busca }, type: QueryTypes.SELECT },
+    { replacements: { idSalao: salao.idSalao, busca: `%${busca}%` }, type: QueryTypes.SELECT },
   );
   resposta.status(200).json({ clientes });
 }
