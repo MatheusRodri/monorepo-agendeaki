@@ -878,6 +878,32 @@ async function listarAgendamentos(requisicao, resposta) {
   const agendamentos = await bancoDeDados.query(`SELECT a.id_agendamento AS idAgendamento, a.dt_inicio AS dataHoraInicio, a.dt_fim AS dataHoraFim, a.cd_status AS status, a.nm_servico_agendado AS servico, a.vl_servico_agendado AS valor, a.ds_observacao AS observacao, COALESCE(c.nm_usuario, cs.nm_cliente) AS cliente, COALESCE(c.ds_email, cs.ds_email) AS emailCliente, cs.nu_telefone AS telefoneCliente, f.nm_funcionario AS funcionario, u.nm_unidade AS filial, COALESCE(p.cd_status_pagamento, 'PENDENTE') AS statusPagamento, CASE WHEN p.cd_status_pagamento = 'APROVADO' THEN TRUE ELSE FALSE END AS pago FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao INNER JOIN tb_funcionario f ON f.id_funcionario=a.fk_funcionario LEFT JOIN (SELECT p1.fk_agendamento, p1.cd_status_pagamento FROM tb_pagamento p1 INNER JOIN (SELECT fk_agendamento, MAX(id_pagamento) AS idPagamento FROM tb_pagamento GROUP BY fk_agendamento) ultimo ON ultimo.idPagamento=p1.id_pagamento) p ON p.fk_agendamento=a.id_agendamento WHERE u.fk_salao=:idSalao AND (${condicao}) ORDER BY a.dt_inicio ${futuros ? 'ASC' : 'DESC'}`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ agendamentos });
 }
 
+async function confirmarAtendimentoAgendamento(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idAgendamento = Number(requisicao.params.idAgendamento);
+  if (!Number.isInteger(idAgendamento) || idAgendamento <= 0) { resposta.status(400).json({ mensagem: 'Agendamento inválido.' }); return; }
+  const agendamentos = await bancoDeDados.query(
+    `SELECT a.cd_status AS status, a.dt_inicio AS dataHoraInicio
+     FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+     WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao LIMIT 1`,
+    { replacements: { idAgendamento, idSalao: salao.idSalao }, type: QueryTypes.SELECT },
+  );
+  const agendamento = agendamentos[0];
+  if (!agendamento) { resposta.status(404).json({ mensagem: 'Agendamento não encontrado.' }); return; }
+  if (agendamento.status !== 'AGENDADO') { resposta.status(409).json({ mensagem: 'Somente agendamentos ainda não realizados podem ser confirmados.' }); return; }
+  if (new Date(agendamento.dataHoraInicio) > new Date()) { resposta.status(409).json({ mensagem: 'O atendimento só pode ser confirmado após o horário agendado.' }); return; }
+  const [resultado] = await bancoDeDados.query(
+    `UPDATE tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+     SET a.cd_status='REALIZADO' WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao
+       AND a.cd_status='AGENDADO' AND a.dt_inicio<=NOW()`,
+    { replacements: { idAgendamento, idSalao: salao.idSalao } },
+  );
+  if (!resultado.affectedRows) { resposta.status(409).json({ mensagem: 'O agendamento mudou de status ou ainda não chegou ao horário previsto.' }); return; }
+  resposta.status(200).json({ mensagem: 'Atendimento confirmado como realizado.' });
+}
+
 async function indicadores(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return; const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   try {
@@ -900,6 +926,246 @@ async function indicadores(requisicao, resposta) {
   } catch (erro) {
     console.error('[Indicadores salão] Falha ao carregar.', { mensagem: erro.message, parametros: requisicao.query });
     resposta.status(500).json({ mensagem: 'Não foi possível carregar os indicadores do salão.' });
+  }
+}
+
+function dataAtualSaoPaulo() {
+  const partes = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const valores = Object.fromEntries(partes.map(({ type, value }) => [type, value]));
+  return `${valores.year}-${valores.month}-${valores.day}`;
+}
+
+function deslocarDataIso(dataIso, quantidadeDias) {
+  const data = new Date(`${dataIso}T12:00:00.000Z`);
+  data.setUTCDate(data.getUTCDate() + quantidadeDias);
+  return data.toISOString().slice(0, 10);
+}
+
+function dataIsoValida(valor) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(valor ?? ''))) return false;
+  const data = new Date(`${valor}T00:00:00.000Z`);
+  return Number.isFinite(data.getTime()) && data.toISOString().slice(0, 10) === valor;
+}
+
+async function indicadoresPremium(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const assinatura = await obterAssinaturaSalao(salao.idSalao);
+  if (!resumoAssinatura(assinatura).temAcessoPremium) {
+    resposta.status(403).json({ mensagem: 'O dashboard avançado está disponível para assinantes Premium.' }); return;
+  }
+  try {
+    const idUnidade = Number(requisicao.query.idUnidade) || 0;
+    const idServico = Number(requisicao.query.idServico) || 0;
+    const idFuncionario = Number(requisicao.query.idFuncionario) || 0;
+    const hoje = dataAtualSaoPaulo();
+    let dataInicio = dataIsoValida(requisicao.query.dataInicio) ? requisicao.query.dataInicio : null;
+    let dataFim = dataIsoValida(requisicao.query.dataFim) ? requisicao.query.dataFim : null;
+    if (!dataInicio && !dataFim) { dataFim = hoje; dataInicio = deslocarDataIso(hoje, -29); }
+    else if (!dataInicio) dataInicio = deslocarDataIso(dataFim, -29);
+    else if (!dataFim) dataFim = hoje;
+    if (dataInicio > dataFim) { resposta.status(400).json({ mensagem: 'A data inicial deve ser anterior ou igual à data final.' }); return; }
+    const quantidadeDiasPeriodo = Math.floor((new Date(`${dataFim}T00:00:00.000Z`) - new Date(`${dataInicio}T00:00:00.000Z`)) / 86_400_000) + 1;
+    const dataFimAnterior = deslocarDataIso(dataInicio, -1);
+    const dataInicioAnterior = deslocarDataIso(dataFimAnterior, -(quantidadeDiasPeriodo - 1));
+    const filtros = { idSalao: salao.idSalao };
+    const condicoes = ['u.fk_salao=:idSalao'];
+    if (idUnidade) { filtros.idUnidade = idUnidade; condicoes.push('a.fk_unidade=:idUnidade'); }
+    if (idServico) { filtros.idServico = idServico; condicoes.push('a.fk_servico=:idServico'); }
+    if (idFuncionario) { filtros.idFuncionario = idFuncionario; condicoes.push('a.fk_funcionario=:idFuncionario'); }
+    const condicaoBase = condicoes.join(' AND ');
+    const condicoesAgendamentos = [...condicoes];
+    if (dataInicio) { filtros.dataInicio = dataInicio; condicoesAgendamentos.push('DATE(a.dt_inicio)>=:dataInicio'); }
+    if (dataFim) { filtros.dataFim = dataFim; condicoesAgendamentos.push('DATE(a.dt_inicio)<=:dataFim'); }
+    const condicaoAgendamentos = condicoesAgendamentos.join(' AND ');
+    const periodoAgendamento = [dataInicio ? 'DATE(a.dt_inicio)>=:dataInicio' : null, dataFim ? 'DATE(a.dt_inicio)<=:dataFim' : null].filter(Boolean).join(' AND ');
+    const periodoPagamento = [dataInicio ? 'DATE(p.dt_pagamento)>=:dataInicio' : null, dataFim ? 'DATE(p.dt_pagamento)<=:dataFim' : null].filter(Boolean).join(' AND ');
+    const restricaoPagamento = periodoPagamento ? ` AND ${periodoPagamento}` : '';
+    const restricaoAgendamento = periodoAgendamento ? ` AND ${periodoAgendamento}` : '';
+    const condicoesPagamentos = [...condicoes];
+    if (dataInicio) condicoesPagamentos.push('DATE(p.dt_pagamento)>=:dataInicio');
+    if (dataFim) condicoesPagamentos.push('DATE(p.dt_pagamento)<=:dataFim');
+    const condicaoPagamentos = condicoesPagamentos.join(' AND ');
+    const periodoAnteriorAgendamentos = 'DATE(a.dt_inicio) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
+    const periodoAnteriorPagamentos = 'DATE(p.dt_pagamento) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
+    const filtrosComparacao = { ...filtros, dataInicioAnterior, dataFimAnterior };
+    const idClienteSql = "COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))";
+    const ultimoPagamento = `SELECT p1.* FROM tb_pagamento p1 INNER JOIN (SELECT fk_agendamento, MAX(id_pagamento) AS idPagamento FROM tb_pagamento GROUP BY fk_agendamento) ultimo ON ultimo.idPagamento=p1.id_pagamento`;
+    const [resumo, receitaPrevista, comparacaoAnterior, receitaPorDia, receitaPorServico, receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes, clientesInativos, profissionais, disponibilidade, filiais, servicos, funcionarios] = await Promise.all([
+      bancoDeDados.query(`SELECT
+        COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN p.vl_pagamento ELSE 0 END),0) AS receitaRealizada,
+        COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN 1 ELSE 0 END),0) AS atendimentosPagos,
+        COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos,
+        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosRealizados,
+        COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosMarcados,
+        COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO' AND a.dt_inicio<NOW()${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
+        COALESCE(SUM(CASE WHEN 1=1${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
+        COALESCE(SUM(CASE WHEN (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        LEFT JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
+        WHERE ${condicaoBase}`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT COALESCE(SUM(a.vl_servico_agendado),0) AS receitaPrevista
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        WHERE ${condicaoBase} AND a.cd_status='AGENDADO' AND a.dt_inicio>=NOW()
+          AND a.dt_inicio<DATE_ADD(NOW(), INTERVAL 30 DAY)`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorPagamentos} AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL THEN p.vl_pagamento ELSE 0 END),0) AS receitaRealizada,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorPagamentos} AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL THEN 1 ELSE 0 END),0) AS atendimentosPagos,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' AND a.dt_inicio<NOW() THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        LEFT JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
+        WHERE ${condicaoBase}`, { replacements: filtrosComparacao, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT DATE_FORMAT(p.dt_pagamento,'%Y-%m-%d') AS data, SUM(p.vl_pagamento) AS valor
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        INNER JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
+        WHERE ${condicaoPagamentos} AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL
+        GROUP BY DATE_FORMAT(p.dt_pagamento,'%Y-%m-%d') ORDER BY DATE_FORMAT(p.dt_pagamento,'%Y-%m-%d')`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, SUM(p.vl_pagamento) AS valor
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        INNER JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
+        WHERE ${condicaoPagamentos} AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL
+        GROUP BY a.nm_servico_agendado ORDER BY valor DESC LIMIT 8`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, SUM(p.vl_pagamento) AS valor
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        INNER JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
+        WHERE ${condicoes.join(' AND ')} AND ${periodoAnteriorPagamentos}
+          AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL
+        GROUP BY a.nm_servico_agendado ORDER BY valor DESC LIMIT 8`, { replacements: filtrosComparacao, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT DATE_FORMAT(a.dt_inicio,'%Y-%m-%d') AS data, COUNT(*) AS quantidade
+        , SUM(CASE WHEN a.cd_status='AGENDADO' THEN 1 ELSE 0 END) AS agendados
+        , SUM(CASE WHEN a.cd_status='REALIZADO' THEN 1 ELSE 0 END) AS realizados
+        , SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END) AS cancelados
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        WHERE ${condicaoAgendamentos}
+        GROUP BY DATE_FORMAT(a.dt_inicio,'%Y-%m-%d') ORDER BY DATE_FORMAT(a.dt_inicio,'%Y-%m-%d')`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT DAYOFWEEK(a.dt_inicio)-1 AS diaSemana, HOUR(a.dt_inicio) AS hora,
+        SUM(CASE WHEN a.cd_status<>'CANCELADO' THEN 1 ELSE 0 END) AS quantidade,
+        SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END) AS cancelados
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        WHERE ${condicaoAgendamentos}
+        GROUP BY DAYOFWEEK(a.dt_inicio)-1, HOUR(a.dt_inicio)
+        ORDER BY DAYOFWEEK(a.dt_inicio)-1, HOUR(a.dt_inicio)`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT COUNT(*) AS clientesAtendidos,
+        COALESCE(SUM(CASE WHEN DATE(h.primeiroAtendimento) BETWEEN :dataInicio AND :dataFim THEN 1 ELSE 0 END),0) AS clientesNovos,
+        COALESCE(SUM(CASE WHEN DATE(h.primeiroAtendimento) < :dataInicio THEN 1 ELSE 0 END),0) AS clientesRecorrentes
+        FROM (SELECT DISTINCT ${idClienteSql} AS idCliente
+          FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+          WHERE ${condicaoAgendamentos} AND a.cd_status='REALIZADO'
+            AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)) periodo
+        INNER JOIN (SELECT COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao)) AS idCliente,
+            MIN(a.dt_inicio) AS primeiroAtendimento
+          FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+          WHERE u.fk_salao=:idSalao AND a.cd_status='REALIZADO'
+            AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)
+          GROUP BY COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))) h ON h.idCliente=periodo.idCliente`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao)) AS idCliente,
+          MAX(COALESCE(c.nm_usuario,cs.nm_cliente)) AS cliente,
+          MAX(COALESCE(c.ds_email,cs.ds_email)) AS email,
+          MAX(cs.nu_telefone) AS telefone,
+          MAX(a.dt_inicio) AS ultimoAtendimento
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario
+        LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao
+        WHERE u.fk_salao=:idSalao AND a.cd_status='REALIZADO'
+          AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)
+        GROUP BY COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))
+        HAVING MAX(a.dt_inicio)<DATE_SUB(NOW(), INTERVAL 90 DAY)
+        ORDER BY ultimoAtendimento ASC LIMIT 20`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS profissional,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO' THEN a.nu_duracao_minutos ELSE 0 END),0) AS minutosAtendimentoRealizado,
+        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS cancelamentos,
+        COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN p.vl_pagamento ELSE 0 END),0) AS receitaRealizada,
+        COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN 1 ELSE 0 END),0) AS atendimentosPagos
+        FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
+        LEFT JOIN tb_agendamento a ON a.fk_funcionario=f.id_funcionario${restricaoAgendamento}
+          AND (:idServico = 0 OR a.fk_servico = :idServico)
+        LEFT JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
+        WHERE u.fk_salao = :idSalao AND (:idUnidade = 0 OR f.fk_unidade = :idUnidade)
+          AND (:idFuncionario = 0 OR f.id_funcionario = :idFuncionario) AND f.st_ativo=TRUE
+        GROUP BY f.id_funcionario, f.nm_funcionario ORDER BY atendimentosRealizados DESC, receitaRealizada DESC`, { replacements: { ...filtros, idUnidade, idServico, idFuncionario }, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT f.id_funcionario AS idFuncionario, d.nr_dia_semana AS diaSemana,
+        SUM(TIME_TO_SEC(TIMEDIFF(d.hr_fim,d.hr_inicio))/60) AS minutosDisponiveis
+        FROM tb_disponibilidade_funcionario d INNER JOIN tb_funcionario f ON f.id_funcionario=d.fk_funcionario
+        INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
+        WHERE u.fk_salao=:idSalao AND f.st_ativo=TRUE AND d.st_ativo=TRUE
+          AND (:idUnidade = 0 OR f.fk_unidade = :idUnidade) AND (:idFuncionario = 0 OR f.id_funcionario = :idFuncionario)
+        GROUP BY f.id_funcionario, d.nr_dia_semana`, { replacements: { idSalao: salao.idSalao, idUnidade, idFuncionario }, type: QueryTypes.SELECT }),
+      bancoDeDados.query('SELECT id_unidade AS idUnidade, nm_unidade AS nome FROM tb_unidade WHERE fk_salao=:idSalao AND st_ativo=TRUE ORDER BY nm_unidade', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
+      bancoDeDados.query('SELECT s.id_servico AS idServico, s.nm_servico AS nome FROM tb_servico s INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY s.nm_servico', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
+      bancoDeDados.query('SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS nome FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade WHERE u.fk_salao=:idSalao AND f.st_ativo=TRUE ORDER BY f.nm_funcionario', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
+    ]);
+    const ocorrenciasSemana = Array(7).fill(Math.floor(quantidadeDiasPeriodo / 7));
+    const diasRestantes = quantidadeDiasPeriodo % 7;
+    const diaSemanaInicial = new Date(`${dataInicio}T12:00:00.000Z`).getUTCDay();
+    for (let indice = 0; indice < diasRestantes; indice += 1) ocorrenciasSemana[(diaSemanaInicial + indice) % 7] += 1;
+    const minutosDisponiveisPorProfissional = new Map();
+    for (const linha of disponibilidade) {
+      const id = String(linha.idFuncionario);
+      const minutos = Number(linha.minutosDisponiveis ?? 0) * ocorrenciasSemana[Number(linha.diaSemana)];
+      minutosDisponiveisPorProfissional.set(id, (minutosDisponiveisPorProfissional.get(id) ?? 0) + minutos);
+    }
+    const desempenhoProfissionais = profissionais.map((profissional) => {
+      const minutosDisponiveis = minutosDisponiveisPorProfissional.get(String(profissional.idFuncionario)) ?? 0;
+      const horasDisponiveis = minutosDisponiveis / 60;
+      const minutosAtendidos = Number(profissional.minutosAtendimentoRealizado ?? 0);
+      return {
+        ...profissional,
+        ticketMedio: Number(profissional.atendimentosPagos) ? Number(profissional.receitaRealizada) / Number(profissional.atendimentosPagos) : 0,
+        horasDisponiveisEstimadas: horasDisponiveis,
+        ocupacaoEstimada: minutosDisponiveis ? (minutosAtendidos / minutosDisponiveis) * 100 : null,
+      };
+    });
+    resumo[0].receitaPrevista = receitaPrevista[0].receitaPrevista;
+    const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    const insights = [];
+    const taxaCancelamentoAtual = Number(resumo[0].quantidadeAgendamentosElegiveis)
+      ? (Number(resumo[0].quantidadeAgendamentosCancelados) / Number(resumo[0].quantidadeAgendamentosElegiveis)) * 100 : 0;
+    const taxaCancelamentoPassada = Number(comparacaoAnterior[0].quantidadeAgendamentosElegiveis)
+      ? (Number(comparacaoAnterior[0].quantidadeAgendamentosCancelados) / Number(comparacaoAnterior[0].quantidadeAgendamentosElegiveis)) * 100 : 0;
+    if (Number(resumo[0].quantidadeAtendimentosAConfirmar) > 0) {
+      insights.push({ tipo: 'acao', titulo: 'Confirme atendimentos concluídos', descricao: `${resumo[0].quantidadeAtendimentosAConfirmar} agendamento(s) passado(s) ainda aguardam confirmação na Agenda.` });
+    }
+    if (taxaCancelamentoAtual >= 15 && taxaCancelamentoAtual > taxaCancelamentoPassada) {
+      insights.push({ tipo: 'alerta', titulo: 'Cancelamentos em alta', descricao: `A taxa está em ${taxaCancelamentoAtual.toFixed(1).replace('.', ',')}%, ${ (taxaCancelamentoAtual - taxaCancelamentoPassada).toFixed(1).replace('.', ',')} p.p. acima do período anterior.` });
+    }
+    const horarioMaisProcurado = [...mapaCalor].sort((a, b) => Number(b.quantidade) - Number(a.quantidade))[0];
+    if (horarioMaisProcurado && Number(horarioMaisProcurado.quantidade) > 0) {
+      insights.push({ tipo: 'info', titulo: 'Horário com maior procura', descricao: `O pico foi ${diasSemana[Number(horarioMaisProcurado.diaSemana)]}, às ${String(horarioMaisProcurado.hora).padStart(2, '0')}h, com ${horarioMaisProcurado.quantidade} atendimento(s) não cancelado(s).` });
+    }
+    const receitaAnteriorPorServico = new Map(receitaPorServicoAnterior.map((item) => [item.servico, Number(item.valor)]));
+    const variacoesServico = receitaPorServico.map((item) => {
+      const anteriorServico = receitaAnteriorPorServico.get(item.servico);
+      return anteriorServico > 0 ? { ...item, variacao: ((Number(item.valor) - anteriorServico) / anteriorServico) * 100 } : null;
+    }).filter((item) => item && Math.abs(item.variacao) >= 20).sort((a, b) => Math.abs(b.variacao) - Math.abs(a.variacao));
+    for (const servico of variacoesServico.slice(0, 2)) {
+      insights.push({ tipo: servico.variacao > 0 ? 'positivo' : 'alerta', titulo: servico.variacao > 0 ? 'Serviço em crescimento' : 'Serviço em queda', descricao: `${servico.servico}: receita ${servico.variacao > 0 ? 'subiu' : 'caiu'} ${Math.abs(servico.variacao).toFixed(0)}% em relação ao período anterior.` });
+    }
+    const profissionaisComBaixaOcupacao = desempenhoProfissionais.filter((item) => item.ocupacaoEstimada !== null && item.horasDisponiveisEstimadas >= 10 && item.ocupacaoEstimada < 30);
+    if (profissionaisComBaixaOcupacao.length) {
+      const nomes = profissionaisComBaixaOcupacao.slice(0, 3).map((item) => item.profissional).join(', ');
+      insights.push({ tipo: 'acao', titulo: 'Revise horários disponíveis', descricao: `${nomes} tiveram ocupação estimada abaixo de 30% da disponibilidade semanal cadastrada.` });
+    }
+    if (clientesInativos.length) {
+      insights.push({ tipo: 'acao', titulo: 'Retome contato com clientes inativos', descricao: `A lista mostra até 20 clientes sem atendimento concluído há pelo menos 90 dias.` });
+    }
+    if (!insights.length) insights.push({ tipo: 'positivo', titulo: 'Nenhum alerta para este período', descricao: 'Não encontramos variações relevantes pelas regras atuais do dashboard.' });
+    resposta.status(200).json({
+      resumo: resumo[0], comparacaoAnterior: comparacaoAnterior[0], receitaPorDia, receitaPorServico,
+      receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes: clientes[0], clientesInativos,
+      profissionais: desempenhoProfissionais, insights,
+      periodoComparacao: { dataInicioAnterior, dataFimAnterior },
+      filtros: { dataInicio, dataFim, idUnidade, idServico, idFuncionario },
+      opcoesFiltros: { filiais, servicos, funcionarios },
+    });
+  } catch (erro) {
+    console.error('[Dashboard Premium salão] Falha ao carregar.', { mensagem: erro.message, parametros: requisicao.query });
+    resposta.status(500).json({ mensagem: 'Não foi possível carregar o dashboard Premium.' });
   }
 }
 
@@ -1089,7 +1355,7 @@ roteadorSalao.post('/servicos', criarServico); roteadorSalao.get('/servicos', li
 roteadorSalao.post('/funcionarios', criarFuncionario); roteadorSalao.get('/funcionarios', listarFuncionarios); roteadorSalao.patch('/funcionarios/:idFuncionario', atualizarFuncionario); roteadorSalao.delete('/funcionarios/:idFuncionario', excluirFuncionario);
 roteadorSalao.get('/disponibilidade', listarDisponibilidade); roteadorSalao.put('/funcionarios/:idFuncionario/disponibilidade', salvarDisponibilidadeFuncionario);
 roteadorSalao.post('/bloqueios', criarBloqueio); roteadorSalao.delete('/bloqueios/:idBloqueio', excluirBloqueio);
-roteadorSalao.get('/clientes', listarClientes); roteadorSalao.get('/agendamentos', listarAgendamentos); roteadorSalao.get('/agendamentos/horarios', listarHorariosAgendamento); roteadorSalao.post('/agendamentos', criarAgendamentoSalao); roteadorSalao.get('/indicadores', indicadores);
+roteadorSalao.get('/clientes', listarClientes); roteadorSalao.get('/agendamentos', listarAgendamentos); roteadorSalao.get('/agendamentos/horarios', listarHorariosAgendamento); roteadorSalao.post('/agendamentos', criarAgendamentoSalao); roteadorSalao.patch('/agendamentos/:idAgendamento/confirmar-atendimento', confirmarAtendimentoAgendamento); roteadorSalao.get('/indicadores', indicadores); roteadorSalao.get('/indicadores/premium', indicadoresPremium);
 roteadorSalao.get('/assinatura', consultarAssinatura); roteadorSalao.post('/assinatura/ativar', ativarAssinaturaTeste); roteadorSalao.post('/assinatura/checkout', iniciarCheckoutAssinatura); roteadorSalao.patch('/assinatura/cancelar', cancelarAssinatura); roteadorSalao.patch('/assinatura/periodicidade', alterarPeriodicidadeAssinatura);
 
 export default roteadorSalao;
