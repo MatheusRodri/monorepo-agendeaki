@@ -30,6 +30,12 @@
     flex-direction: column;
   }
 
+  .cartao-agendamento-salao__acoes {
+    align-items: flex-start;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
   .acoes-formulario .botao-enviar {
     flex-basis: 100%;
   }

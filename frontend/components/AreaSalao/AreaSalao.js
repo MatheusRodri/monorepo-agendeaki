@@ -134,9 +134,62 @@ export default function AreaSalao({ secao }) {
       definirMensagem(mensagemSucesso); definirTipoMensagem('sucesso');
     } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); }
   }
+  async function confirmarAtendimento(idAgendamento) {
+    try {
+      const resultado = await requisitar(`/agendamentos/${idAgendamento}/confirmar-atendimento`, { method: 'PATCH' });
+      definirDados((atuais) => ({ ...atuais, agendamentos: atuais.agendamentos?.map((agendamento) => agendamento.idAgendamento === idAgendamento ? { ...agendamento, status: 'REALIZADO' } : agendamento) }));
+      definirMensagem(resultado.mensagem); definirTipoMensagem('sucesso');
+      return true;
+    } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); return false; }
+  }
 
   const enderecoCep = dados.enderecoCep ?? filialEdicao ?? {};
-  return <main className="area-salao"><header className="cabecalho-area"><Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><p className="titulo-area-salao">Painel do salão</p><div className="acoes-cabecalho-salao"><Link className={['botao-assinatura', secao === 'assinatura' && 'botao-assinatura--ativo', assinante && 'botao-assinatura--assinante'].filter(Boolean).join(' ')} href="/salao/assinatura">{assinante ? 'Assinante' : 'Assinatura'}</Link><AlternadorTema /></div></header><div className="estrutura-salao"><aside className="menu-salao">{navegacao.map(([chave, titulo, caminho]) => <Link className={secao === chave ? 'menu-salao__ativo' : ''} href={caminho} key={chave}>{titulo}</Link>)}</aside><section className="conteudo-salao">{mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`}>{mensagem}</p>}{carregando ? <p className="estado-lista">Carregando...</p> : <ConteudoSalao dados={dados} enderecoCep={enderecoCep} enviarFormulario={enviarFormulario} excluirConta={excluirConta} excluirItem={excluirItem} buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} filialEdicao={filialEdicao} definirFilialEdicao={definirFilialEdicao} requisitar={requisitar} servicoEdicao={servicoEdicao} definirServicoEdicao={definirServicoEdicao} funcionarioEdicao={funcionarioEdicao} definirFuncionarioEdicao={definirFuncionarioEdicao} idFilialProfissional={idFilialProfissional} definirIdFilialProfissional={definirIdFilialProfissional} secao={secao} tipoAgenda={tipoAgenda} definirTipoAgenda={definirTipoAgenda} filtrosDashboard={filtrosDashboard} definirFiltrosDashboard={definirFiltrosDashboard} aoAtivarPremium={() => definirAssinante(true)} aoSalvarAgendamento={aoSalvarAgendamento} />}</section></div></main>;
+  return (
+    <main className="area-salao">
+      <header className="cabecalho-area">
+        <Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link>
+        <p className="titulo-area-salao">Painel do salão</p>
+        <div className="acoes-cabecalho-salao">
+          <Link className={['botao-assinatura', secao === 'assinatura' && 'botao-assinatura--ativo', assinante && 'botao-assinatura--assinante'].filter(Boolean).join(' ')} href="/salao/assinatura">{assinante ? 'Assinante' : 'Assinatura'}</Link>
+          <AlternadorTema />
+        </div>
+      </header>
+      <div className="estrutura-salao">
+        <aside className="menu-salao">{navegacao.map(([chave, titulo, caminho]) => <Link className={secao === chave ? 'menu-salao__ativo' : ''} href={caminho} key={chave}>{titulo}</Link>)}</aside>
+        <section className="conteudo-salao">
+          {mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`}>{mensagem}</p>}
+          {carregando ? <p className="estado-lista">Carregando...</p> : (
+            <ConteudoSalao
+              dados={dados}
+              enderecoCep={enderecoCep}
+              enviarFormulario={enviarFormulario}
+              excluirConta={excluirConta}
+              excluirItem={excluirItem}
+              buscarCep={buscarCep}
+              buscarCoordenadas={buscarCoordenadas}
+              filialEdicao={filialEdicao}
+              definirFilialEdicao={definirFilialEdicao}
+              requisitar={requisitar}
+              servicoEdicao={servicoEdicao}
+              definirServicoEdicao={definirServicoEdicao}
+              funcionarioEdicao={funcionarioEdicao}
+              definirFuncionarioEdicao={definirFuncionarioEdicao}
+              idFilialProfissional={idFilialProfissional}
+              definirIdFilialProfissional={definirIdFilialProfissional}
+              secao={secao}
+              tipoAgenda={tipoAgenda}
+              definirTipoAgenda={definirTipoAgenda}
+              filtrosDashboard={filtrosDashboard}
+              definirFiltrosDashboard={definirFiltrosDashboard}
+              aoAtivarPremium={() => definirAssinante(true)}
+              aoSalvarAgendamento={aoSalvarAgendamento}
+              aoConfirmarAtendimento={confirmarAtendimento}
+            />
+          )}
+        </section>
+      </div>
+    </main>
+  );
 }
 
 function ConteudoSalao(propriedades) {
@@ -285,8 +338,14 @@ function Servicos({ dados, enviarFormulario, excluirItem, servicoEdicao, definir
 
 function Funcionarios({ dados, enviarFormulario, excluirItem, funcionarioEdicao, definirFuncionarioEdicao, idFilialProfissional, definirIdFilialProfissional }) { const editando = Boolean(funcionarioEdicao); const idFilial = idFilialProfissional || funcionarioEdicao?.idUnidade || ''; const servicosFilial = dados.servicos?.filter((servico) => Number(servico.idUnidade) === Number(idFilial)) ?? []; return <><p className="sobretitulo">Seu time</p><h1>{editando ? 'Atualize o profissional.' : 'Profissionais preparados para cuidar.'}</h1><form className="formulario-salao grade-formulario" key={funcionarioEdicao?.idFuncionario ?? 'novo'} onSubmit={(evento) => enviarFormulario(evento, editando ? `/funcionarios/${funcionarioEdicao.idFuncionario}` : '/funcionarios', editando ? 'PATCH' : 'POST')}><Campo nome="nome" rotulo="Nome do profissional" valor={funcionarioEdicao?.nome} /><label className="campo-formulario"><span>Filial</span><select name="idUnidade" onChange={(evento) => definirIdFilialProfissional(evento.target.value)} required value={idFilial}><option value="">Selecione</option>{dados.filiais?.map((filial) => <option key={filial.idUnidade} value={filial.idUnidade}>{filial.nome}</option>)}</select></label><label className="campo-formulario"><span>Serviços que realiza</span><select defaultValue={funcionarioEdicao?.idsServicos?.map(String)} disabled={!idFilial} key={`${funcionarioEdicao?.idFuncionario ?? 'novo'}-${idFilial}`} multiple name="idsServicos" required>{idFilial ? servicosFilial.map((servico) => <option key={servico.idServico} value={servico.idServico}>{servico.nome}</option>) : <option>Selecione uma filial primeiro</option>}</select></label><div className="acoes-formulario"><button className="botao-enviar">{editando ? 'Salvar profissional' : 'Adicionar profissional'} <span>→</span></button>{editando && <button className="botao-secundario" onClick={() => { definirFuncionarioEdicao(null); definirIdFilialProfissional(''); }} type="button">Cancelar edição</button>}</div></form><CabecalhoLista titulo="Profissionais cadastrados" descricao="Edite os serviços de cada profissional ou remova-o da agenda." /><div className="grade-gestao">{dados.funcionarios?.map((funcionario) => <article className="cartao-gestao" key={funcionario.idFuncionario}><div><strong>{funcionario.nome}</strong><span>{funcionario.filial}</span><small>{funcionario.servicos || 'Sem serviços vinculados'}</small></div><AcoesGestao aoEditar={() => { definirFuncionarioEdicao(funcionario); definirIdFilialProfissional(String(funcionario.idUnidade)); }} aoExcluir={() => excluirItem(`/funcionarios/${funcionario.idFuncionario}`, `o profissional “${funcionario.nome}”`)} /></article>)}</div>{!dados.funcionarios?.length && <p className="estado-lista">Nenhum profissional cadastrado.</p>}</>; }
 
-function Agenda({ dados, tipoAgenda, definirTipoAgenda, requisitar, aoSalvarAgendamento }) {
+function Agenda({ dados, tipoAgenda, definirTipoAgenda, requisitar, aoSalvarAgendamento, aoConfirmarAtendimento }) {
   const [criando, definirCriando] = useState(false);
+  const [confirmandoId, definirConfirmandoId] = useState(null);
+  async function confirmar(idAgendamento) {
+    definirConfirmandoId(idAgendamento);
+    await aoConfirmarAtendimento(idAgendamento);
+    definirConfirmandoId(null);
+  }
   return <>
     <p className="sobretitulo">Sua agenda</p><h1>Atendimentos do salão.</h1>
     <div className="cabecalho-agenda-salao">
@@ -294,7 +353,7 @@ function Agenda({ dados, tipoAgenda, definirTipoAgenda, requisitar, aoSalvarAgen
       <button className="botao-enviar" onClick={() => definirCriando((valor) => !valor)} type="button">{criando ? 'Fechar formulário' : 'Novo agendamento'} <span>{criando ? '×' : '+'}</span></button>
     </div>
     {criando && <FormularioAgendamentoSalao clientes={dados.clientes ?? []} filiais={dados.filiais ?? []} funcionarios={dados.funcionarios ?? []} requisitar={requisitar} servicos={dados.servicos ?? []} aoCancelar={() => definirCriando(false)} aoSalvar={async (mensagem) => { definirCriando(false); await aoSalvarAgendamento(mensagem); }} />}
-    <div className="lista-agendamentos-salao">{dados.agendamentos?.map((agendamento) => <article className="cartao-agendamento-salao" key={agendamento.idAgendamento}><div className="cartao-agendamento-salao__cabecalho"><div><strong>{agendamento.cliente}</strong><span>{formatarDataHora(agendamento.dataHoraInicio)} · {agendamento.filial}</span>{(agendamento.emailCliente || agendamento.telefoneCliente) && <small>{agendamento.telefoneCliente}{agendamento.telefoneCliente && agendamento.emailCliente ? ' · ' : ''}{agendamento.emailCliente}</small>}</div><span className={`selo-status selo-status--${String(agendamento.status).toLowerCase()}`}>{agendamento.status === 'AGENDADO' ? 'Confirmado' : agendamento.status === 'REALIZADO' ? 'Realizado' : 'Cancelado'}</span></div><dl><div><dt>Serviço</dt><dd>{agendamento.servico} · R$ {Number(agendamento.valor).toFixed(2).replace('.', ',')}</dd></div><div><dt>Profissional</dt><dd>{agendamento.funcionario}</dd></div><div><dt>Pagamento</dt><dd>{agendamento.pago ? 'Pago' : `Não pago (${agendamento.statusPagamento})`}</dd></div><div><dt>Observação</dt><dd>{agendamento.observacao || 'Nenhuma observação.'}</dd></div></dl></article>)}</div>{!dados.agendamentos?.length && <p className="estado-lista">Nenhum agendamento encontrado.</p>}
+    <div className="lista-agendamentos-salao">{dados.agendamentos?.map((agendamento) => { const horarioFuturo = new Date(agendamento.dataHoraInicio) > new Date(); return <article className="cartao-agendamento-salao" key={agendamento.idAgendamento}><div className="cartao-agendamento-salao__cabecalho"><div><strong>{agendamento.cliente}</strong><span>{formatarDataHora(agendamento.dataHoraInicio)} · {agendamento.filial}</span>{(agendamento.emailCliente || agendamento.telefoneCliente) && <small>{agendamento.telefoneCliente}{agendamento.telefoneCliente && agendamento.emailCliente ? ' · ' : ''}{agendamento.emailCliente}</small>}</div><div className="cartao-agendamento-salao__acoes"><span className={`selo-status selo-status--${String(agendamento.status).toLowerCase()}`}>{agendamento.status === 'AGENDADO' ? 'Confirmado' : agendamento.status === 'REALIZADO' ? 'Realizado' : 'Cancelado'}</span>{agendamento.status === 'AGENDADO' && <button className="botao-confirmar-atendimento" disabled={horarioFuturo || confirmandoId === agendamento.idAgendamento} onClick={() => confirmar(agendamento.idAgendamento)} title={horarioFuturo ? 'Disponível após o horário do agendamento.' : undefined} type="button">{confirmandoId === agendamento.idAgendamento ? 'Salvando...' : 'Confirmar atendimento'}</button>}</div></div><dl><div><dt>Serviço</dt><dd>{agendamento.servico} · R$ {Number(agendamento.valor).toFixed(2).replace('.', ',')}</dd></div><div><dt>Profissional</dt><dd>{agendamento.funcionario}</dd></div><div><dt>Pagamento</dt><dd>{agendamento.pago ? 'Pago' : `Não pago (${agendamento.statusPagamento})`}</dd></div><div><dt>Observação</dt><dd>{agendamento.observacao || 'Nenhuma observação.'}</dd></div></dl></article>; })}</div>{!dados.agendamentos?.length && <p className="estado-lista">Nenhum agendamento encontrado.</p>}
   </>;
 }
 
