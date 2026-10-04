@@ -11,6 +11,7 @@ O **AgendeAki** centraliza a rotina de agendamentos de salões de beleza. Client
 - Cadastro, login, recuperação e redefinição de senha para clientes e salões.
 - Busca de salões próximos e consulta de serviços disponíveis.
 - Agendamento por link público personalizado de cada filial.
+- Agendamentos criados pelo salão para clientes sem conta, com ficha reutilizável.
 - Horários calculados pela duração do serviço e pela jornada de cada profissional.
 - Área administrativa para gerenciar dados do salão, filiais, funcionários, disponibilidade, bloqueios, clientes e serviços.
 - Integração com mapas para localização das unidades.
@@ -83,10 +84,27 @@ Depois, preencha os valores adequados em cada arquivo.
 | `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Credenciais e nome do banco |
 | `PORT` | Porta da API (padrão: `3001`) |
 | `FRONTEND_URL` | URL do frontend (padrão: `http://localhost:3000`) |
+| `ASSINATURA_MODO_TESTE` | Use `true` para ativar Premium localmente sem checkout ou `false` para abrir o checkout Stripe |
 | `SUPABASE_URL` | URL do projeto Supabase |
 | `SUPABASE_ANON_KEY` | Chave anônima do Supabase |
 | `SUPABASE_SECRET_KEY` | Chave secreta do Supabase, usada somente no servidor |
 | `HERE_API_KEY` | Chave privada da HERE, usada pela API para geocodificar endereços e cidades |
+| `STRIPE_SECRET_KEY` | Chave secreta da conta Stripe (`sk_test_...` no ambiente de teste) |
+| `STRIPE_WEBHOOK_SECRET` | Segredo do endpoint de webhook (`whsec_...`) |
+| `STRIPE_PRICE_ID_MENSAL` | ID do preço recorrente mensal de R$ 29,90 criado no Stripe |
+| `STRIPE_PRICE_ID_ANUAL` | ID do preço recorrente anual de R$ 299,00 criado no Stripe |
+
+#### Webhook Stripe em desenvolvimento
+
+Crie no Stripe os dois preços recorrentes em BRL e configure os respectivos IDs no `backend/.env`. Para encaminhar eventos ao backend local, instale e inicie o Stripe CLI:
+
+```bash
+stripe listen --events checkout.session.completed,checkout.session.expired,customer.subscription.created,customer.subscription.updated,customer.subscription.paused,customer.subscription.resumed,customer.subscription.deleted,invoice.paid,invoice.payment_failed --forward-to localhost:3001/api/webhooks/stripe
+```
+
+Copie o segredo `whsec_...` exibido pelo CLI para `STRIPE_WEBHOOK_SECRET`. Em produção, configure no Dashboard Stripe o endpoint HTTPS `/api/webhooks/stripe` para os eventos `checkout.session.completed`, `checkout.session.expired`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.paused`, `customer.subscription.resumed`, `customer.subscription.deleted`, `invoice.paid` e `invoice.payment_failed`.
+
+Para testar o checkout Stripe, mantenha `ASSINATURA_MODO_TESTE=false` em `backend/.env` e reinicie o backend. Com `true`, o botão ativa o Premium localmente sem acessar o Stripe.
 
 **`frontend/.env.local`**
 
