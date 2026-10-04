@@ -470,8 +470,8 @@ async function atualizarAgendamento(requisicao, resposta) {
     }
     const conflitos = await bancoDeDados.query(
       `SELECT id_agendamento FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
-       AND id_agendamento<>:idAgendamento AND cd_status='AGENDADO'
-       AND dt_inicio<:dataFimBanco AND dt_fim>:dataInicioBanco FOR UPDATE`,
+       AND id_agendamento <> :idAgendamento AND cd_status='AGENDADO'
+       AND dt_inicio < :dataFimBanco AND dt_fim > :dataInicioBanco FOR UPDATE`,
       { replacements: { ...reserva, idAgendamento }, transaction: transacao, type: QueryTypes.SELECT },
     );
     if (conflitos.length) { const erro = new Error('Esse horário acabou de ser reservado. Escolha outro.'); erro.status = 409; throw erro; }
