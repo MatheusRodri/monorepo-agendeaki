@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import AlternadorTema from '../AlternadorTema/AlternadorTema';
 import CampoSenha from '../CampoSenha/CampoSenha';
 import FormularioDadosSalao from '../FormularioDadosSalao/FormularioDadosSalao';
@@ -49,7 +49,14 @@ export default function AreaSalao({ secao }) {
     try {
       if (secao === 'dashboard') {
         const parametros = new URLSearchParams(Object.entries(filtrosDashboard).filter(([, valor]) => valor));
-        definirDados(await requisitar(`/indicadores?${parametros}`));
+        const resultadoAssinatura = await requisitar('/assinatura');
+        const premiumAtivo = Boolean(resultadoAssinatura.assinatura?.temAcessoPremium);
+        definirAssinante(premiumAtivo);
+        const indicadores = await requisitar(`/indicadores${premiumAtivo ? '/premium' : ''}?${parametros}`);
+        if (premiumAtivo && (filtrosDashboard.dataInicio !== indicadores.filtros?.dataInicio || filtrosDashboard.dataFim !== indicadores.filtros?.dataFim)) {
+          definirFiltrosDashboard((atuais) => ({ ...atuais, dataInicio: indicadores.filtros.dataInicio, dataFim: indicadores.filtros.dataFim }));
+        }
+        definirDados({ ...indicadores, premiumAtivo });
       }
       if (secao === 'assinatura') definirDados(await requisitar('/assinatura'));
       if (secao === 'salao') {
@@ -84,12 +91,13 @@ export default function AreaSalao({ secao }) {
   useEffect(() => { carregarDados(); }, [carregarDados]);
 
   useEffect(() => {
+    if (secao === 'dashboard') return undefined;
     let ativo = true;
     requisitar('/assinatura')
       .then((resultado) => { if (ativo) definirAssinante(Boolean(resultado.assinatura?.temAcessoPremium)); })
       .catch(() => { if (ativo) definirAssinante(false); });
     return () => { ativo = false; };
-  }, [requisitar]);
+  }, [requisitar, secao]);
 
   async function enviarFormulario(evento, caminho, metodo = 'POST', dadosAdicionais = {}) {
     evento.preventDefault(); definirMensagem('');
@@ -234,7 +242,138 @@ function Configuracoes({ excluirConta, perfil, requisitar, salao }) {
   return <><p className="sobretitulo">Configurações</p><h1>Sua conta.</h1>{mensagem && <p className="mensagem-formulario">{mensagem}</p>}<section className="secao-configuracoes"><h2>Informações da conta</h2><form className="grade-formulario" onSubmit={salvarPerfil}><label className="campo-formulario"><span>Nome do responsável</span><input onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, nome: evento.target.value })} required value={dadosPerfil.nome} /></label><label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, dataNascimento: formatarData(evento.target.value) })} placeholder="DD/MM/AAAA" required value={dadosPerfil.dataNascimento} /></label><label className="campo-formulario"><span>Tipo de documento</span><select onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, tipoDocumento: evento.target.value, documento: '' })} value={dadosPerfil.tipoDocumento}><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option></select></label><label className="campo-formulario"><span>Número do {dadosPerfil.tipoDocumento}</span><input inputMode="numeric" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, documento: dadosPerfil.tipoDocumento === 'CNPJ' ? formatarCnpj(evento.target.value) : formatarCpf(evento.target.value) })} required value={dadosPerfil.documento} /></label><button className="botao-enviar">Salvar informações →</button></form></section><section className="secao-configuracoes"><h2>Alterar senha</h2><form className="grade-formulario" onSubmit={salvarSenha}><CampoSenha aoMudar={(evento) => definirSenhas({ ...senhas, senha: evento.target.value })} id="novaSenhaSalao" nome="novaSenhaSalao" rotulo="Nova senha" valor={senhas.senha} /><CampoSenha aoMudar={(evento) => definirSenhas({ ...senhas, confirmacaoSenha: evento.target.value })} id="confirmacaoSenhaSalao" nome="confirmacaoSenhaSalao" rotulo="Confirme a nova senha" valor={senhas.confirmacaoSenha} /><button className="botao-enviar">Alterar senha →</button></form></section><section className="zona-perigo"><div><strong>Excluir conta permanentemente</strong><p>Isso remove o salão, filiais, profissionais, serviços, horários, agendamentos, pagamentos e o acesso da conta. Não é possível desfazer.</p>{salao?.email && <small>Conta: {salao.email}</small>}</div><label className="campo-formulario"><span>Digite <b>EXCLUIR MINHA CONTA</b> para confirmar</span><input disabled={excluindo} onChange={(evento) => definirConfirmacao(evento.target.value)} value={confirmacao} /></label><button className="botao-perigo" disabled={!podeExcluir || excluindo} onClick={confirmarExclusao} type="button">{excluindo ? 'Excluindo conta...' : 'Excluir minha conta'}</button></section></>;
 }
 
+function DashboardPremium({ dados, filtrosDashboard, definirFiltrosDashboard }) {
+  const resumo = dados.resumo ?? {};
+  const dinheiro = (valor) => Number(valor ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const anterior = dados.comparacaoAnterior ?? {};
+  const ticketMedio = Number(resumo.atendimentosPagos) ? Number(resumo.receitaRealizada) / Number(resumo.atendimentosPagos) : 0;
+  const ticketMedioAnterior = Number(anterior.atendimentosPagos) ? Number(anterior.receitaRealizada) / Number(anterior.atendimentosPagos) : 0;
+  const taxaCancelamento = Number(resumo.quantidadeAgendamentosElegiveis) ? (Number(resumo.quantidadeAgendamentosCancelados) / Number(resumo.quantidadeAgendamentosElegiveis)) * 100 : 0;
+  const taxaCancelamentoAnterior = Number(anterior.quantidadeAgendamentosElegiveis) ? (Number(anterior.quantidadeAgendamentosCancelados) / Number(anterior.quantidadeAgendamentosElegiveis)) * 100 : 0;
+  const periodoAnterior = dados.periodoComparacao ?? {};
+  const formatarVariacao = (valor, base) => base ? `${valor > base ? '+' : ''}${(((valor - base) / base) * 100).toFixed(1).replace('.', ',')}%` : (valor ? 'Sem base anterior' : '0%');
+  return <div className="dashboard-premium">
+    <div className="dashboard-premium__cabecalho"><div><p className="sobretitulo">Agende Aki Pro</p><h1>Seu salão, em números.</h1><p>Visão operacional de {filtrosDashboard.dataInicio} a {filtrosDashboard.dataFim}, comparada com {periodoAnterior.dataInicioAnterior} a {periodoAnterior.dataFimAnterior}.</p></div><div className="dashboard-premium__acoes"><span>PRO</span><button className="botao-secundario" onClick={() => exportarDashboardCsv(dados, filtrosDashboard)} type="button">Exportar CSV</button><button className="botao-secundario" onClick={() => window.print()} type="button">Exportar PDF</button></div></div>
+    <div className="filtros-dashboard"><Campo nome="dataInicio" rotulo="De" tipo="date" valor={filtrosDashboard.dataInicio} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataInicio: evento.target.value })} obrigatorio={false} /><Campo nome="dataFim" rotulo="Até" tipo="date" valor={filtrosDashboard.dataFim} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataFim: evento.target.value })} obrigatorio={false} /><SelectCampo rotulo="Filial" valor={filtrosDashboard.idUnidade} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idUnidade: evento.target.value })} opcoes={dados.opcoesFiltros?.filiais} chave="idUnidade" /><SelectCampo rotulo="Serviço" valor={filtrosDashboard.idServico} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idServico: evento.target.value })} opcoes={dados.opcoesFiltros?.servicos} chave="idServico" /><SelectCampo rotulo="Profissional" valor={filtrosDashboard.idFuncionario} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idFuncionario: evento.target.value })} opcoes={dados.opcoesFiltros?.funcionarios} chave="idFuncionario" /><button className="botao-secundario" onClick={() => definirFiltrosDashboard(filtrosIniciais)} type="button">Limpar filtros</button></div>
+    <div className="grade-indicadores dashboard-premium__indicadores">
+      <IndicadorComparado titulo="Receita realizada" valor={dinheiro(resumo.receitaRealizada)} variacao={formatarVariacao(Number(resumo.receitaRealizada), Number(anterior.receitaRealizada))} />
+      <Indicador titulo="Receita prevista · próximos 30 dias" valor={dinheiro(resumo.receitaPrevista)} />
+      <IndicadorComparado titulo="Ticket médio confirmado" valor={dinheiro(ticketMedio)} variacao={formatarVariacao(ticketMedio, ticketMedioAnterior)} />
+      <IndicadorComparado titulo="Agendamentos no período" valor={resumo.quantidadeAgendamentosTotal ?? 0} variacao={formatarVariacao(Number(resumo.quantidadeAgendamentosTotal), Number(anterior.quantidadeAgendamentosTotal))} />
+      <IndicadorComparado titulo="Taxa de cancelamento" valor={`${taxaCancelamento.toFixed(1).replace('.', ',')}%`} variacao={`${(taxaCancelamento - taxaCancelamentoAnterior > 0 ? '+' : '')}${(taxaCancelamento - taxaCancelamentoAnterior).toFixed(1).replace('.', ',')} p.p.`} inverso />
+      <Indicador titulo="Atendimentos realizados" valor={resumo.quantidadeAgendamentosRealizados ?? 0} />
+      <Indicador titulo="Agendamentos cancelados" valor={resumo.quantidadeAgendamentosCancelados ?? 0} variante="neutra" />
+      <Indicador titulo="Atendimentos aguardando confirmação" valor={resumo.quantidadeAtendimentosAConfirmar ?? 0} />
+    </div>
+    <div className="dashboard-premium__graficos">
+      <section className="secao-painel"><h2>Evolução da receita</h2><p>Pagamentos aprovados, agrupados pela data em que foram registrados.</p><GraficoLinha dados={dados.receitaPorDia ?? []} campo="valor" cor="var(--ameixa)" vazio="Nenhum pagamento aprovado neste período." /></section>
+      <section className="secao-painel"><h2>Receita por serviço</h2><p>Serviços com maior valor recebido no período.</p><GraficoBarras dados={dados.receitaPorServico ?? []} campo="servico" valor="valor" formatar={dinheiro} vazio="Nenhuma receita confirmada para estes filtros." /></section>
+      <section className="secao-painel dashboard-premium__grafico-largo"><h2>Evolução dos agendamentos</h2><p>Todos os agendamentos pela data de início.</p><GraficoLinha dados={dados.agendamentosPorDia ?? []} campo="quantidade" cor="var(--verde-escuro, #397b61)" vazio="Nenhum agendamento para estes filtros." /><DistribuicaoStatus resumo={resumo} /></section>
+      <section className="secao-painel dashboard-premium__grafico-largo"><h2>Demanda por dia e horário</h2><p>Agendamentos concluídos ou marcados; cancelamentos aparecem no detalhe de cada célula.</p><MapaCalor dados={dados.mapaCalor ?? []} /></section>
+      <section className="secao-painel"><h2>Clientes atendidos</h2><p>Novos e recorrentes pela primeira visita concluída registrada no salão.</p><div className="dashboard-premium__cliente-metricas"><Indicador titulo="Clientes atendidos" valor={dados.clientes?.clientesAtendidos ?? 0} /><Indicador titulo="Novos clientes" valor={dados.clientes?.clientesNovos ?? 0} /><Indicador titulo="Clientes recorrentes" valor={dados.clientes?.clientesRecorrentes ?? 0} /></div></section>
+      <section className="secao-painel"><h2>Desempenho dos profissionais</h2><p>Atendimentos e pagamentos confirmados; ocupação comparada à disponibilidade semanal cadastrada.</p><TabelaProfissionais profissionais={dados.profissionais ?? []} dinheiro={dinheiro} /></section>
+      <section className="secao-painel dashboard-premium__grafico-largo"><h2>Insights do negócio</h2><p>Sugestões geradas por regras aplicadas aos dados deste período.</p><ListaInsights insights={dados.insights ?? []} /></section>
+      <section className="secao-painel dashboard-premium__grafico-largo"><h2>Clientes sem retorno há 90 dias</h2><p>Clientes com atendimento realizado, sem novo atendimento concluído nos últimos 90 dias.</p><TabelaClientesInativos clientes={dados.clientesInativos ?? []} /></section>
+    </div>
+    <small className="dashboard-premium__nota">Receita realizada inclui somente o último pagamento aprovado de cada agendamento. Agendamentos sem pagamento confirmado não entram nesse valor. A receita prevista considera os agendamentos futuros ativos.</small>
+    <small className="dashboard-premium__nota">Clientes novos são os que tiveram seu primeiro atendimento marcado como realizado no período. Recorrentes são os que já tinham ao menos um atendimento realizado antes do período. Clientes inativos são os que estão há 90 dias sem atendimento realizado. A disponibilidade profissional é uma estimativa baseada na grade semanal e não desconta feriados nem bloqueios pontuais.</small>
+  </div>;
+}
+
+function exportarDashboardCsv(dados, filtros) {
+  const linhas = [
+    ['Relatório Agende Aki Pro'],
+    ['Período', filtros.dataInicio, filtros.dataFim],
+    [],
+    ['Indicadores', 'Valor'],
+    ['Receita realizada', dados.resumo?.receitaRealizada],
+    ['Receita prevista próximos 30 dias', dados.resumo?.receitaPrevista],
+    ['Agendamentos', dados.resumo?.quantidadeAgendamentosTotal],
+    ['Atendimentos realizados', dados.resumo?.quantidadeAgendamentosRealizados],
+    ['Aguardando confirmação', dados.resumo?.quantidadeAtendimentosAConfirmar],
+    ['Cancelamentos', dados.resumo?.quantidadeAgendamentosCancelados],
+    [],
+    ['Receita por serviço', 'Valor atual', 'Valor período anterior'],
+    ...(dados.receitaPorServico ?? []).map((item) => [item.servico, item.valor, (dados.receitaPorServicoAnterior ?? []).find((anterior) => anterior.servico === item.servico)?.valor ?? 'Fora do top 8 no período anterior']),
+    [],
+    ['Profissionais', 'Atendimentos realizados', 'Receita confirmada', 'Ticket médio', 'Cancelamentos', 'Ocupação estimada (%)'],
+    ...(dados.profissionais ?? []).map((item) => [item.profissional, item.atendimentosRealizados, item.receitaRealizada, item.ticketMedio, item.cancelamentos, item.ocupacaoEstimada]),
+    [],
+    ['Clientes inativos (até 20)', 'Email', 'Telefone', 'Último atendimento'],
+    ...(dados.clientesInativos ?? []).map((item) => [item.cliente, item.email, item.telefone, item.ultimoAtendimento]),
+    [],
+    ['Insights', 'Descrição'],
+    ...(dados.insights ?? []).map((item) => [item.titulo, item.descricao]),
+  ];
+  const escapar = (valor) => {
+    const texto = String(valor ?? '');
+    const protegido = /^[\s]*[=+\-@]/.test(texto) ? `'${texto}` : texto;
+    return `"${protegido.replaceAll('"', '""')}"`;
+  };
+  const conteudo = `\uFEFF${linhas.map((linha) => linha.map(escapar).join(';')).join('\r\n')}`;
+  const url = URL.createObjectURL(new Blob([conteudo], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `dashboard-pro-${filtros.dataInicio}-${filtros.dataFim}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function ListaInsights({ insights }) {
+  if (!insights.length) return <p className="dashboard-premium__vazio">Nenhum insight disponível para estes filtros.</p>;
+  return <div className="lista-insights">{insights.map((insight, indice) => <article className={`lista-insights__item lista-insights__item--${insight.tipo}`} key={`${insight.titulo}-${indice}`}><strong>{insight.titulo}</strong><p>{insight.descricao}</p></article>)}</div>;
+}
+
+function TabelaClientesInativos({ clientes }) {
+  if (!clientes.length) return <p className="dashboard-premium__vazio">Nenhum cliente atingiu 90 dias sem atendimento realizado.</p>;
+  return <div className="tabela-premium__rolagem"><table className="tabela-premium"><thead><tr><th>Cliente</th><th>Email</th><th>Telefone</th><th>Último atendimento</th></tr></thead><tbody>{clientes.map((cliente) => <tr key={cliente.idCliente}><th>{cliente.cliente}</th><td>{cliente.email || '—'}</td><td>{cliente.telefone || '—'}</td><td>{formatarDataHora(cliente.ultimoAtendimento)}</td></tr>)}</tbody></table></div>;
+}
+
+function IndicadorComparado({ titulo, valor, variacao, inverso = false }) {
+  const diferenca = Number.parseFloat(variacao.replace(',', '.'));
+  const desfavoravel = inverso ? diferenca > 0 : diferenca < 0;
+  return <article className="indicador indicador--comparado"><span>{titulo}</span><strong>{valor}</strong><small className={desfavoravel ? 'indicador__variacao indicador__variacao--negativa' : 'indicador__variacao'}>{variacao} vs. período anterior</small></article>;
+}
+
+function DistribuicaoStatus({ resumo }) {
+  const itens = [
+    ['Realizados', Number(resumo.quantidadeAgendamentosRealizados ?? 0)],
+    ['Marcados', Number(resumo.quantidadeAgendamentosMarcados ?? 0)],
+    ['Cancelados', Number(resumo.quantidadeAgendamentosCancelados ?? 0)],
+  ];
+  const total = Math.max(Number(resumo.quantidadeAgendamentosTotal ?? 0), 1);
+  return <div className="dashboard-premium__status">{itens.map(([rotulo, quantidade]) => <div key={rotulo}><span>{rotulo}</span><div><i style={{ width: `${(quantidade / total) * 100}%` }} /></div><b>{quantidade}</b></div>)}</div>;
+}
+
+function MapaCalor({ dados }) {
+  if (!dados.length) return <p className="dashboard-premium__vazio">Nenhum agendamento para estes filtros.</p>;
+  const dias = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+  const maximo = Math.max(...dados.map((item) => Number(item.quantidade ?? 0)), 1);
+  const quantidades = new Map(dados.map((item) => [`${item.diaSemana}-${item.hora}`, item]));
+  return <div className="mapa-calor__rolagem"><div className="mapa-calor" style={{ gridTemplateColumns: '42px repeat(24, minmax(19px, 1fr))' }}><span />{Array.from({ length: 24 }, (_, hora) => <span className="mapa-calor__hora" key={hora}>{hora}</span>)}{dias.map((dia, diaSemana) => <Fragment key={dia}><strong>{dia}</strong>{Array.from({ length: 24 }, (_, hora) => { const item = quantidades.get(`${diaSemana}-${hora}`); const quantidade = Number(item?.quantidade ?? 0); const cancelados = Number(item?.cancelados ?? 0); return <span aria-label={`${dia}, ${hora}h: ${quantidade} agendamentos, ${cancelados} cancelados`} className="mapa-calor__celula" key={hora} style={{ backgroundColor: quantidade ? `rgba(116, 68, 95, ${0.12 + (quantidade / maximo) * 0.78})` : undefined }} title={`${dia}, ${hora}:00 — ${quantidade} agendamentos, ${cancelados} cancelados`} />; })}</Fragment>)}</div></div>;
+}
+
+function TabelaProfissionais({ profissionais, dinheiro }) {
+  if (!profissionais.length) return <p className="dashboard-premium__vazio">Nenhum profissional encontrado para estes filtros.</p>;
+  return <div className="tabela-premium__rolagem"><table className="tabela-premium"><thead><tr><th>Profissional</th><th>Realizados</th><th>Receita</th><th>Ticket médio</th><th>Cancelados</th><th>Ocupação estimada</th></tr></thead><tbody>{profissionais.map((profissional) => <tr key={profissional.idFuncionario}><th>{profissional.profissional}</th><td>{profissional.atendimentosRealizados}</td><td>{dinheiro(profissional.receitaRealizada)}</td><td>{dinheiro(profissional.ticketMedio)}</td><td>{profissional.cancelamentos}</td><td>{profissional.ocupacaoEstimada == null ? 'Sem grade' : `${Number(profissional.ocupacaoEstimada).toFixed(1).replace('.', ',')}%`}</td></tr>)}</tbody></table></div>;
+}
+
+function GraficoLinha({ dados, campo, cor, vazio }) {
+  if (!dados.length) return <p className="dashboard-premium__vazio">{vazio}</p>;
+  const valores = dados.map((item) => Number(item[campo] ?? 0));
+  const maximo = Math.max(...valores, 1);
+  const pontos = valores.map((valor, indice) => `${dados.length === 1 ? 50 : 8 + (indice * 84) / (dados.length - 1)},${92 - (valor / maximo) * 78}`).join(' ');
+  return <div className="grafico-linha"><svg aria-label="Gráfico de evolução" role="img" viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="5" x2="95" y1="92" y2="92" /><line x1="5" x2="95" y1="53" y2="53" /><line x1="5" x2="95" y1="14" y2="14" /><polyline points={pontos} style={{ stroke: cor }} />{valores.map((valor, indice) => { const x = dados.length === 1 ? 50 : 8 + (indice * 84) / (dados.length - 1); const y = 92 - (valor / maximo) * 78; return <circle key={`${dados[indice].data}-${indice}`} cx={x} cy={y} r="1.3" style={{ fill: cor }} />; })}</svg><div className="grafico-linha__legenda"><span>{dados[0].data}</span><span>{dados[dados.length - 1].data}</span></div></div>;
+}
+
+function GraficoBarras({ dados, campo, valor, formatar, vazio }) {
+  if (!dados.length) return <p className="dashboard-premium__vazio">{vazio}</p>;
+  const maximo = Math.max(...dados.map((item) => Number(item[valor] ?? 0)), 1);
+  return <div className="grafico-barras">{dados.map((item) => <div className="grafico-barras__linha" key={item[campo]}><span title={item[campo]}>{item[campo]}</span><div><i style={{ width: `${Math.max(2, (Number(item[valor]) / maximo) * 100)}%` }} /></div><b>{formatar(item[valor])}</b></div>)}</div>;
+}
+
 function Dashboard({ dados, filtrosDashboard, definirFiltrosDashboard }) {
+  if (dados.premiumAtivo) return <DashboardPremium dados={dados} filtrosDashboard={filtrosDashboard} definirFiltrosDashboard={definirFiltrosDashboard} />;
   const resumo = dados.resumo ?? {};
   return <><p className="sobretitulo">Visão geral</p><h1>Seu salão em movimento.</h1><div className="filtros-dashboard"><Campo nome="dataInicio" rotulo="De" tipo="date" valor={filtrosDashboard.dataInicio} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataInicio: evento.target.value })} /><Campo nome="dataFim" rotulo="Até" tipo="date" valor={filtrosDashboard.dataFim} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataFim: evento.target.value })} /><SelectCampo rotulo="Filial" valor={filtrosDashboard.idUnidade} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idUnidade: evento.target.value })} opcoes={dados.opcoesFiltros?.filiais} chave="idUnidade" /><SelectCampo rotulo="Serviço" valor={filtrosDashboard.idServico} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idServico: evento.target.value })} opcoes={dados.opcoesFiltros?.servicos} chave="idServico" /><SelectCampo rotulo="Profissional" valor={filtrosDashboard.idFuncionario} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idFuncionario: evento.target.value })} opcoes={dados.opcoesFiltros?.funcionarios} chave="idFuncionario" /><button className="botao-secundario" onClick={() => definirFiltrosDashboard(filtrosIniciais)} type="button">Limpar filtros</button></div><div className="grade-indicadores grade-indicadores--tres"><Indicador titulo="Agendamentos ativos" valor={resumo.quantidadeAgendamentosAtivos ?? 0} /><Indicador titulo="Agendamentos cancelados" valor={resumo.quantidadeAgendamentosCancelados ?? 0} variante="neutra" /><Indicador titulo="Faturamento previsto" valor={`R$ ${Number(resumo.faturamento ?? 0).toFixed(2).replace('.', ',')}`} /></div><section className="secao-painel"><h2>Serviços mais solicitados</h2><ListaSimples itens={dados.servicosMaisSolicitados} campo="servico" vazio="Ainda não há dados para estes filtros." /></section><section className="secao-painel"><h2>Próximos atendimentos</h2><ListaSimples itens={dados.proximosAtendimentos} campo="cliente" vazio="Nenhum atendimento próximo para estes filtros." /></section></>;
 }
