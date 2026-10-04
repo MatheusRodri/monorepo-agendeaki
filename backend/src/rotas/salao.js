@@ -230,7 +230,7 @@ async function atualizarPerfil(requisicao, resposta) {
   const documento = somenteNumeros(requisicao.body?.documento);
   const documentoValido = tipoDocumento === 'CPF' ? cpfValido(documento) : tipoDocumento === 'CNPJ' && cnpjValido(documento);
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do responsável.' }); return; }
-  if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Informe uma data de nascimento válida.' }); return; }
+  if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Você precisa ter pelo menos 18 anos.' }); return; }
   if (!documentoValido) { resposta.status(400).json({ mensagem: `Informe um ${tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido.` }); return; }
   try {
     const perfil = await atualizarDadosCadastraisUsuario(administrador.idUsuario, { cpf: tipoDocumento === 'CPF' ? documento : null, dataNascimento, documento, nome, tipoDocumento });
