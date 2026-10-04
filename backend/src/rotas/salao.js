@@ -377,16 +377,66 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       resposta.status(200).json({ mensagem: 'Filial, localização e horários atualizados.', coordenadas }); return;
     } catch (erro) { await transacao.rollback(); resposta.status(500).json({ mensagem: erro.message }); return; }
   }
+  let etapa = 'gerar slug';
+  let idUnidadeCriada = null;
+  let transacaoConfirmada = false;
+  const responderCriacaoConcluida = () => {
+    if (!resposta.headersSent) resposta.status(201).json({ mensagem: 'Filial criada com localização e horários salvos.', idUnidade: idUnidadeCriada, coordenadas });
+  };
   try {
     valores.slug = await criarSlugUnidadeUnico(dadosFilial.nome, salao.idSalao, { transaction: transacao });
-    await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, ds_slug, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :slug, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
+    etapa = 'inserir filial';
+    const [resultadoInsercao] = await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, ds_slug, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :slug, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
+    idUnidadeCriada = Number(resultadoInsercao?.insertId) || null;
+    etapa = 'identificar filial criada';
     const unidadesCriadas = await bancoDeDados.query('SELECT LAST_INSERT_ID() AS idUnidade', { transaction: transacao, type: QueryTypes.SELECT });
-    const idUnidadeCriada = Number(unidadesCriadas[0]?.idUnidade);
+    idUnidadeCriada = Number(unidadesCriadas[0]?.idUnidade) || idUnidadeCriada;
     if (!idUnidadeCriada) throw new Error('Não foi possível identificar a filial criada.');
+    etapa = 'salvar horários';
     await salvarHorariosUnidade(idUnidadeCriada, horarios, transacao);
+    etapa = 'confirmar transação';
     await transacao.commit();
-    resposta.status(201).json({ mensagem: 'Filial criada com localização e horários salvos.', coordenadas });
-  } catch (erro) { await transacao.rollback(); console.error('[Cadastro filial] Falha ao salvar.', { mensagem: erro.message }); resposta.status(500).json({ mensagem: erro.message }); }
+    transacaoConfirmada = true;
+    etapa = 'responder sucesso';
+    responderCriacaoConcluida();
+  } catch (erro) {
+    if (!transacao.finished) {
+      try { await transacao.rollback(); } catch (erroRollback) {
+        console.error('[Cadastro filial] Falha ao desfazer transação.', { etapa, mensagem: erroRollback.message });
+      }
+    }
+    let filialPersistida = transacaoConfirmada;
+    if (!filialPersistida && idUnidadeCriada) {
+      try {
+        const filiaisPersistidas = await bancoDeDados.query(
+          'SELECT id_unidade AS idUnidade FROM tb_unidade WHERE id_unidade=:idUnidade AND fk_salao=:idSalao LIMIT 1',
+          { replacements: { idUnidade: idUnidadeCriada, idSalao: salao.idSalao }, type: QueryTypes.SELECT },
+        );
+        filialPersistida = filiaisPersistidas.length > 0;
+      } catch (erroVerificacao) {
+        console.error('[Cadastro filial] Não foi possível verificar a persistência após a falha.', { mensagem: erroVerificacao.message });
+      }
+    }
+    if (filialPersistida) {
+      console.error('[Cadastro filial] A filial foi persistida, mas houve falha ao concluir a resposta.', {
+        idUnidade: idUnidadeCriada,
+        etapa,
+        tipoErro: erro.name,
+        mensagem: erro.message,
+        stack: erro.stack,
+      });
+      responderCriacaoConcluida();
+      return;
+    }
+    console.error('[Cadastro filial] Falha ao salvar.', {
+      etapa,
+      tipoErro: erro.name,
+      mensagem: erro.message,
+      detalhesValidacao: erro.errors?.map((item) => ({ campo: item.path, mensagem: item.message })),
+      stack: erro.stack,
+    });
+    if (!resposta.headersSent) resposta.status(500).json({ mensagem: erro.message });
+  }
 }
 
 async function criarServico(requisicao, resposta) {
