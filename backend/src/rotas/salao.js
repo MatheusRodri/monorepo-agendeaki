@@ -1,10 +1,15 @@
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
+import { randomUUID } from 'crypto';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { cnpjValido, cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
+import { ativarAssinaturaPremium } from '../servicos/assinaturas.js';
+import { atualizarPeriodicidadeStripe, cancelarAssinaturaStripe, cancelarCheckoutStripe, criarCheckoutAssinatura, obterDadosPlanoPremium, obterOfertaPremium, obterPrecoStripe, consultarCheckoutStripe } from '../servicos/stripe.js';
+import { sincronizarAssinaturaStripe } from '../servicos/sincronizarAssinaturaStripe.js';
 import { criarSlugSalaoUnico, criarSlugUnidadeUnico } from '../servicos/slugs.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -290,6 +295,7 @@ async function excluirConta(requisicao, resposta) {
       await bancoDeDados.query('DELETE FROM tb_servico WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
       await bancoDeDados.query('DELETE FROM tb_unidade WHERE id_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
     }
+    if (idsSaloes.length) await bancoDeDados.query('DELETE FROM tb_cliente_salao WHERE fk_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao });
     if (idsSaloes.length) await bancoDeDados.query('DELETE FROM tb_salao WHERE id_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao });
     await bancoDeDados.query('DELETE FROM tb_usuario WHERE id_usuario = :idUsuario', { replacements: administrador, transaction: transacao });
 
@@ -691,15 +697,134 @@ async function excluirBloqueio(requisicao, resposta) {
   resposta.status(200).json({ mensagem: 'Bloqueio removido.' });
 }
 
+async function listarHorariosAgendamento(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idUnidade = Number(requisicao.query.idUnidade);
+  const idServico = Number(requisicao.query.idServico);
+  const idFuncionario = requisicao.query.idFuncionario ? Number(requisicao.query.idFuncionario) : null;
+  if (!Number.isInteger(idUnidade) || !Number.isInteger(idServico) || (idFuncionario !== null && !Number.isInteger(idFuncionario))) {
+    resposta.status(400).json({ mensagem: 'Informe filial, serviço e profissional válidos.' }); return;
+  }
+  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  try {
+    const disponibilidade = await listarHorariosDisponiveis({
+      data: String(requisicao.query.data ?? ''), idFuncionario, idServico, idUnidade,
+    });
+    resposta.status(200).json(disponibilidade);
+  } catch (erro) { resposta.status(erro.status ?? 500).json({ mensagem: erro.message }); }
+}
+
+async function criarAgendamentoSalao(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const dados = requisicao.body ?? {};
+  const idUnidade = Number(dados.idUnidade);
+  const idServico = Number(dados.idServico);
+  const idFuncionario = dados.idFuncionario ? Number(dados.idFuncionario) : null;
+  const idClienteSalao = dados.idClienteSalao ? Number(dados.idClienteSalao) : null;
+  const nome = String(dados.cliente?.nome ?? '').trim();
+  const email = String(dados.cliente?.email ?? '').trim() || null;
+  const telefone = String(dados.cliente?.telefone ?? '').trim() || null;
+
+  if (![idUnidade, idServico].every(Number.isInteger) || (idFuncionario !== null && !Number.isInteger(idFuncionario))) {
+    resposta.status(400).json({ mensagem: 'Informe filial, serviço, profissional e horário válidos.' }); return;
+  }
+  if (idClienteSalao !== null && !Number.isInteger(idClienteSalao)) {
+    resposta.status(400).json({ mensagem: 'Selecione um cliente válido.' }); return;
+  }
+  if ((idClienteSalao && nome) || (!idClienteSalao && !nome)) {
+    resposta.status(400).json({ mensagem: 'Selecione um cliente existente ou informe o nome de um novo cliente.' }); return;
+  }
+  if (nome.length > 120 || (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) || (telefone && telefone.length > 20)) {
+    resposta.status(400).json({ mensagem: 'Confira o nome, email e telefone informados.' }); return;
+  }
+  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+
+  const transacao = await bancoDeDados.transaction();
+  try {
+    let clienteId = idClienteSalao;
+    if (clienteId) {
+      const clientes = await bancoDeDados.query(
+        'SELECT id_cliente_salao AS idClienteSalao FROM tb_cliente_salao WHERE id_cliente_salao=:idClienteSalao AND fk_salao=:idSalao LIMIT 1 FOR UPDATE',
+        { replacements: { idClienteSalao: clienteId, idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+      );
+      if (!clientes.length) { const erro = new Error('Cliente não encontrado neste salão.'); erro.status = 404; throw erro; }
+    } else {
+      await bancoDeDados.query(
+        'INSERT INTO tb_cliente_salao (fk_salao, nm_cliente, ds_email, nu_telefone) VALUES (:idSalao, :nome, :email, :telefone)',
+        { replacements: { idSalao: salao.idSalao, nome, email, telefone }, transaction: transacao },
+      );
+      const clientes = await bancoDeDados.query('SELECT LAST_INSERT_ID() AS idClienteSalao', { transaction: transacao, type: QueryTypes.SELECT });
+      clienteId = clientes[0].idClienteSalao;
+    }
+
+    const reserva = await resolverReserva({
+      dataHoraInicio: dados.dataHoraInicio, idFuncionario, idServico, idUnidade, transaction: transacao,
+    });
+    const conflitos = await bancoDeDados.query(
+      `SELECT id_agendamento FROM tb_agendamento
+       WHERE fk_funcionario=:idFuncionario AND cd_status='AGENDADO'
+         AND dt_inicio<:dataFimBanco AND dt_fim>:dataInicioBanco FOR UPDATE`,
+      { replacements: reserva, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    if (conflitos.length) { const erro = new Error('Este horário acabou de ser reservado. Escolha outro horário.'); erro.status = 409; throw erro; }
+
+    await bancoDeDados.query(
+      `INSERT INTO tb_agendamento (
+        fk_usuario, fk_cliente_salao, fk_unidade, fk_funcionario, fk_servico,
+        dt_inicio, dt_fim, nm_servico_agendado, vl_servico_agendado,
+        nu_duracao_minutos, ds_observacao
+      ) VALUES (
+        NULL, :idClienteSalao, :idUnidade, :idFuncionario, :idServico,
+        :dataInicioBanco, :dataFimBanco, :nomeServico, :valorServico,
+        :duracaoMinutos, :observacao
+      )`,
+      { replacements: { ...reserva, idClienteSalao: clienteId, idUnidade, idServico, observacao: String(dados.observacao ?? '').trim() || null }, transaction: transacao },
+    );
+    await transacao.commit();
+    resposta.status(201).json({ mensagem: 'Agendamento criado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, idFuncionario: reserva.idFuncionario });
+  } catch (erro) {
+    await transacao.rollback();
+    resposta.status(erro.status ?? 500).json({ mensagem: erro.message });
+  }
+}
+
 async function listarClientes(requisicao, resposta) {
-  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return; const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const clientes = await bancoDeDados.query(`SELECT DISTINCT u.id_usuario AS idUsuario, u.nm_usuario AS nome, u.ds_email AS email, MAX(a.dt_inicio) AS ultimoAgendamento FROM tb_agendamento a INNER JOIN tb_unidade un ON un.id_unidade=a.fk_unidade INNER JOIN tb_usuario u ON u.id_usuario=a.fk_usuario WHERE un.fk_salao=:idSalao GROUP BY u.id_usuario, u.nm_usuario, u.ds_email ORDER BY ultimoAgendamento DESC`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ clientes });
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const busca = String(requisicao.query.busca ?? '').trim();
+  const clientes = await bancoDeDados.query(
+    `SELECT cliente.idClienteSalao, cliente.idUsuario, cliente.nome, cliente.email, cliente.telefone,
+            MAX(cliente.ultimoAgendamento) AS ultimoAgendamento
+     FROM (
+       SELECT NULL AS idClienteSalao, u.id_usuario AS idUsuario, u.nm_usuario AS nome,
+              u.ds_email AS email, NULL AS telefone, MAX(a.dt_inicio) AS ultimoAgendamento
+       FROM tb_agendamento a
+       INNER JOIN tb_unidade un ON un.id_unidade=a.fk_unidade
+       INNER JOIN tb_usuario u ON u.id_usuario=a.fk_usuario
+       WHERE un.fk_salao=:idSalao
+       GROUP BY u.id_usuario, u.nm_usuario, u.ds_email
+       UNION ALL
+       SELECT c.id_cliente_salao AS idClienteSalao, NULL AS idUsuario, c.nm_cliente AS nome,
+              c.ds_email AS email, c.nu_telefone AS telefone, MAX(a.dt_inicio) AS ultimoAgendamento
+       FROM tb_cliente_salao c
+       LEFT JOIN tb_agendamento a ON a.fk_cliente_salao=c.id_cliente_salao
+       WHERE c.fk_salao=:idSalao
+       GROUP BY c.id_cliente_salao, c.nm_cliente, c.ds_email, c.nu_telefone
+     ) cliente
+     WHERE (:buscaVazia=TRUE OR cliente.nome LIKE :busca OR cliente.email LIKE :busca OR cliente.telefone LIKE :busca)
+     GROUP BY cliente.idClienteSalao, cliente.idUsuario, cliente.nome, cliente.email, cliente.telefone
+     ORDER BY MAX(cliente.ultimoAgendamento) DESC, cliente.nome`,
+    { replacements: { idSalao: salao.idSalao, busca: `%${busca}%`, buscaVazia: !busca }, type: QueryTypes.SELECT },
+  );
+  resposta.status(200).json({ clientes });
 }
 
 async function listarAgendamentos(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return; const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const futuros = requisicao.query.tipo !== 'historico'; const condicao = futuros ? "a.dt_inicio >= NOW() AND a.cd_status='AGENDADO'" : "a.dt_inicio < NOW() OR a.cd_status IN ('REALIZADO', 'CANCELADO')";
-  const agendamentos = await bancoDeDados.query(`SELECT a.id_agendamento AS idAgendamento, a.dt_inicio AS dataHoraInicio, a.dt_fim AS dataHoraFim, a.cd_status AS status, a.nm_servico_agendado AS servico, a.vl_servico_agendado AS valor, a.ds_observacao AS observacao, c.nm_usuario AS cliente, c.ds_email AS emailCliente, f.nm_funcionario AS funcionario, u.nm_unidade AS filial, COALESCE(p.cd_status_pagamento, 'PENDENTE') AS statusPagamento, CASE WHEN p.cd_status_pagamento = 'APROVADO' THEN TRUE ELSE FALSE END AS pago FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade INNER JOIN tb_usuario c ON c.id_usuario=a.fk_usuario INNER JOIN tb_funcionario f ON f.id_funcionario=a.fk_funcionario LEFT JOIN (SELECT p1.fk_agendamento, p1.cd_status_pagamento FROM tb_pagamento p1 INNER JOIN (SELECT fk_agendamento, MAX(id_pagamento) AS idPagamento FROM tb_pagamento GROUP BY fk_agendamento) ultimo ON ultimo.idPagamento=p1.id_pagamento) p ON p.fk_agendamento=a.id_agendamento WHERE u.fk_salao=:idSalao AND (${condicao}) ORDER BY a.dt_inicio ${futuros ? 'ASC' : 'DESC'}`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ agendamentos });
+  const agendamentos = await bancoDeDados.query(`SELECT a.id_agendamento AS idAgendamento, a.dt_inicio AS dataHoraInicio, a.dt_fim AS dataHoraFim, a.cd_status AS status, a.nm_servico_agendado AS servico, a.vl_servico_agendado AS valor, a.ds_observacao AS observacao, COALESCE(c.nm_usuario, cs.nm_cliente) AS cliente, COALESCE(c.ds_email, cs.ds_email) AS emailCliente, cs.nu_telefone AS telefoneCliente, f.nm_funcionario AS funcionario, u.nm_unidade AS filial, COALESCE(p.cd_status_pagamento, 'PENDENTE') AS statusPagamento, CASE WHEN p.cd_status_pagamento = 'APROVADO' THEN TRUE ELSE FALSE END AS pago FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao INNER JOIN tb_funcionario f ON f.id_funcionario=a.fk_funcionario LEFT JOIN (SELECT p1.fk_agendamento, p1.cd_status_pagamento FROM tb_pagamento p1 INNER JOIN (SELECT fk_agendamento, MAX(id_pagamento) AS idPagamento FROM tb_pagamento GROUP BY fk_agendamento) ultimo ON ultimo.idPagamento=p1.id_pagamento) p ON p.fk_agendamento=a.id_agendamento WHERE u.fk_salao=:idSalao AND (${condicao}) ORDER BY a.dt_inicio ${futuros ? 'ASC' : 'DESC'}`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ agendamentos });
 }
 
 async function indicadores(requisicao, resposta) {
@@ -718,13 +843,190 @@ async function indicadores(requisicao, resposta) {
   const condicaoFiltros = condicoesFiltros.join(' AND ');
   const resumo = await bancoDeDados.query(`SELECT COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos, COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados, COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN a.vl_servico_agendado ELSE 0 END),0) AS faturamento FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade WHERE ${condicaoFiltros}`, { replacements: filtros, type: QueryTypes.SELECT });
   const servicosMaisSolicitados = await bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, COUNT(*) AS quantidade FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade WHERE ${condicaoFiltros} GROUP BY a.nm_servico_agendado ORDER BY quantidade DESC LIMIT 3`, { replacements: filtros, type: QueryTypes.SELECT });
-  const proximosAtendimentos = await bancoDeDados.query(`SELECT a.dt_inicio AS dataHoraInicio, a.nm_servico_agendado AS servico, c.nm_usuario AS cliente FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade INNER JOIN tb_usuario c ON c.id_usuario=a.fk_usuario WHERE ${condicaoFiltros} AND a.dt_inicio>=NOW() AND a.cd_status='AGENDADO' ORDER BY a.dt_inicio LIMIT 5`, { replacements: filtros, type: QueryTypes.SELECT });
+  const proximosAtendimentos = await bancoDeDados.query(`SELECT a.dt_inicio AS dataHoraInicio, a.nm_servico_agendado AS servico, COALESCE(c.nm_usuario, cs.nm_cliente) AS cliente FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao WHERE ${condicaoFiltros} AND a.dt_inicio>=NOW() AND a.cd_status='AGENDADO' ORDER BY a.dt_inicio LIMIT 5`, { replacements: filtros, type: QueryTypes.SELECT });
   const [filiais, servicos, funcionarios] = await Promise.all([bancoDeDados.query('SELECT id_unidade AS idUnidade, nm_unidade AS nome FROM tb_unidade WHERE fk_salao=:idSalao AND st_ativo=TRUE ORDER BY nm_unidade', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }), bancoDeDados.query('SELECT s.id_servico AS idServico, s.nm_servico AS nome FROM tb_servico s INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY s.nm_servico', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }), bancoDeDados.query('SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS nome FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade WHERE u.fk_salao=:idSalao AND f.st_ativo=TRUE ORDER BY f.nm_funcionario', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT })]);
   resposta.status(200).json({ resumo: resumo[0], servicosMaisSolicitados, proximosAtendimentos, filtros: { dataInicio, dataFim, idUnidade, idServico, idFuncionario }, opcoesFiltros: { filiais, servicos, funcionarios } });
   } catch (erro) {
     console.error('[Indicadores salão] Falha ao carregar.', { mensagem: erro.message, parametros: requisicao.query });
     resposta.status(500).json({ mensagem: 'Não foi possível carregar os indicadores do salão.' });
   }
+}
+
+function resumoAssinatura(assinatura) {
+  if (!assinatura) return { plano: 'BASICO', status: 'BASICO', temAcessoPremium: false };
+  const dataFimAcesso = assinatura.dataProximaCobranca ? new Date(assinatura.dataProximaCobranca) : null;
+  const canceladaComCicloVigente = ['CANCELADA', 'CANCELAMENTO_AGENDADO'].includes(assinatura.status)
+    && dataFimAcesso && dataFimAcesso > new Date();
+  const temAcessoPremium = ['AUTORIZADA', 'EM_TESTE'].includes(assinatura.status) || canceladaComCicloVigente;
+  return { ...assinatura, plano: temAcessoPremium ? 'PREMIUM' : 'BASICO', temAcessoPremium };
+}
+
+function assinaturaBloqueiaNovaContratacao(assinatura) {
+  return ['PENDENTE', 'PAUSADA', 'PAGAMENTO_PENDENTE'].includes(assinatura?.status)
+    || (assinatura?.status === 'CANCELAMENTO_AGENDADO' && resumoAssinatura(assinatura).temAcessoPremium);
+}
+
+async function obterAssinaturaSalao(idSalao) {
+  const assinaturas = await bancoDeDados.query(
+    `SELECT id_assinatura_salao AS idAssinatura, cd_periodicidade AS periodicidade,
+            cd_periodicidade_pendente AS periodicidadePendente, cd_status AS status,
+            vl_assinatura AS valor, st_teste_gratis AS testeGratis,
+            ds_provedor AS provedor, id_preco_provedor AS idPrecoProvedor,
+            id_assinatura_provedor AS idAssinaturaProvedor, id_checkout_provedor AS idCheckoutProvedor,
+            dt_inicio AS dataInicio,
+            dt_proxima_cobranca AS dataProximaCobranca, dt_cancelamento_solicitado AS dataCancelamentoSolicitado
+     FROM tb_assinatura_salao WHERE fk_salao=:idSalao
+     ORDER BY dt_criacao DESC LIMIT 1`,
+    { replacements: { idSalao }, type: QueryTypes.SELECT },
+  );
+  return assinaturas[0] ?? null;
+}
+
+async function consultarAssinatura(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre seu salão antes de contratar o Premium.' }); return; }
+  let assinatura = await obterAssinaturaSalao(salao.idSalao);
+  if (assinatura?.status === 'PENDENTE' && assinatura.idCheckoutProvedor && process.env.ASSINATURA_MODO_TESTE !== 'true') {
+    try {
+      const checkout = await consultarCheckoutStripe(assinatura.idCheckoutProvedor);
+      const idAssinatura = typeof checkout.subscription === 'string' ? checkout.subscription : checkout.subscription?.id;
+      if (idAssinatura) await sincronizarAssinaturaStripe(idAssinatura, checkout.id);
+      else if (checkout.status === 'expired') {
+        await bancoDeDados.query("UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura", { replacements: { idAssinatura: assinatura.idAssinatura } });
+      }
+      assinatura = await obterAssinaturaSalao(salao.idSalao);
+    } catch (erro) {
+      console.error('[Assinatura] Falha ao atualizar o estado no Stripe.', { mensagem: erro.message, idSalao: salao.idSalao });
+      resposta.status(502).json({ mensagem: 'Não foi possível atualizar o estado com o Stripe. Tente novamente.' });
+      return;
+    }
+  }
+  resposta.status(200).json({
+    modoTeste: process.env.ASSINATURA_MODO_TESTE === 'true',
+    oferta: obterOfertaPremium(),
+    assinatura: resumoAssinatura(assinatura),
+  });
+}
+
+async function ativarAssinaturaTeste(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre seu salão antes de ativar o Premium.' }); return; }
+  if (process.env.ASSINATURA_MODO_TESTE !== 'true') {
+    resposta.status(403).json({ mensagem: 'A ativação direta está disponível somente no modo de teste.' });
+    return;
+  }
+
+  const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
+  try {
+    const atual = await obterAssinaturaSalao(salao.idSalao);
+    if (resumoAssinatura(atual).temAcessoPremium) { resposta.status(409).json({ mensagem: 'Seu salão já possui uma assinatura Premium ativa.' }); return; }
+    if (assinaturaBloqueiaNovaContratacao(atual)) { resposta.status(409).json({ mensagem: 'Já existe uma assinatura em andamento. Atualize o status ou resolva essa assinatura antes de iniciar outra contratação.' }); return; }
+    const plano = obterDadosPlanoPremium(periodicidade);
+    const assinatura = await ativarAssinaturaPremium({
+      idSalao: salao.idSalao,
+      periodicidade,
+      valor: plano.valor,
+    });
+    resposta.status(200).json({ mensagem: 'Premium ativado para teste.', assinatura: resumoAssinatura(assinatura) });
+  } catch (erro) {
+    console.error('[Assinatura] Falha ao ativar Premium para teste.', { mensagem: erro.message, periodicidade, idSalao: salao.idSalao });
+    resposta.status(400).json({ mensagem: erro.message });
+  }
+}
+
+async function iniciarCheckoutAssinatura(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre seu salão antes de contratar o Premium.' }); return; }
+  const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
+  let referenciaExterna = null;
+  let idCheckoutStripe = null;
+  let cancelamentoCheckoutFalhou = false;
+  try {
+    const atual = await obterAssinaturaSalao(salao.idSalao);
+    if (resumoAssinatura(atual).temAcessoPremium) { resposta.status(409).json({ mensagem: 'Seu salão já possui uma assinatura Premium ativa.' }); return; }
+    if (assinaturaBloqueiaNovaContratacao(atual)) { resposta.status(409).json({ mensagem: 'Já existe uma assinatura em andamento. Atualize o status ou resolva essa assinatura antes de iniciar outra contratação.' }); return; }
+    const dadosPlano = obterDadosPlanoPremium(periodicidade);
+    const saloes = await bancoDeDados.query('SELECT st_teste_premium_utilizado AS testeUtilizado FROM tb_salao WHERE id_salao=:idSalao LIMIT 1', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT });
+    const testeGratis = !saloes[0]?.testeUtilizado;
+    referenciaExterna = randomUUID();
+    await bancoDeDados.query(
+      `INSERT INTO tb_assinatura_salao (fk_salao, cd_periodicidade, cd_status, vl_assinatura, st_teste_gratis, ds_provedor, id_preco_provedor, ds_referencia_externa)
+       VALUES (:idSalao, :periodicidade, 'PENDENTE', :valor, :testeGratis, 'STRIPE', :idPreco, :referenciaExterna)`,
+      { replacements: { idSalao: salao.idSalao, periodicidade, valor: dadosPlano.valor, testeGratis, idPreco: obterPrecoStripe(periodicidade), referenciaExterna } },
+    );
+    const checkout = await criarCheckoutAssinatura({
+      emailPagador: salao.emailConta,
+      periodicidade,
+      referenciaExterna,
+      testeGratis,
+      urlRetorno: `${(process.env.FRONTEND_URL ?? 'http://localhost:3000').replace(/\/$/, '')}/salao/assinatura?checkout=retorno`,
+    });
+    if (!checkout.id || !checkout.url) throw new Error('O Stripe não retornou um link de checkout.');
+    idCheckoutStripe = String(checkout.id);
+    await bancoDeDados.query('UPDATE tb_assinatura_salao SET id_checkout_provedor=:idCheckout WHERE ds_referencia_externa=:referenciaExterna', { replacements: { idCheckout: idCheckoutStripe, referenciaExterna } });
+    resposta.status(201).json({ checkoutUrl: checkout.url });
+  } catch (erro) {
+    if (idCheckoutStripe) {
+      try { await cancelarCheckoutStripe(idCheckoutStripe); }
+      catch (erroCancelamento) {
+        cancelamentoCheckoutFalhou = true;
+        console.error('[Assinatura] Não foi possível encerrar um checkout órfão no Stripe.', { mensagem: erroCancelamento.message });
+      }
+    }
+    if (referenciaExterna && !cancelamentoCheckoutFalhou) await bancoDeDados.query("UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW() WHERE ds_referencia_externa=:referenciaExterna AND cd_status='PENDENTE'", { replacements: { referenciaExterna } });
+    console.error('[Assinatura] Falha ao iniciar checkout.', { mensagem: erro.message, periodicidade, idSalao: salao.idSalao });
+    resposta.status(400).json({ mensagem: erro.message });
+  }
+}
+
+async function cancelarAssinatura(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const assinatura = await obterAssinaturaSalao(salao.idSalao);
+  const checkoutPendente = assinatura?.status === 'PENDENTE';
+  const assinaturaTesteLocal = assinatura?.idPrecoProvedor === 'ATIVACAO_TESTE' && !assinatura.idAssinaturaProvedor;
+  if (assinaturaTesteLocal) {
+    await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_proxima_cobranca=NULL, dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
+    resposta.status(200).json({ mensagem: 'Assinatura local de teste encerrada. Agora você pode contratar pelo Stripe.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
+    return;
+  }
+  if (checkoutPendente && assinatura?.idCheckoutProvedor) {
+    try {
+      const resultado = await cancelarCheckoutStripe(assinatura.idCheckoutProvedor);
+      if (resultado.object === 'subscription') {
+        await sincronizarAssinaturaStripe(resultado.id, assinatura.idCheckoutProvedor);
+        resposta.status(200).json({ mensagem: 'A renovação foi cancelada. O acesso Premium continua até o fim do período vigente.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
+      } else {
+        await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
+        resposta.status(200).json({ mensagem: 'Checkout pendente cancelado. Você já pode iniciar uma nova contratação.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
+      }
+    } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
+    return;
+  }
+  if (!assinatura?.idAssinaturaProvedor || assinatura.provedor !== 'STRIPE' || (!checkoutPendente && !resumoAssinatura(assinatura).temAcessoPremium)) { resposta.status(404).json({ mensagem: 'Não há uma assinatura Premium ativa no Stripe ou checkout pendente para cancelar.' }); return; }
+  try {
+    const dadosCancelamento = await cancelarAssinaturaStripe(assinatura.idAssinaturaProvedor);
+    const fimPeriodo = dadosCancelamento.items?.data?.[0]?.current_period_end ?? dadosCancelamento.current_period_end;
+    const dataFimPeriodo = fimPeriodo ? new Date(fimPeriodo * 1000) : assinatura.dataProximaCobranca;
+    await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELAMENTO_AGENDADO', dt_cancelamento_solicitado=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
+    if (dataFimPeriodo) await bancoDeDados.query('UPDATE tb_assinatura_salao SET dt_proxima_cobranca=:dataFimPeriodo WHERE id_assinatura_salao=:idAssinatura', { replacements: { dataFimPeriodo, idAssinatura: assinatura.idAssinatura } });
+    resposta.status(200).json({ mensagem: 'Cancelamento solicitado. O acesso Premium continua até o fim do período já pago.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
+  } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
+}
+
+async function alterarPeriodicidadeAssinatura(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const assinatura = await obterAssinaturaSalao(salao.idSalao);
+  const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
+  if (!assinatura?.idAssinaturaProvedor || assinatura.provedor !== 'STRIPE' || !resumoAssinatura(assinatura).temAcessoPremium) { resposta.status(404).json({ mensagem: 'Não há uma assinatura Premium ativa no Stripe para alterar.' }); return; }
+  if (assinatura.periodicidade === periodicidade) { resposta.status(400).json({ mensagem: 'Esta já é a periodicidade da sua assinatura.' }); return; }
+  if (assinatura.periodicidadePendente) { resposta.status(409).json({ mensagem: 'Já existe uma troca de periodicidade agendada.' }); return; }
+  try {
+    await atualizarPeriodicidadeStripe(assinatura.idAssinaturaProvedor, periodicidade);
+    await bancoDeDados.query('UPDATE tb_assinatura_salao SET cd_periodicidade_pendente=:periodicidade WHERE id_assinatura_salao=:idAssinatura', { replacements: { periodicidade, idAssinatura: assinatura.idAssinatura } });
+    resposta.status(200).json({ mensagem: 'A nova periodicidade será aplicada na próxima renovação.' });
+  } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
 }
 
 roteadorSalao.get('/enderecos/:cep', consultarCep);
@@ -736,6 +1038,7 @@ roteadorSalao.post('/servicos', criarServico); roteadorSalao.get('/servicos', li
 roteadorSalao.post('/funcionarios', criarFuncionario); roteadorSalao.get('/funcionarios', listarFuncionarios); roteadorSalao.patch('/funcionarios/:idFuncionario', atualizarFuncionario); roteadorSalao.delete('/funcionarios/:idFuncionario', excluirFuncionario);
 roteadorSalao.get('/disponibilidade', listarDisponibilidade); roteadorSalao.put('/funcionarios/:idFuncionario/disponibilidade', salvarDisponibilidadeFuncionario);
 roteadorSalao.post('/bloqueios', criarBloqueio); roteadorSalao.delete('/bloqueios/:idBloqueio', excluirBloqueio);
-roteadorSalao.get('/clientes', listarClientes); roteadorSalao.get('/agendamentos', listarAgendamentos); roteadorSalao.get('/indicadores', indicadores);
+roteadorSalao.get('/clientes', listarClientes); roteadorSalao.get('/agendamentos', listarAgendamentos); roteadorSalao.get('/agendamentos/horarios', listarHorariosAgendamento); roteadorSalao.post('/agendamentos', criarAgendamentoSalao); roteadorSalao.get('/indicadores', indicadores);
+roteadorSalao.get('/assinatura', consultarAssinatura); roteadorSalao.post('/assinatura/ativar', ativarAssinaturaTeste); roteadorSalao.post('/assinatura/checkout', iniciarCheckoutAssinatura); roteadorSalao.patch('/assinatura/cancelar', cancelarAssinatura); roteadorSalao.patch('/assinatura/periodicidade', alterarPeriodicidadeAssinatura);
 
 export default roteadorSalao;
