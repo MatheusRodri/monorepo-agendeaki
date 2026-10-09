@@ -874,11 +874,19 @@ async function listarClientes(requisicao, resposta) {
 
 async function listarAgendamentos(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return; const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const futuros = requisicao.query.tipo !== 'historico'; const condicao = futuros ? "a.dt_inicio >= NOW() AND a.cd_status='AGENDADO'" : "a.dt_inicio < NOW() OR a.cd_status IN ('REALIZADO', 'CANCELADO')";
-  const agendamentos = await bancoDeDados.query(`SELECT a.id_agendamento AS idAgendamento, a.dt_inicio AS dataHoraInicio, a.dt_fim AS dataHoraFim, a.cd_status AS status, a.nm_servico_agendado AS servico, a.vl_servico_agendado AS valor, a.ds_observacao AS observacao, COALESCE(c.nm_usuario, cs.nm_cliente) AS cliente, COALESCE(c.ds_email, cs.ds_email) AS emailCliente, cs.nu_telefone AS telefoneCliente, f.nm_funcionario AS funcionario, u.nm_unidade AS filial, COALESCE(p.cd_status_pagamento, 'PENDENTE') AS statusPagamento, CASE WHEN p.cd_status_pagamento = 'APROVADO' THEN TRUE ELSE FALSE END AS pago FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao INNER JOIN tb_funcionario f ON f.id_funcionario=a.fk_funcionario LEFT JOIN (SELECT p1.fk_agendamento, p1.cd_status_pagamento FROM tb_pagamento p1 INNER JOIN (SELECT fk_agendamento, MAX(id_pagamento) AS idPagamento FROM tb_pagamento GROUP BY fk_agendamento) ultimo ON ultimo.idPagamento=p1.id_pagamento) p ON p.fk_agendamento=a.id_agendamento WHERE u.fk_salao=:idSalao AND (${condicao}) ORDER BY a.dt_inicio ${futuros ? 'ASC' : 'DESC'}`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ agendamentos });
+  const futuros = requisicao.query.tipo !== 'historico'; const condicao = futuros ? "a.dt_inicio >= NOW() AND a.cd_status='AGENDADO'" : "a.dt_inicio < NOW() OR a.cd_status IN ('REALIZADO', 'CANCELADO', 'NAO_COMPARECEU')";
+  const agendamentos = await bancoDeDados.query(`SELECT a.id_agendamento AS idAgendamento, a.fk_unidade AS idUnidade, a.fk_funcionario AS idFuncionario, a.dt_inicio AS dataHoraInicio, a.dt_fim AS dataHoraFim, a.cd_status AS status, a.nm_servico_agendado AS servico, a.vl_servico_agendado AS valor, a.ds_observacao AS observacao, COALESCE(c.nm_usuario, cs.nm_cliente) AS cliente, COALESCE(c.ds_email, cs.ds_email) AS emailCliente, cs.nu_telefone AS telefoneCliente, f.nm_funcionario AS funcionario, u.nm_unidade AS filial, COALESCE(p.cd_status_pagamento, 'PENDENTE') AS statusPagamento, CASE WHEN p.cd_status_pagamento = 'APROVADO' THEN TRUE ELSE FALSE END AS pago FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao INNER JOIN tb_funcionario f ON f.id_funcionario=a.fk_funcionario LEFT JOIN (SELECT p1.fk_agendamento, p1.cd_status_pagamento FROM tb_pagamento p1 INNER JOIN (SELECT fk_agendamento, MAX(id_pagamento) AS idPagamento FROM tb_pagamento GROUP BY fk_agendamento) ultimo ON ultimo.idPagamento=p1.id_pagamento) p ON p.fk_agendamento=a.id_agendamento WHERE u.fk_salao=:idSalao AND (${condicao}) ORDER BY a.dt_inicio ${futuros ? 'ASC' : 'DESC'}`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ agendamentos });
 }
 
 async function confirmarAtendimentoAgendamento(requisicao, resposta) {
+  return registrarResultadoAgendamento(requisicao, resposta, 'REALIZADO');
+}
+
+async function registrarAusenciaAgendamento(requisicao, resposta) {
+  return registrarResultadoAgendamento(requisicao, resposta, 'NAO_COMPARECEU');
+}
+
+async function registrarResultadoAgendamento(requisicao, resposta, status) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario);
   if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
@@ -892,16 +900,118 @@ async function confirmarAtendimentoAgendamento(requisicao, resposta) {
   );
   const agendamento = agendamentos[0];
   if (!agendamento) { resposta.status(404).json({ mensagem: 'Agendamento não encontrado.' }); return; }
-  if (agendamento.status !== 'AGENDADO') { resposta.status(409).json({ mensagem: 'Somente agendamentos ainda não realizados podem ser confirmados.' }); return; }
+  if (agendamento.status !== 'AGENDADO') { resposta.status(409).json({ mensagem: 'Este agendamento já recebeu um resultado.' }); return; }
   if (new Date(agendamento.dataHoraInicio) > new Date()) { resposta.status(409).json({ mensagem: 'O atendimento só pode ser confirmado após o horário agendado.' }); return; }
   const [resultado] = await bancoDeDados.query(
     `UPDATE tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-     SET a.cd_status='REALIZADO' WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao
+     SET a.cd_status=:status WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao
        AND a.cd_status='AGENDADO' AND a.dt_inicio<=NOW()`,
-    { replacements: { idAgendamento, idSalao: salao.idSalao } },
+    { replacements: { idAgendamento, idSalao: salao.idSalao, status } },
   );
   if (!resultado.affectedRows) { resposta.status(409).json({ mensagem: 'O agendamento mudou de status ou ainda não chegou ao horário previsto.' }); return; }
-  resposta.status(200).json({ mensagem: 'Atendimento confirmado como realizado.' });
+  resposta.status(200).json({ mensagem: status === 'REALIZADO' ? 'Atendimento confirmado como realizado.' : 'Ausência registrada.' });
+}
+
+async function obterAgendamentoReagendavel(idAgendamento, idSalao, transaction) {
+  const agendamentos = await bancoDeDados.query(
+    `SELECT a.id_agendamento AS idAgendamento, a.fk_unidade AS idUnidade,
+            a.fk_servico AS idServico, a.nu_duracao_minutos AS duracaoMinutos
+     FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+     WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao
+       AND a.cd_status='AGENDADO' LIMIT 1 ${transaction ? 'FOR UPDATE' : ''}`,
+    { replacements: { idAgendamento, idSalao }, transaction, type: QueryTypes.SELECT },
+  );
+  return agendamentos[0] ?? null;
+}
+
+async function horariosReagendamentoSalao(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idAgendamento = Number(requisicao.params.idAgendamento);
+  if (!Number.isSafeInteger(idAgendamento) || idAgendamento <= 0) { resposta.status(400).json({ mensagem: 'Agendamento inválido.' }); return; }
+  const agendamento = await obterAgendamentoReagendavel(idAgendamento, salao.idSalao);
+  if (!agendamento) { resposta.status(404).json({ mensagem: 'Agendamento indisponível para reagendamento.' }); return; }
+  const idFuncionario = requisicao.query.idFuncionario && requisicao.query.idFuncionario !== 'qualquer'
+    ? Number(requisicao.query.idFuncionario) : null;
+  if (idFuncionario !== null && (!Number.isSafeInteger(idFuncionario) || idFuncionario <= 0)) {
+    resposta.status(400).json({ mensagem: 'Profissional inválido.' }); return;
+  }
+  try {
+    const horarios = await listarHorariosDisponiveis({
+      data: String(requisicao.query.data ?? ''), idUnidade: agendamento.idUnidade,
+      idServico: agendamento.idServico, idFuncionario, ignorarIdAgendamento: idAgendamento,
+      duracaoMinutos: agendamento.duracaoMinutos,
+    });
+    resposta.status(200).json(horarios);
+  } catch (erro) { resposta.status(erro.status ?? 400).json({ mensagem: erro.message }); }
+}
+
+async function reagendarAgendamentoSalao(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idAgendamento = Number(requisicao.params.idAgendamento);
+  const idFuncionario = requisicao.body?.idFuncionario ? Number(requisicao.body.idFuncionario) : null;
+  if (!Number.isSafeInteger(idAgendamento) || idAgendamento <= 0
+    || (idFuncionario !== null && (!Number.isSafeInteger(idFuncionario) || idFuncionario <= 0))) {
+    resposta.status(400).json({ mensagem: 'Agendamento ou profissional inválido.' }); return;
+  }
+  const transaction = await bancoDeDados.transaction();
+  try {
+    const agendamento = await obterAgendamentoReagendavel(idAgendamento, salao.idSalao, transaction);
+    if (!agendamento) { const erro = new Error('Agendamento indisponível para reagendamento.'); erro.status = 409; throw erro; }
+    const reserva = await resolverReserva({
+      dataHoraInicio: requisicao.body?.dataHoraInicio, idFuncionario,
+      idServico: agendamento.idServico, idUnidade: agendamento.idUnidade,
+      ignorarIdAgendamento: idAgendamento, duracaoMinutos: agendamento.duracaoMinutos, transaction,
+    });
+    const conflitos = await bancoDeDados.query(
+      `SELECT id_agendamento FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
+       AND id_agendamento<>:idAgendamento AND cd_status='AGENDADO'
+       AND dt_inicio<:dataFimBanco AND dt_fim>:dataInicioBanco FOR UPDATE`,
+      { replacements: { ...reserva, idAgendamento }, transaction, type: QueryTypes.SELECT },
+    );
+    if (conflitos.length) { const erro = new Error('Este horário acabou de ser reservado.'); erro.status = 409; throw erro; }
+    await bancoDeDados.query(
+      `UPDATE tb_agendamento SET fk_funcionario=:idFuncionario, dt_inicio=:dataInicioBanco,
+         dt_fim=:dataFimBanco WHERE id_agendamento=:idAgendamento AND cd_status='AGENDADO'`,
+      { replacements: { ...reserva, idAgendamento }, transaction },
+    );
+    await transaction.commit();
+    resposta.status(200).json({ mensagem: 'Agendamento reagendado com sucesso.' });
+  } catch (erro) {
+    await transaction.rollback();
+    resposta.status(erro.status ?? 400).json({ mensagem: erro.message });
+  }
+}
+
+async function listarAvaliacoesSalao(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idUnidade = requisicao.query.idUnidade ? Number(requisicao.query.idUnidade) : 0;
+  if (!Number.isSafeInteger(idUnidade) || idUnidade < 0) { resposta.status(400).json({ mensagem: 'Filial inválida.' }); return; }
+  const pagina = Math.max(1, Math.min(1000, Number.parseInt(requisicao.query.pagina, 10) || 1));
+  const filtro = idUnidade ? 'AND av.fk_unidade=:idUnidade' : '';
+  const replacements = { idSalao: salao.idSalao, idUnidade };
+  const [resumo] = await bancoDeDados.query(
+    `SELECT COUNT(*) AS quantidade, ROUND(AVG(av.nu_nota_salao),1) AS mediaSalao,
+            ROUND(AVG(av.nu_nota_servico),1) AS mediaServico
+     FROM tb_avaliacao av INNER JOIN tb_unidade u ON u.id_unidade=av.fk_unidade
+     WHERE u.fk_salao=:idSalao ${filtro}`,
+    { replacements, type: QueryTypes.SELECT },
+  );
+  const avaliacoes = await bancoDeDados.query(
+    `SELECT av.id_avaliacao AS idAvaliacao, av.nu_nota_salao AS notaSalao,
+            av.nu_nota_servico AS notaServico, av.ds_comentario AS comentario,
+            av.dt_criacao AS dataAvaliacao, a.nm_servico_agendado AS servico,
+            u.nm_unidade AS filial, SUBSTRING_INDEX(TRIM(c.nm_usuario), ' ', 1) AS primeiroNome
+     FROM tb_avaliacao av INNER JOIN tb_agendamento a ON a.id_agendamento=av.fk_agendamento
+     INNER JOIN tb_unidade u ON u.id_unidade=av.fk_unidade
+     INNER JOIN tb_usuario c ON c.id_usuario=av.fk_usuario
+     WHERE u.fk_salao=:idSalao ${filtro}
+     ORDER BY av.dt_criacao DESC, av.id_avaliacao DESC LIMIT 30 OFFSET :deslocamento`,
+    { replacements: { ...replacements, deslocamento: (pagina - 1) * 30 }, type: QueryTypes.SELECT },
+  );
+  resposta.status(200).json({ resumo, avaliacoes, pagina, temMais: pagina * 30 < Number(resumo.quantidade) });
 }
 
 async function indicadores(requisicao, resposta) {
@@ -918,7 +1028,7 @@ async function indicadores(requisicao, resposta) {
   if (dataInicio) { filtros.dataInicio = dataInicio; condicoesFiltros.push('DATE(a.dt_inicio)>=:dataInicio'); }
   if (dataFim) { filtros.dataFim = dataFim; condicoesFiltros.push('DATE(a.dt_inicio)<=:dataFim'); }
   const condicaoFiltros = condicoesFiltros.join(' AND ');
-  const resumo = await bancoDeDados.query(`SELECT COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos, COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados, COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN a.vl_servico_agendado ELSE 0 END),0) AS faturamento FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade WHERE ${condicaoFiltros}`, { replacements: filtros, type: QueryTypes.SELECT });
+  const resumo = await bancoDeDados.query(`SELECT COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos, COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados, COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU' THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu, COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN a.vl_servico_agendado ELSE 0 END),0) AS faturamento FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade WHERE ${condicaoFiltros}`, { replacements: filtros, type: QueryTypes.SELECT });
   const servicosMaisSolicitados = await bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, COUNT(*) AS quantidade FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade WHERE ${condicaoFiltros} GROUP BY a.nm_servico_agendado ORDER BY quantidade DESC LIMIT 3`, { replacements: filtros, type: QueryTypes.SELECT });
   const proximosAtendimentos = await bancoDeDados.query(`SELECT a.dt_inicio AS dataHoraInicio, a.nm_servico_agendado AS servico, COALESCE(c.nm_usuario, cs.nm_cliente) AS cliente FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao WHERE ${condicaoFiltros} AND a.dt_inicio>=NOW() AND a.cd_status='AGENDADO' ORDER BY a.dt_inicio LIMIT 5`, { replacements: filtros, type: QueryTypes.SELECT });
   const [filiais, servicos, funcionarios] = await Promise.all([bancoDeDados.query('SELECT id_unidade AS idUnidade, nm_unidade AS nome FROM tb_unidade WHERE fk_salao=:idSalao AND st_ativo=TRUE ORDER BY nm_unidade', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }), bancoDeDados.query('SELECT s.id_servico AS idServico, s.nm_servico AS nome FROM tb_servico s INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY s.nm_servico', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }), bancoDeDados.query('SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS nome FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade WHERE u.fk_salao=:idSalao AND f.st_ativo=TRUE ORDER BY f.nm_funcionario', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT })]);
@@ -998,6 +1108,7 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN 1 ELSE 0 END),0) AS atendimentosPagos,
         COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos,
         COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados,
+        COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosMarcados,
         COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO' AND a.dt_inicio<NOW()${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
@@ -1040,11 +1151,12 @@ async function indicadoresPremium(requisicao, resposta) {
         , SUM(CASE WHEN a.cd_status='AGENDADO' THEN 1 ELSE 0 END) AS agendados
         , SUM(CASE WHEN a.cd_status='REALIZADO' THEN 1 ELSE 0 END) AS realizados
         , SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END) AS cancelados
+        , SUM(CASE WHEN a.cd_status='NAO_COMPARECEU' THEN 1 ELSE 0 END) AS naoCompareceram
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoAgendamentos}
         GROUP BY DATE_FORMAT(a.dt_inicio,'%Y-%m-%d') ORDER BY DATE_FORMAT(a.dt_inicio,'%Y-%m-%d')`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT DAYOFWEEK(a.dt_inicio)-1 AS diaSemana, HOUR(a.dt_inicio) AS hora,
-        SUM(CASE WHEN a.cd_status<>'CANCELADO' THEN 1 ELSE 0 END) AS quantidade,
+        SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN 1 ELSE 0 END) AS quantidade,
         SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END) AS cancelados
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoAgendamentos}
@@ -1193,7 +1305,7 @@ async function obterAssinaturaSalao(idSalao) {
             dt_inicio AS dataInicio,
             dt_proxima_cobranca AS dataProximaCobranca, dt_cancelamento_solicitado AS dataCancelamentoSolicitado
      FROM tb_assinatura_salao WHERE fk_salao=:idSalao
-     ORDER BY dt_criacao DESC LIMIT 1`,
+     ORDER BY dt_criacao DESC, id_assinatura_salao DESC LIMIT 1`,
     { replacements: { idSalao }, type: QueryTypes.SELECT },
   );
   return assinaturas[0] ?? null;
@@ -1355,7 +1467,13 @@ roteadorSalao.post('/servicos', criarServico); roteadorSalao.get('/servicos', li
 roteadorSalao.post('/funcionarios', criarFuncionario); roteadorSalao.get('/funcionarios', listarFuncionarios); roteadorSalao.patch('/funcionarios/:idFuncionario', atualizarFuncionario); roteadorSalao.delete('/funcionarios/:idFuncionario', excluirFuncionario);
 roteadorSalao.get('/disponibilidade', listarDisponibilidade); roteadorSalao.put('/funcionarios/:idFuncionario/disponibilidade', salvarDisponibilidadeFuncionario);
 roteadorSalao.post('/bloqueios', criarBloqueio); roteadorSalao.delete('/bloqueios/:idBloqueio', excluirBloqueio);
-roteadorSalao.get('/clientes', listarClientes); roteadorSalao.get('/agendamentos', listarAgendamentos); roteadorSalao.get('/agendamentos/horarios', listarHorariosAgendamento); roteadorSalao.post('/agendamentos', criarAgendamentoSalao); roteadorSalao.patch('/agendamentos/:idAgendamento/confirmar-atendimento', confirmarAtendimentoAgendamento); roteadorSalao.get('/indicadores', indicadores); roteadorSalao.get('/indicadores/premium', indicadoresPremium);
+roteadorSalao.get('/clientes', listarClientes); roteadorSalao.get('/agendamentos', listarAgendamentos); roteadorSalao.get('/agendamentos/horarios', listarHorariosAgendamento); roteadorSalao.post('/agendamentos', criarAgendamentoSalao);
+roteadorSalao.patch('/agendamentos/:idAgendamento/confirmar-atendimento', confirmarAtendimentoAgendamento);
+roteadorSalao.patch('/agendamentos/:idAgendamento/nao-compareceu', registrarAusenciaAgendamento);
+roteadorSalao.get('/agendamentos/:idAgendamento/horarios-reagendamento', horariosReagendamentoSalao);
+roteadorSalao.patch('/agendamentos/:idAgendamento/reagendar', reagendarAgendamentoSalao);
+roteadorSalao.get('/avaliacoes', listarAvaliacoesSalao);
+roteadorSalao.get('/indicadores', indicadores); roteadorSalao.get('/indicadores/premium', indicadoresPremium);
 roteadorSalao.get('/assinatura', consultarAssinatura); roteadorSalao.post('/assinatura/ativar', ativarAssinaturaTeste); roteadorSalao.post('/assinatura/checkout', iniciarCheckoutAssinatura); roteadorSalao.patch('/assinatura/cancelar', cancelarAssinatura); roteadorSalao.patch('/assinatura/periodicidade', alterarPeriodicidadeAssinatura);
 
 export default roteadorSalao;

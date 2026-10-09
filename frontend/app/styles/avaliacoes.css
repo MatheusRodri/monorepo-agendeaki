@@ -1,0 +1,70 @@
+.avaliacoes-publicas {
+  margin: 0 auto 2rem;
+  max-width: 880px;
+  padding: 0 1.25rem;
+}
+
+.avaliacoes-publicas h2 {
+  color: var(--ameixa);
+  font-family: 'Playfair Display', Georgia, serif;
+  margin-bottom: .35rem;
+}
+
+.avaliacoes-publicas > p {
+  color: var(--texto-suave);
+  margin-bottom: 1rem;
+}
+
+.lista-avaliacoes {
+  display: grid;
+  gap: .75rem;
+  margin: 1rem 0;
+  max-width: 760px;
+}
+
+.cartao-avaliacao {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  display: grid;
+  gap: .35rem;
+  padding: 1rem;
+}
+
+.cartao-avaliacao strong { color: var(--ameixa); }
+.cartao-avaliacao small { color: var(--texto-suave); }
+.cartao-avaliacao span { color: var(--coral-escuro); font-size: .82rem; font-weight: 700; }
+.cartao-avaliacao p { line-height: 1.5; margin: .3rem 0 0; overflow-wrap: anywhere; }
+
+.paginacao-avaliacoes {
+  align-items: center;
+  display: flex;
+  gap: .8rem;
+  margin-top: 1rem;
+}
+
+.paginacao-avaliacoes .botao-secundario { width: auto; }
+
+.acoes-resultado-agendamento {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+}
+
+.acoes-resultado-agendamento button {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  color: var(--texto);
+  cursor: pointer;
+  font-size: .72rem;
+  padding: .4rem .55rem;
+}
+
+.acoes-resultado-agendamento button:disabled { cursor: not-allowed; opacity: .5; }
+
+.selo-status--nao_compareceu,
+.status-agendamento--nao_compareceu {
+  background: #f8ebda;
+  color: #8f5e22 !important;
+}

@@ -8,12 +8,12 @@ import CampoSenha from '../CampoSenha/CampoSenha';
 import FormularioDadosSalao from '../FormularioDadosSalao/FormularioDadosSalao';
 import FormularioFilial from '../FormularioFilial/FormularioFilial';
 import DisponibilidadeSalao from '../DisponibilidadeSalao/DisponibilidadeSalao';
-import FormularioAgendamentoSalao from '../FormularioAgendamentoSalao/FormularioAgendamentoSalao';
+import AgendaSalao from '../AgendaSalao/AgendaSalao';
 import { dataParaExibicao, dataParaIso, formatarCnpj, formatarCpf, formatarData } from '../../utils/formatadores';
 import { requisitarApi } from '../../utils/api';
 import { limparSessao, obterTokenAcesso } from '../../utils/respostaApi';
 
-const navegacao = [['dashboard', 'Visão geral', '/salao/dashboard'], ['salao', 'Meu salão', '/salao/meu-salao'], ['filiais', 'Filiais', '/salao/filiais'], ['servicos', 'Serviços', '/salao/servicos'], ['funcionarios', 'Profissionais', '/salao/funcionarios'], ['disponibilidade', 'Disponibilidade', '/salao/disponibilidade'], ['clientes', 'Clientes', '/salao/clientes'], ['agendamentos', 'Agenda', '/salao/agendamentos'], ['configuracoes', 'Configurações', '/salao/configuracoes']];
+const navegacao = [['dashboard', 'Visão geral', '/salao/dashboard'], ['salao', 'Meu salão', '/salao/meu-salao'], ['filiais', 'Filiais', '/salao/filiais'], ['servicos', 'Serviços', '/salao/servicos'], ['funcionarios', 'Profissionais', '/salao/funcionarios'], ['disponibilidade', 'Disponibilidade', '/salao/disponibilidade'], ['clientes', 'Clientes', '/salao/clientes'], ['agendamentos', 'Agenda', '/salao/agendamentos'], ['avaliacoes', 'Avaliações', '/salao/avaliacoes'], ['configuracoes', 'Configurações', '/salao/configuracoes']];
 const filtrosIniciais = { dataInicio: '', dataFim: '', idUnidade: '', idServico: '', idFuncionario: '' };
 
 export default function AreaSalao({ secao }) {
@@ -75,6 +75,7 @@ export default function AreaSalao({ secao }) {
       if (secao === 'funcionarios') { const [filiais, servicos, funcionarios] = await Promise.all([requisitar('/filiais'), requisitar('/servicos'), requisitar('/funcionarios')]); definirDados({ filiais: filiais.filiais, servicos: servicos.servicos, funcionarios: funcionarios.funcionarios }); }
       if (secao === 'disponibilidade') definirDados(await requisitar('/filiais'));
       if (secao === 'clientes') definirDados(await requisitar('/clientes'));
+      if (secao === 'avaliacoes') definirDados(await requisitar('/filiais'));
       if (secao === 'agendamentos') {
         const [agenda, clientes, filiais, servicos, funcionarios] = await Promise.all([
           requisitar(`/agendamentos?tipo=${tipoAgenda}`), requisitar('/clientes'), requisitar('/filiais'),
@@ -142,15 +143,6 @@ export default function AreaSalao({ secao }) {
       definirMensagem(mensagemSucesso); definirTipoMensagem('sucesso');
     } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); }
   }
-  async function confirmarAtendimento(idAgendamento) {
-    try {
-      const resultado = await requisitar(`/agendamentos/${idAgendamento}/confirmar-atendimento`, { method: 'PATCH' });
-      definirDados((atuais) => ({ ...atuais, agendamentos: atuais.agendamentos?.map((agendamento) => agendamento.idAgendamento === idAgendamento ? { ...agendamento, status: 'REALIZADO' } : agendamento) }));
-      definirMensagem(resultado.mensagem); definirTipoMensagem('sucesso');
-      return true;
-    } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); return false; }
-  }
-
   const enderecoCep = dados.enderecoCep ?? filialEdicao ?? {};
   return (
     <main className="area-salao">
@@ -191,7 +183,6 @@ export default function AreaSalao({ secao }) {
               definirFiltrosDashboard={definirFiltrosDashboard}
               aoAtivarPremium={() => definirAssinante(true)}
               aoSalvarAgendamento={aoSalvarAgendamento}
-              aoConfirmarAtendimento={confirmarAtendimento}
             />
           )}
         </section>
@@ -211,7 +202,8 @@ function ConteudoSalao(propriedades) {
   if (secao === 'funcionarios') return <Funcionarios dados={dados} {...propriedades} />;
   if (secao === 'disponibilidade') return <DisponibilidadeSalao filiais={dados.filiais} requisitar={propriedades.requisitar} />;
   if (secao === 'clientes') return <><p className="sobretitulo">Relacionamento</p><h1>Clientes que já passaram por aqui.</h1><ListaSimples itens={dados.clientes} campo="nome" vazio="Os clientes aparecerão após os primeiros agendamentos." /></>;
-  return <Agenda dados={dados} {...propriedades} />;
+  if (secao === 'avaliacoes') return <AvaliacoesSalao filiais={dados.filiais} requisitar={propriedades.requisitar} />;
+  return <AgendaSalao dados={dados} {...propriedades} />;
 }
 
 function Configuracoes({ excluirConta, perfil, requisitar, salao }) {
@@ -263,6 +255,7 @@ function DashboardPremium({ dados, filtrosDashboard, definirFiltrosDashboard }) 
       <IndicadorComparado titulo="Taxa de cancelamento" valor={`${taxaCancelamento.toFixed(1).replace('.', ',')}%`} variacao={`${(taxaCancelamento - taxaCancelamentoAnterior > 0 ? '+' : '')}${(taxaCancelamento - taxaCancelamentoAnterior).toFixed(1).replace('.', ',')} p.p.`} inverso />
       <Indicador titulo="Atendimentos realizados" valor={resumo.quantidadeAgendamentosRealizados ?? 0} />
       <Indicador titulo="Agendamentos cancelados" valor={resumo.quantidadeAgendamentosCancelados ?? 0} variante="neutra" />
+      <Indicador titulo="Não compareceram" valor={resumo.quantidadeNaoCompareceu ?? 0} variante="neutra" />
       <Indicador titulo="Atendimentos aguardando confirmação" valor={resumo.quantidadeAtendimentosAConfirmar ?? 0} />
     </div>
     <div className="dashboard-premium__graficos">
@@ -292,6 +285,7 @@ function exportarDashboardCsv(dados, filtros) {
     ['Atendimentos realizados', dados.resumo?.quantidadeAgendamentosRealizados],
     ['Aguardando confirmação', dados.resumo?.quantidadeAtendimentosAConfirmar],
     ['Cancelamentos', dados.resumo?.quantidadeAgendamentosCancelados],
+    ['Não compareceram', dados.resumo?.quantidadeNaoCompareceu],
     [],
     ['Receita por serviço', 'Valor atual', 'Valor período anterior'],
     ...(dados.receitaPorServico ?? []).map((item) => [item.servico, item.valor, (dados.receitaPorServicoAnterior ?? []).find((anterior) => anterior.servico === item.servico)?.valor ?? 'Fora do top 8 no período anterior']),
@@ -340,6 +334,7 @@ function DistribuicaoStatus({ resumo }) {
     ['Realizados', Number(resumo.quantidadeAgendamentosRealizados ?? 0)],
     ['Marcados', Number(resumo.quantidadeAgendamentosMarcados ?? 0)],
     ['Cancelados', Number(resumo.quantidadeAgendamentosCancelados ?? 0)],
+    ['Não presentes', Number(resumo.quantidadeNaoCompareceu ?? 0)],
   ];
   const total = Math.max(Number(resumo.quantidadeAgendamentosTotal ?? 0), 1);
   return <div className="dashboard-premium__status">{itens.map(([rotulo, quantidade]) => <div key={rotulo}><span>{rotulo}</span><div><i style={{ width: `${(quantidade / total) * 100}%` }} /></div><b>{quantidade}</b></div>)}</div>;
@@ -375,7 +370,7 @@ function GraficoBarras({ dados, campo, valor, formatar, vazio }) {
 function Dashboard({ dados, filtrosDashboard, definirFiltrosDashboard }) {
   if (dados.premiumAtivo) return <DashboardPremium dados={dados} filtrosDashboard={filtrosDashboard} definirFiltrosDashboard={definirFiltrosDashboard} />;
   const resumo = dados.resumo ?? {};
-  return <><p className="sobretitulo">Visão geral</p><h1>Seu salão em movimento.</h1><div className="filtros-dashboard"><Campo nome="dataInicio" rotulo="De" tipo="date" valor={filtrosDashboard.dataInicio} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataInicio: evento.target.value })} /><Campo nome="dataFim" rotulo="Até" tipo="date" valor={filtrosDashboard.dataFim} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataFim: evento.target.value })} /><SelectCampo rotulo="Filial" valor={filtrosDashboard.idUnidade} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idUnidade: evento.target.value })} opcoes={dados.opcoesFiltros?.filiais} chave="idUnidade" /><SelectCampo rotulo="Serviço" valor={filtrosDashboard.idServico} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idServico: evento.target.value })} opcoes={dados.opcoesFiltros?.servicos} chave="idServico" /><SelectCampo rotulo="Profissional" valor={filtrosDashboard.idFuncionario} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idFuncionario: evento.target.value })} opcoes={dados.opcoesFiltros?.funcionarios} chave="idFuncionario" /><button className="botao-secundario" onClick={() => definirFiltrosDashboard(filtrosIniciais)} type="button">Limpar filtros</button></div><div className="grade-indicadores grade-indicadores--tres"><Indicador titulo="Agendamentos ativos" valor={resumo.quantidadeAgendamentosAtivos ?? 0} /><Indicador titulo="Agendamentos cancelados" valor={resumo.quantidadeAgendamentosCancelados ?? 0} variante="neutra" /><Indicador titulo="Faturamento previsto" valor={`R$ ${Number(resumo.faturamento ?? 0).toFixed(2).replace('.', ',')}`} /></div><section className="secao-painel"><h2>Serviços mais solicitados</h2><ListaSimples itens={dados.servicosMaisSolicitados} campo="servico" vazio="Ainda não há dados para estes filtros." /></section><section className="secao-painel"><h2>Próximos atendimentos</h2><ListaSimples itens={dados.proximosAtendimentos} campo="cliente" vazio="Nenhum atendimento próximo para estes filtros." /></section></>;
+  return <><p className="sobretitulo">Visão geral</p><h1>Seu salão em movimento.</h1><div className="filtros-dashboard"><Campo nome="dataInicio" rotulo="De" tipo="date" valor={filtrosDashboard.dataInicio} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataInicio: evento.target.value })} /><Campo nome="dataFim" rotulo="Até" tipo="date" valor={filtrosDashboard.dataFim} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataFim: evento.target.value })} /><SelectCampo rotulo="Filial" valor={filtrosDashboard.idUnidade} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idUnidade: evento.target.value })} opcoes={dados.opcoesFiltros?.filiais} chave="idUnidade" /><SelectCampo rotulo="Serviço" valor={filtrosDashboard.idServico} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idServico: evento.target.value })} opcoes={dados.opcoesFiltros?.servicos} chave="idServico" /><SelectCampo rotulo="Profissional" valor={filtrosDashboard.idFuncionario} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idFuncionario: evento.target.value })} opcoes={dados.opcoesFiltros?.funcionarios} chave="idFuncionario" /><button className="botao-secundario" onClick={() => definirFiltrosDashboard(filtrosIniciais)} type="button">Limpar filtros</button></div><div className="grade-indicadores"><Indicador titulo="Agendamentos ativos" valor={resumo.quantidadeAgendamentosAtivos ?? 0} /><Indicador titulo="Agendamentos cancelados" valor={resumo.quantidadeAgendamentosCancelados ?? 0} variante="neutra" /><Indicador titulo="Não compareceram" valor={resumo.quantidadeNaoCompareceu ?? 0} variante="neutra" /><Indicador titulo="Faturamento previsto" valor={`R$ ${Number(resumo.faturamento ?? 0).toFixed(2).replace('.', ',')}`} /></div><section className="secao-painel"><h2>Serviços mais solicitados</h2><ListaSimples itens={dados.servicosMaisSolicitados} campo="servico" vazio="Ainda não há dados para estes filtros." /></section><section className="secao-painel"><h2>Próximos atendimentos</h2><ListaSimples itens={dados.proximosAtendimentos} campo="cliente" vazio="Nenhum atendimento próximo para estes filtros." /></section></>;
 }
 
 function Assinatura({ aoAtivarPremium, dados, requisitar }) {
@@ -482,22 +477,26 @@ function Servicos({ dados, enviarFormulario, excluirItem, servicoEdicao, definir
 
 function Funcionarios({ dados, enviarFormulario, excluirItem, funcionarioEdicao, definirFuncionarioEdicao, idFilialProfissional, definirIdFilialProfissional }) { const editando = Boolean(funcionarioEdicao); const idFilial = idFilialProfissional || funcionarioEdicao?.idUnidade || ''; const servicosFilial = dados.servicos?.filter((servico) => Number(servico.idUnidade) === Number(idFilial)) ?? []; return <><p className="sobretitulo">Seu time</p><h1>{editando ? 'Atualize o profissional.' : 'Profissionais preparados para cuidar.'}</h1><form className="formulario-salao grade-formulario" key={funcionarioEdicao?.idFuncionario ?? 'novo'} onSubmit={(evento) => enviarFormulario(evento, editando ? `/funcionarios/${funcionarioEdicao.idFuncionario}` : '/funcionarios', editando ? 'PATCH' : 'POST')}><Campo nome="nome" rotulo="Nome do profissional" valor={funcionarioEdicao?.nome} /><label className="campo-formulario"><span>Filial</span><select name="idUnidade" onChange={(evento) => definirIdFilialProfissional(evento.target.value)} required value={idFilial}><option value="">Selecione</option>{dados.filiais?.map((filial) => <option key={filial.idUnidade} value={filial.idUnidade}>{filial.nome}</option>)}</select></label><label className="campo-formulario"><span>Serviços que realiza</span><select defaultValue={funcionarioEdicao?.idsServicos?.map(String)} disabled={!idFilial} key={`${funcionarioEdicao?.idFuncionario ?? 'novo'}-${idFilial}`} multiple name="idsServicos" required>{idFilial ? servicosFilial.map((servico) => <option key={servico.idServico} value={servico.idServico}>{servico.nome}</option>) : <option>Selecione uma filial primeiro</option>}</select></label><div className="acoes-formulario"><button className="botao-enviar">{editando ? 'Salvar profissional' : 'Adicionar profissional'} <span>→</span></button>{editando && <button className="botao-secundario" onClick={() => { definirFuncionarioEdicao(null); definirIdFilialProfissional(''); }} type="button">Cancelar edição</button>}</div></form><CabecalhoLista titulo="Profissionais cadastrados" descricao="Edite os serviços de cada profissional ou remova-o da agenda." /><div className="grade-gestao">{dados.funcionarios?.map((funcionario) => <article className="cartao-gestao" key={funcionario.idFuncionario}><div><strong>{funcionario.nome}</strong><span>{funcionario.filial}</span><small>{funcionario.servicos || 'Sem serviços vinculados'}</small></div><AcoesGestao aoEditar={() => { definirFuncionarioEdicao(funcionario); definirIdFilialProfissional(String(funcionario.idUnidade)); }} aoExcluir={() => excluirItem(`/funcionarios/${funcionario.idFuncionario}`, `o profissional “${funcionario.nome}”`)} /></article>)}</div>{!dados.funcionarios?.length && <p className="estado-lista">Nenhum profissional cadastrado.</p>}</>; }
 
-function Agenda({ dados, tipoAgenda, definirTipoAgenda, requisitar, aoSalvarAgendamento, aoConfirmarAtendimento }) {
-  const [criando, definirCriando] = useState(false);
-  const [confirmandoId, definirConfirmandoId] = useState(null);
-  async function confirmar(idAgendamento) {
-    definirConfirmandoId(idAgendamento);
-    await aoConfirmarAtendimento(idAgendamento);
-    definirConfirmandoId(null);
-  }
-  return <>
-    <p className="sobretitulo">Sua agenda</p><h1>Atendimentos do salão.</h1>
-    <div className="cabecalho-agenda-salao">
-      <div className="filtro-agendamentos"><button className={tipoAgenda === 'futuros' ? 'filtro-agendamentos__ativo' : ''} onClick={() => definirTipoAgenda('futuros')} type="button">Próximos</button><button className={tipoAgenda === 'historico' ? 'filtro-agendamentos__ativo' : ''} onClick={() => definirTipoAgenda('historico')} type="button">Histórico</button></div>
-      <button className="botao-enviar" onClick={() => definirCriando((valor) => !valor)} type="button">{criando ? 'Fechar formulário' : 'Novo agendamento'} <span>{criando ? '×' : '+'}</span></button>
-    </div>
-    {criando && <FormularioAgendamentoSalao clientes={dados.clientes ?? []} filiais={dados.filiais ?? []} funcionarios={dados.funcionarios ?? []} requisitar={requisitar} servicos={dados.servicos ?? []} aoCancelar={() => definirCriando(false)} aoSalvar={async (mensagem) => { definirCriando(false); await aoSalvarAgendamento(mensagem); }} />}
-    <div className="lista-agendamentos-salao">{dados.agendamentos?.map((agendamento) => { const horarioFuturo = new Date(agendamento.dataHoraInicio) > new Date(); return <article className="cartao-agendamento-salao" key={agendamento.idAgendamento}><div className="cartao-agendamento-salao__cabecalho"><div><strong>{agendamento.cliente}</strong><span>{formatarDataHora(agendamento.dataHoraInicio)} · {agendamento.filial}</span>{(agendamento.emailCliente || agendamento.telefoneCliente) && <small>{agendamento.telefoneCliente}{agendamento.telefoneCliente && agendamento.emailCliente ? ' · ' : ''}{agendamento.emailCliente}</small>}</div><div className="cartao-agendamento-salao__acoes"><span className={`selo-status selo-status--${String(agendamento.status).toLowerCase()}`}>{agendamento.status === 'AGENDADO' ? 'Confirmado' : agendamento.status === 'REALIZADO' ? 'Realizado' : 'Cancelado'}</span>{agendamento.status === 'AGENDADO' && <button className="botao-confirmar-atendimento" disabled={horarioFuturo || confirmandoId === agendamento.idAgendamento} onClick={() => confirmar(agendamento.idAgendamento)} title={horarioFuturo ? 'Disponível após o horário do agendamento.' : undefined} type="button">{confirmandoId === agendamento.idAgendamento ? 'Salvando...' : 'Confirmar atendimento'}</button>}</div></div><dl><div><dt>Serviço</dt><dd>{agendamento.servico} · R$ {Number(agendamento.valor).toFixed(2).replace('.', ',')}</dd></div><div><dt>Profissional</dt><dd>{agendamento.funcionario}</dd></div><div><dt>Pagamento</dt><dd>{agendamento.pago ? 'Pago' : `Não pago (${agendamento.statusPagamento})`}</dd></div><div><dt>Observação</dt><dd>{agendamento.observacao || 'Nenhuma observação.'}</dd></div></dl></article>; })}</div>{!dados.agendamentos?.length && <p className="estado-lista">Nenhum agendamento encontrado.</p>}
+function AvaliacoesSalao({ filiais = [], requisitar }) {
+  const [idUnidade, definirIdUnidade] = useState('');
+  const [pagina, definirPagina] = useState(1);
+  const [dados, definirDados] = useState({ resumo: {}, avaliacoes: [], temMais: false });
+  const [mensagem, definirMensagem] = useState('Carregando avaliações...');
+  useEffect(() => {
+    let ativo = true;
+    definirMensagem('Carregando avaliações...');
+    requisitar(`/avaliacoes?pagina=${pagina}${idUnidade ? `&idUnidade=${idUnidade}` : ''}`)
+      .then((resultado) => { if (ativo) { definirDados(resultado); definirMensagem(''); } })
+      .catch((erro) => { if (ativo) definirMensagem(erro.message); });
+    return () => { ativo = false; };
+  }, [idUnidade, pagina, requisitar]);
+  return <><p className="sobretitulo">Opiniões dos clientes</p><h1>Avaliações recebidas.</h1>
+    <label className="campo-formulario"><span>Filial</span><select onChange={(evento) => { definirIdUnidade(evento.target.value); definirPagina(1); }} value={idUnidade}><option value="">Todas as filiais</option>{filiais.map((filial) => <option key={filial.idUnidade} value={filial.idUnidade}>{filial.nome}</option>)}</select></label>
+    <div className="grade-indicadores"><Indicador titulo="Avaliações" valor={dados.resumo.quantidade ?? 0} /><Indicador titulo="Nota da filial" valor={dados.resumo.mediaSalao ? `${Number(dados.resumo.mediaSalao).toFixed(1)} ★` : '—'} /><Indicador titulo="Nota dos serviços" valor={dados.resumo.mediaServico ? `${Number(dados.resumo.mediaServico).toFixed(1)} ★` : '—'} /></div>
+    {mensagem && <p className="estado-lista">{mensagem}</p>}
+    {!mensagem && !dados.avaliacoes.length && <p className="estado-lista">Nenhuma avaliação recebida.</p>}
+    <div className="lista-avaliacoes">{dados.avaliacoes.map((avaliacao) => <article className="cartao-avaliacao" key={avaliacao.idAvaliacao}><strong>{avaliacao.primeiroNome} · {avaliacao.filial}</strong><small>{formatarDataAssinatura(avaliacao.dataAvaliacao)} · {avaliacao.servico}</small><span>Filial {avaliacao.notaSalao} ★ · Serviço {avaliacao.notaServico} ★</span>{avaliacao.comentario && <p>{avaliacao.comentario}</p>}</article>)}</div>
+    <div className="paginacao-avaliacoes"><button className="botao-secundario" disabled={pagina === 1} onClick={() => definirPagina(pagina - 1)} type="button">Anterior</button><span>Página {pagina}</span><button className="botao-secundario" disabled={!dados.temMais} onClick={() => definirPagina(pagina + 1)} type="button">Próxima</button></div>
   </>;
 }
 

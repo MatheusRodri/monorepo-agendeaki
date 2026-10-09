@@ -30,6 +30,8 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   const [observacao, definirObservacao] = useState('');
   const [mensagem, definirMensagem] = useState('Carregando página de agendamento...');
   const [enviando, definirEnviando] = useState(false);
+  const [avaliacoes, definirAvaliacoes] = useState({ resumo: {}, servicos: [], avaliacoes: [], temMais: false });
+  const [paginaAvaliacoes, definirPaginaAvaliacoes] = useState(1);
 
   useEffect(() => {
     const parametros = new URLSearchParams(window.location.search);
@@ -44,6 +46,15 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
       .then((dados) => { definirPagina(dados); definirMensagem(dados.disponivel ? '' : 'Esta filial está temporariamente sem serviços ou profissionais disponíveis.'); })
       .catch((erro) => definirMensagem(erro.message));
   }, [slugFilial, slugSalao]);
+
+  useEffect(() => {
+    if (!pagina?.filial?.idUnidade) return;
+    let ativo = true;
+    requisitarApi(`/api/publico/avaliacoes/${pagina.filial.idUnidade}`, { parametros: { pagina: paginaAvaliacoes } })
+      .then((dados) => { if (ativo) definirAvaliacoes((atuais) => ({ ...dados, avaliacoes: paginaAvaliacoes === 1 ? dados.avaliacoes : [...atuais.avaliacoes, ...dados.avaliacoes] })); })
+      .catch(() => {});
+    return () => { ativo = false; };
+  }, [pagina?.filial?.idUnidade, paginaAvaliacoes]);
 
   useEffect(() => {
     if (!selecaoInicializada) return;
@@ -112,13 +123,14 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
     <section className="apresentacao-filial"><p className="sobretitulo">Agendamento online</p><h1>{filial.nomeSalao}</h1><p><strong>{filial.nomeUnidade}</strong> · {String(filial.categoria).toLowerCase()}</p><address>{filial.rua}, {filial.numero}{filial.complemento ? ` · ${filial.complemento}` : ''}<br />{filial.bairro}, {filial.municipio}/{filial.estado}{filial.telefone ? ` · ${filial.telefone}` : ''}</address></section>
     <form className="fluxo-agendamento" onSubmit={confirmar}>
       <Etapa numero="1" titulo="Escolha o serviço">
-        <div className="opcoes-agendamento">{pagina.servicos.map((item) => <button className={String(item.idServico) === String(selecao.idServico) ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} key={item.idServico} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: '', idServico: String(item.idServico) })} type="button"><strong>{item.nome}</strong><span>{item.duracaoMinutos} min · R$ {item.valor.toFixed(2).replace('.', ',')}</span><small>{item.descricao || 'Um cuidado pensado para você.'}</small></button>)}</div>
+        <div className="opcoes-agendamento">{pagina.servicos.map((item) => { const resumo = avaliacoes.servicos.find((avaliacao) => Number(avaliacao.idServico) === Number(item.idServico)); return <button className={String(item.idServico) === String(selecao.idServico) ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} key={item.idServico} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: '', idServico: String(item.idServico) })} type="button"><strong>{item.nome}</strong><span>{item.duracaoMinutos} min · R$ {item.valor.toFixed(2).replace('.', ',')}</span><small>{item.descricao || 'Um cuidado pensado para você.'}</small>{resumo && <small>★ {Number(resumo.mediaServico).toFixed(1)} · {resumo.quantidade} avaliações</small>}</button>; })}</div>
       </Etapa>
       {servico && <Etapa numero="2" titulo="Escolha o profissional"><div className="opcoes-agendamento opcoes-agendamento--compactas"><button className={selecao.idFuncionario === 'qualquer' ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: 'qualquer' })} type="button"><strong>Sem preferência</strong><small>Atribuição automática no momento da confirmação.</small></button>{servico.profissionais.map((item) => <button className={String(item.idFuncionario) === String(selecao.idFuncionario) ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} key={item.idFuncionario} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: String(item.idFuncionario) })} type="button"><strong>{item.nome}</strong></button>)}</div></Etapa>}
       {selecao.idFuncionario && <Etapa numero="3" titulo="Escolha a data"><label className="campo-formulario campo-data-agendamento"><span>Data do atendimento</span><input max={dataMaxima} min={dataLocal()} onChange={(evento) => atualizarSelecao({ data: evento.target.value, horario: '' })} required type="date" value={selecao.data} /></label></Etapa>}
       {selecao.data && <Etapa numero="4" titulo="Escolha o horário"><div className="grade-horarios">{horarios.map((item) => <button className={item.inicio === selecao.horario ? 'horario-disponivel horario-disponivel--ativo' : 'horario-disponivel'} key={item.inicio} onClick={() => atualizarSelecao({ horario: item.inicio })} type="button">{item.inicio}</button>)}</div>{mensagem && <p className="estado-lista">{mensagem}</p>}</Etapa>}
       {selecao.horario && <Etapa numero="5" titulo="Revise e confirme"><div className="resumo-agendamento"><strong>{servico.nome}</strong><span>{selecao.data.split('-').reverse().join('/')} às {selecao.horario}</span><span>{servico.duracaoMinutos} min · R$ {servico.valor.toFixed(2).replace('.', ',')}</span></div><label className="campo-formulario"><span>Observação <small>Opcional</small></span><textarea maxLength="500" onChange={(evento) => definirObservacao(evento.target.value)} value={observacao} /></label>{mensagem && <p className="mensagem-formulario">{mensagem}</p>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Confirmando...' : obterTokenAcesso() ? 'Confirmar agendamento' : 'Entrar para confirmar'} →</button></Etapa>}
     </form>
+    <section className="avaliacoes-publicas"><h2>Avaliações desta filial</h2><p>{avaliacoes.resumo.quantidade ? `★ ${Number(avaliacoes.resumo.mediaSalao).toFixed(1)} · ${avaliacoes.resumo.quantidade} avaliações` : 'Esta filial ainda não recebeu avaliações.'}</p><div className="lista-avaliacoes">{avaliacoes.avaliacoes.map((avaliacao) => <article className="cartao-avaliacao" key={avaliacao.idAvaliacao}><strong>{avaliacao.primeiroNome}</strong><small>{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(new Date(avaliacao.dataAvaliacao))} · {avaliacao.servico}</small><span>Filial {avaliacao.notaSalao} ★ · Serviço {avaliacao.notaServico} ★</span>{avaliacao.comentario && <p>{avaliacao.comentario}</p>}</article>)}</div>{avaliacoes.temMais && <button className="botao-secundario" onClick={() => definirPaginaAvaliacoes((atual) => atual + 1)} type="button">Ver mais avaliações</button>}</section>
   </main>;
 }
 
