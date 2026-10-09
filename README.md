@@ -65,6 +65,17 @@ mysql -u root -p < database/script.sql
 
 O script prepara uma instalação nova. Em uma base existente, atualize o esquema manualmente antes de publicar mudanças que alterem tabelas.
 
+### Atualizar uma base existente para avaliações e documentos protegidos
+
+Faça um backup e interrompa as gravações durante a migração. Gere **duas chaves diferentes** com `openssl rand -base64 32`, configure `DOCUMENT_ENCRYPTION_KEY` e `DOCUMENT_HMAC_KEY` no backend e guarde cópias seguras delas: sem essas chaves, os documentos cifrados não poderão ser lidos.
+
+1. Na pasta `backend`, execute `npm run migrar:documentos`. O comando adiciona as novas colunas, converte CPF/CNPJ existentes e cria o índice único. Ele pode ser repetido se a conversão for interrompida.
+2. Execute `database/migracoes/2026-10-09-avaliacoes.sql` no MySQL para criar as avaliações e o novo estado de atendimento.
+3. Publique o backend e o frontend novos. Confira o cadastro, a consulta do próprio perfil e a ausência de documentos pendentes antes de reabrir as gravações.
+4. Depois de confirmar que nenhum processo antigo usa as colunas anteriores, execute `database/migracoes/2026-10-09-remover-documentos-legados.sql`. Esse último passo remove os documentos em texto simples da tabela. Revise também a retenção dos backups antigos.
+
+Mantenha as duas chaves em um gerenciador de segredos e preserve o acesso às cópias de segurança. A troca de qualquer uma exige uma migração planejada dos documentos cifrados ou dos índices HMAC.
+
 ### 3. Configure as variáveis de ambiente
 
 Copie os arquivos de exemplo:
@@ -82,6 +93,8 @@ Depois, preencha os valores adequados em cada arquivo.
 | --- | --- |
 | `MYSQL_HOST`, `MYSQL_PORT` | Host e porta do MySQL |
 | `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Credenciais e nome do banco |
+| `DOCUMENT_ENCRYPTION_KEY` | Chave privada de 32 bytes em base64 para cifrar CPF/CNPJ |
+| `DOCUMENT_HMAC_KEY` | Outra chave privada de 32 bytes em base64 para o índice único de documentos |
 | `PORT` | Porta da API (padrão: `3001`) |
 | `FRONTEND_URL` | URL do frontend (padrão: `http://localhost:3000`) |
 | `ASSINATURA_MODO_TESTE` | Use `true` para ativar Premium localmente sem checkout ou `false` para abrir o checkout Stripe |
