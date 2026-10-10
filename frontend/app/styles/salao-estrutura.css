@@ -16,6 +16,57 @@
   gap: .65rem;
 }
 
+.botao-notificacoes {
+  align-items: center;
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 50%;
+  color: var(--texto-suave);
+  display: inline-flex;
+  height: 42px;
+  justify-content: center;
+  position: relative;
+  transition: background .2s ease, border-color .2s ease, color .2s ease;
+  width: 42px;
+}
+
+.botao-notificacoes:hover,
+.botao-notificacoes--ativo {
+  background: var(--creme);
+  border-color: var(--coral);
+  color: var(--coral-escuro);
+}
+
+.botao-notificacoes:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 3px;
+}
+
+.botao-notificacoes--indisponivel,
+.botao-notificacoes--indisponivel:hover {
+  color: var(--texto-secundario, #74727b);
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.botao-notificacoes__contador {
+  align-items: center;
+  background: var(--coral-escuro);
+  border: 2px solid var(--fundo);
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-size: .6rem;
+  font-weight: 700;
+  height: 19px;
+  justify-content: center;
+  min-width: 19px;
+  padding: 0 .25rem;
+  position: absolute;
+  right: -5px;
+  top: -5px;
+}
+
 .botao-assinatura {
   background: var(--ameixa);
   border: 1px solid var(--ameixa);
@@ -66,10 +117,29 @@
   color: var(--coral-escuro);
 }
 
+.menu-salao__contador {
+  align-items: center;
+  background: var(--coral-escuro);
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  float: right;
+  font-size: .65rem;
+  justify-content: center;
+  min-height: 1.2rem;
+  min-width: 1.2rem;
+  padding: 0 .3rem;
+}
+
 .conteudo-salao {
   max-width: 960px;
   padding: 3.5rem clamp(1.5rem, 5vw, 5rem);
   width: 100%;
+}
+
+.conteudo-salao--dashboard {
+  max-width: none;
+  min-width: 0;
 }
 
 .conteudo-salao h1 {

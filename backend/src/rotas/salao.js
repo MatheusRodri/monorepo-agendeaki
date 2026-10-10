@@ -10,6 +10,7 @@ import { sincronizarAssinaturaStripe } from '../servicos/sincronizarAssinaturaSt
 import { criarSlugSalaoUnico, criarSlugUnidadeUnico } from '../servicos/slugs.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 import { listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
+import { consultarInscricaoPush, listarNotificacoesSalao, marcarNotificacaoSalaoLida, marcarTodasNotificacoesSalaoLidas, obterChavePublicaPush, removerInscricaoPush, salvarInscricaoPush } from '../servicos/notificacoesPush.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -60,6 +61,86 @@ async function obterSalaoAdministrador(idUsuario) {
     { replacements: { idUsuario }, type: QueryTypes.SELECT },
   );
   return saloes[0] ?? null;
+}
+
+async function obterSalaoPremiumAdministrador(idUsuario, resposta) {
+  const salao = await obterSalaoAdministrador(idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return null; }
+  const assinatura = await obterAssinaturaSalao(salao.idSalao);
+  if (!resumoAssinatura(assinatura).temAcessoPremium) {
+    resposta.status(403).json({ mensagem: 'As notificações são um recurso disponível para assinantes Premium.' });
+    return null;
+  }
+  return salao;
+}
+
+async function chavePublicaNotificacoes(_requisicao, resposta) {
+  const chavePublica = obterChavePublicaPush();
+  if (!chavePublica) { resposta.status(503).json({ mensagem: 'Notificações ainda não foram configuradas neste ambiente.' }); return; }
+  resposta.status(200).json({ chavePublica });
+}
+
+async function salvarInscricaoNotificacoes(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
+  const inscricao = requisicao.body;
+  let endpointValido = false;
+  try {
+    const endpoint = new URL(inscricao?.endpoint);
+    endpointValido = endpoint.protocol === 'https:'
+      || (endpoint.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname));
+  } catch {}
+  if (typeof inscricao?.endpoint !== 'string' || inscricao.endpoint.length > 2048 || !endpointValido
+    || !inscricao?.keys?.p256dh || !inscricao?.keys?.auth) {
+    resposta.status(400).json({ mensagem: 'Inscrição de notificações inválida.' }); return;
+  }
+  try {
+    await salvarInscricaoPush(salao.idSalao, inscricao);
+    resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.' });
+  } catch (erro) {
+    console.error('[Notificações push] Falha ao salvar inscrição.', { idSalao: salao.idSalao, mensagem: erro.message });
+    resposta.status(500).json({ mensagem: 'Não foi possível ativar as notificações. Confira se a tabela tb_inscricao_notificacao existe.' });
+  }
+}
+
+async function consultarInscricaoNotificacoes(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
+  const endpoint = String(requisicao.query.endpoint ?? '');
+  const ativa = await consultarInscricaoPush(salao.idSalao, endpoint);
+  resposta.status(200).json({ ativa });
+}
+
+async function excluirInscricaoNotificacoes(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
+  const endpoint = requisicao.body?.endpoint;
+  if (typeof endpoint !== 'string' || !endpoint) { resposta.status(400).json({ mensagem: 'Informe o dispositivo a desativar.' }); return; }
+  await removerInscricaoPush(salao.idSalao, endpoint);
+  resposta.status(200).json({ mensagem: 'Notificações desativadas neste dispositivo.' });
+}
+
+async function consultarNotificacoes(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
+  resposta.status(200).json(await listarNotificacoesSalao(salao.idSalao));
+}
+
+async function marcarNotificacaoComoLida(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
+  const idNotificacao = Number(requisicao.params.idNotificacao);
+  if (!Number.isSafeInteger(idNotificacao) || idNotificacao <= 0) { resposta.status(400).json({ mensagem: 'Notificação inválida.' }); return; }
+  const atualizada = await marcarNotificacaoSalaoLida(salao.idSalao, idNotificacao);
+  if (!atualizada) { resposta.status(404).json({ mensagem: 'Notificação não encontrada ou já lida.' }); return; }
+  resposta.status(200).json({ mensagem: 'Notificação marcada como lida.' });
+}
+
+async function marcarTodasNotificacoesComoLidas(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
+  await marcarTodasNotificacoesSalaoLidas(salao.idSalao);
+  resposta.status(200).json({ mensagem: 'Todas as notificações foram marcadas como lidas.' });
 }
 
 async function consultarEnderecoPorCep(cep) {
@@ -1467,6 +1548,13 @@ async function alterarPeriodicidadeAssinatura(requisicao, resposta) {
 }
 
 roteadorSalao.get('/enderecos/:cep', consultarCep);
+roteadorSalao.get('/notificacoes/chave-publica', chavePublicaNotificacoes);
+roteadorSalao.get('/notificacoes', consultarNotificacoes);
+roteadorSalao.post('/notificacoes/lidas', marcarTodasNotificacoesComoLidas);
+roteadorSalao.patch('/notificacoes/:idNotificacao/lida', marcarNotificacaoComoLida);
+roteadorSalao.get('/notificacoes/inscricao', consultarInscricaoNotificacoes);
+roteadorSalao.post('/notificacoes/inscricao', salvarInscricaoNotificacoes);
+roteadorSalao.delete('/notificacoes/inscricao', excluirInscricaoNotificacoes);
 roteadorSalao.get('/coordenadas', consultarCoordenadasFilial);
 roteadorSalao.post('/saloes', criarSalao); roteadorSalao.get('/saloes/atual', consultarSalao); roteadorSalao.patch('/saloes/atual', atualizarSalao); roteadorSalao.delete('/conta', excluirConta);
 roteadorSalao.get('/perfil', consultarPerfil); roteadorSalao.patch('/perfil', atualizarPerfil); roteadorSalao.patch('/senha', alterarSenha);

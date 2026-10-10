@@ -5,6 +5,7 @@ import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../con
 import { cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
 import { listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { notificarSalaoDoAgendamento } from '../servicos/notificacoesPush.js';
 
 const roteadorCliente = Router();
 const raiosPermitidos = [1, 5, 10];
@@ -352,7 +353,7 @@ async function criarAgendamento(requisicao, resposta) {
     );
     if (conflitos.length) { const erro = new Error('Este horário acabou de ser reservado. Escolha outro horário.'); erro.status = 409; throw erro; }
 
-    await bancoDeDados.query(
+    const [idAgendamentoCriado] = await bancoDeDados.query(
       `INSERT INTO tb_agendamento (
         fk_usuario, fk_unidade, fk_funcionario, fk_servico, dt_inicio, dt_fim,
         nm_servico_agendado, vl_servico_agendado, nu_duracao_minutos, ds_observacao
@@ -378,6 +379,7 @@ async function criarAgendamento(requisicao, resposta) {
     );
 
     await transacao.commit();
+    void notificarSalaoDoAgendamento(Number(idAgendamentoCriado), 'Novo agendamento', 'Um cliente acabou de agendar um horário.');
     resposta.status(201).json({ mensagem: 'Agendamento realizado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, dataHoraFim: reserva.dataFimBanco, idFuncionario: reserva.idFuncionario });
   } catch (erro) {
     await transacao.rollback();
@@ -472,6 +474,7 @@ async function cancelarAgendamento(requisicao, resposta) {
   const idAgendamento = Number(requisicao.params.idAgendamento);
   const resultado = await bancoDeDados.query(`UPDATE tb_agendamento SET cd_status = 'CANCELADO' WHERE id_agendamento = :idAgendamento AND fk_usuario = :idUsuario AND cd_status = 'AGENDADO' AND dt_inicio > NOW()`, { replacements: { idAgendamento, idUsuario: cliente.idUsuario } });
   if (!resultado[1]?.affectedRows && !resultado[0]?.affectedRows) { resposta.status(404).json({ mensagem: 'Esse agendamento não pode mais ser cancelado.' }); return; }
+  void notificarSalaoDoAgendamento(idAgendamento, 'Agendamento cancelado', 'Um cliente cancelou um horário marcado.');
   resposta.status(200).json({ mensagem: 'Agendamento cancelado com sucesso.' });
 }
 
@@ -537,6 +540,7 @@ async function atualizarAgendamento(requisicao, resposta) {
     if (conflitos.length) { const erro = new Error('Esse horário acabou de ser reservado. Escolha outro.'); erro.status = 409; throw erro; }
     await bancoDeDados.query(`UPDATE tb_agendamento SET fk_unidade=:idUnidade, fk_funcionario=:idFuncionario, fk_servico=:idServico, dt_inicio=:dataInicioBanco, dt_fim=:dataFimBanco, nm_servico_agendado=:nomeServico, vl_servico_agendado=:valorServico, nu_duracao_minutos=:duracaoMinutos, ds_observacao=:observacao WHERE id_agendamento=:idAgendamento`, { replacements: { ...reserva, idAgendamento, idServico, idUnidade, observacao: requisicao.body?.observacao?.trim() || null }, transaction: transacao });
     await transacao.commit();
+    void notificarSalaoDoAgendamento(idAgendamento, 'Agendamento alterado', 'Um cliente alterou os dados de um horário marcado.');
     resposta.status(200).json({ mensagem: 'Agendamento atualizado com sucesso.' });
   } catch (erro) { await transacao.rollback(); resposta.status(erro.status ?? 400).json({ mensagem: erro.message }); }
 }
