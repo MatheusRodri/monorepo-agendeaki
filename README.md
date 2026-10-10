@@ -4,176 +4,347 @@
 
 ## Objetivo
 
-O **AgendeAki** centraliza a rotina de agendamentos de salões de beleza. Clientes podem localizar salões, consultar serviços e acompanhar seus horários; administradores de salão podem organizar unidades, serviços, funcionários e atendimentos em um só lugar.
+O **AgendeAki** centraliza a rotina de agendamentos de salões de beleza. Clientes podem encontrar salões próximos, consultar serviços, agendar horários e acompanhar seus atendimentos. Administradores podem gerenciar unidades, serviços, funcionários, disponibilidade e agendamentos em um só lugar.
 
-## Principais recursos
-
-- Cadastro, login, recuperação e redefinição de senha para clientes e salões.
-- Busca de salões próximos e consulta de serviços disponíveis.
-- Agendamento por link público personalizado de cada filial.
-- Agendamentos criados pelo salão para clientes sem conta, com ficha reutilizável.
-- Horários calculados pela duração do serviço e pela jornada de cada profissional.
-- Área administrativa para gerenciar dados do salão, filiais, funcionários, disponibilidade, bloqueios, clientes e serviços.
-- Integração com mapas para localização das unidades.
+O sistema também oferece páginas públicas de agendamento por filial, autenticação para clientes e salões, pagamentos de assinatura e notificações para administradores.
 
 ## Stack
 
 | Camada | Tecnologias |
 | --- | --- |
-| Frontend | Next.js 16, React 19, Axios, Leaflet e MapLibre |
+| Frontend | Next.js 16, React 19, Axios e MapLibre GL |
 | Backend | Node.js, Express 5, Sequelize e CORS |
-| Banco de dados | MySQL |
+| Banco de dados | MySQL 8 |
 | Autenticação | Supabase Auth |
+| Pagamentos | Stripe |
+| Geolocalização | HERE Maps |
 
 ## Estrutura do projeto
 
 ```text
 .
-├── frontend/      # Aplicação web em Next.js
-├── backend/       # API REST em Express
-├── database/      # Script inicial e migrações MySQL
-└── template/      # Modelos de e-mail
+├── frontend/
+│   ├── app/                 # Rotas e layouts do Next.js
+│   ├── components/          # Componentes das áreas de cliente e salão
+│   ├── public/              # Recursos estáticos e service worker
+│   └── utils/               # Chamadas à API e utilitários do frontend
+├── backend/
+│   ├── src/rotas/            # Endpoints da API Express
+│   ├── src/servicos/         # Regras de negócio e integrações
+│   └── scripts/              # Scripts operacionais, incluindo migrações
+├── database/
+│   ├── script.sql            # Estrutura inicial do banco
+│   └── migracoes/            # Migrações para bases existentes
+└── template/                 # Modelos de e-mail
 ```
 
 ## Requisitos
 
-Antes de começar, tenha instalado:
+- Node.js **20.9 ou superior** e npm;
+- MySQL Server e cliente de linha de comando, **8 ou superior**;
+- Projeto no [Supabase](https://supabase.com/) com Auth habilitado;
+- Chave da [HERE](https://www.here.com/) para mapas e geocodificação;
+- Conta Stripe para testar ou publicar pagamentos;
+- Git para clonar o repositório.
 
-- [Node.js](https://nodejs.org/) **20.9 ou superior** e npm;
-- [MySQL](https://www.mysql.com/) 8 ou superior, em execução localmente;
-- Uma conta e um projeto no [Supabase](https://supabase.com/) para autenticação;
-- Git (opcional, para clonar o repositório).
+Para notificações push, configure também as chaves VAPID. Elas são opcionais para executar o restante da aplicação.
 
-## Como rodar o projeto
+## Como rodar local
 
-### 1. Clone o repositório
+### 1. Obtenha o projeto
 
 ```bash
 git clone <URL_DO_REPOSITORIO>
 cd monorepo-agendeaki
 ```
 
-> Se você já possui o projeto na sua máquina, entre diretamente na pasta raiz dele.
+Se o projeto já estiver na sua máquina, entre na pasta raiz dele.
 
-### 2. Configure o banco de dados
+### 2. Prepare o banco de dados
 
-Crie a estrutura do banco executando o script abaixo no MySQL:
+Para uma instalação nova, execute o script inicial:
 
 ```bash
 mysql -u root -p < database/script.sql
 ```
 
-O script prepara uma instalação nova. Em uma base existente, atualize o esquema manualmente antes de publicar mudanças que alterem tabelas.
+O script cria o banco `tcc_salao` e suas tabelas. Para uma base existente, faça backup e aplique as migrações pendentes em `database/migracoes/`; não use o script inicial como substituto de uma migração.
 
-### Atualizar uma base existente para avaliações e documentos protegidos
+Crie também o usuário local configurado no `backend/.env` (ou ajuste as variáveis para uma conta MySQL existente):
 
-Faça um backup e interrompa as gravações durante a migração. Gere **duas chaves diferentes** com `openssl rand -base64 32`, configure `DOCUMENT_ENCRYPTION_KEY` e `DOCUMENT_HMAC_KEY` no backend e guarde cópias seguras delas: sem essas chaves, os documentos cifrados não poderão ser lidos.
+```sql
+CREATE USER 'agendeaki_user'@'localhost' IDENTIFIED BY 'SENHA_FORTE';
+GRANT ALL PRIVILEGES ON tcc_salao.* TO 'agendeaki_user'@'localhost';
+FLUSH PRIVILEGES;
+```
 
-1. Na pasta `backend`, execute `npm run migrar:documentos`. O comando adiciona as novas colunas, converte CPF/CNPJ existentes e cria o índice único. Ele pode ser repetido se a conversão for interrompida.
-2. Execute `database/migracoes/2026-10-09-avaliacoes.sql` no MySQL para criar as avaliações e o novo estado de atendimento.
-3. Publique o backend e o frontend novos. Confira o cadastro, a consulta do próprio perfil e a ausência de documentos pendentes antes de reabrir as gravações.
-4. Depois de confirmar que nenhum processo antigo usa as colunas anteriores, execute `database/migracoes/2026-10-09-remover-documentos-legados.sql`. Esse último passo remove os documentos em texto simples da tabela. Revise também a retenção dos backups antigos.
+#### Atualizar uma base existente para documentos protegidos e avaliações
 
-Mantenha as duas chaves em um gerenciador de segredos e preserve o acesso às cópias de segurança. A troca de qualquer uma exige uma migração planejada dos documentos cifrados ou dos índices HMAC.
+Gere duas chaves diferentes e guarde-as em local seguro:
+
+```bash
+openssl rand -base64 32
+openssl rand -base64 32
+```
+
+Configure a primeira como `DOCUMENT_ENCRYPTION_KEY` e a segunda como `DOCUMENT_HMAC_KEY` no `backend/.env`. Sem essas chaves, os documentos cifrados não poderão ser lidos.
+
+Antes de executar os comandos de migração, conclua a configuração do ambiente e instale as dependências do backend nas etapas 3 e 4 abaixo.
+
+1. Faça backup do banco e interrompa as gravações durante a migração.
+2. Na pasta `backend`, execute `npm run migrar:documentos`. O script converte CPF/CNPJ existentes e pode ser repetido se a conversão for interrompida.
+3. Execute `database/migracoes/2026-10-09-avaliacoes.sql` no MySQL.
+4. Publique as versões atuais do backend e frontend e confira o cadastro e a consulta de perfil.
+5. Depois de confirmar que nenhum processo antigo usa as colunas anteriores, execute `database/migracoes/2026-10-09-remover-documentos-legados.sql`.
+
+A remoção final apaga os documentos em texto simples da tabela. Revise também a retenção dos backups antigos. Mantenha as chaves em um gerenciador de segredos; substituir uma delas exige planejar a migração dos dados cifrados ou dos índices HMAC.
 
 ### 3. Configure as variáveis de ambiente
 
-Copie os arquivos de exemplo:
+Crie os arquivos locais a partir dos modelos:
 
 ```bash
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
 ```
 
-Depois, preencha os valores adequados em cada arquivo.
+Preencha os valores reais. O backend usa:
 
-**`backend/.env`**
-
-| Variável | Descrição |
+| Variável | Uso |
 | --- | --- |
-| `MYSQL_HOST`, `MYSQL_PORT` | Host e porta do MySQL |
+| `MYSQL_HOST`, `MYSQL_PORT` | Endereço e porta do MySQL |
 | `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Credenciais e nome do banco |
-| `DOCUMENT_ENCRYPTION_KEY` | Chave privada de 32 bytes em base64 para cifrar CPF/CNPJ |
-| `DOCUMENT_HMAC_KEY` | Outra chave privada de 32 bytes em base64 para o índice único de documentos |
-| `PORT` | Porta da API (padrão: `3001`) |
-| `FRONTEND_URL` | URL do frontend (padrão: `http://localhost:3000`) |
-| `ASSINATURA_MODO_TESTE` | Use `true` para ativar Premium localmente sem checkout ou `false` para abrir o checkout Stripe |
-| `SUPABASE_URL` | URL do projeto Supabase |
-| `SUPABASE_ANON_KEY` | Chave anônima do Supabase |
-| `SUPABASE_SECRET_KEY` | Chave secreta do Supabase, usada somente no servidor |
-| `HERE_API_KEY` | Chave privada da HERE, usada pela API para geocodificar endereços e cidades |
-| `STRIPE_SECRET_KEY` | Chave secreta da conta Stripe (`sk_test_...` no ambiente de teste) |
-| `STRIPE_WEBHOOK_SECRET` | Segredo do endpoint de webhook (`whsec_...`) |
-| `STRIPE_PRICE_ID_MENSAL` | ID do preço recorrente mensal de R$ 29,90 criado no Stripe |
-| `STRIPE_PRICE_ID_ANUAL` | ID do preço recorrente anual de R$ 299,00 criado no Stripe |
+| `DOCUMENT_ENCRYPTION_KEY` | Chave base64 de 32 bytes para cifrar CPF/CNPJ |
+| `DOCUMENT_HMAC_KEY` | Chave base64 diferente, usada no índice de documentos |
+| `PORT` | Porta da API; padrão `3001` |
+| `FRONTEND_URL` | URL do frontend; padrão `http://localhost:3000` |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY` | URL e chave pública do projeto Supabase |
+| `SUPABASE_SECRET_KEY` | Chave secreta usada somente pelo backend |
+| `HERE_API_KEY` | Chave de servidor da HERE para geocodificação |
+| `ASSINATURA_MODO_TESTE` | `true` ativa Premium localmente; `false` usa checkout Stripe |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Credenciais Stripe para checkout e webhooks |
+| `STRIPE_PRICE_ID_MENSAL`, `STRIPE_PRICE_ID_ANUAL` | IDs dos preços recorrentes criados no Stripe |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Chaves de envio de notificações push |
 
-#### Webhook Stripe em desenvolvimento
+No `frontend/.env.local`, configure:
 
-Crie no Stripe os dois preços recorrentes em BRL e configure os respectivos IDs no `backend/.env`. Para encaminhar eventos ao backend local, instale e inicie o Stripe CLI:
+| Variável | Uso |
+| --- | --- |
+| `NEXT_PUBLIC_API_URL` | URL da API; localmente `http://localhost:3001` |
+| `NEXT_PUBLIC_HERE_API_KEY` | Chave HERE usada pelo mapa no navegador |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Valores públicos do Supabase presentes no modelo; o fluxo atual de autenticação usa a API backend |
+
+Restrinja `NEXT_PUBLIC_HERE_API_KEY` ao domínio do frontend no painel da HERE. Nunca exponha `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` ou `VAPID_PRIVATE_KEY` no frontend nem versione arquivos `.env` reais.
+
+### 4. Instale as dependências
+
+```bash
+cd backend
+npm install
+cd ../frontend
+npm install
+```
+
+### 5. Inicie API e frontend
+
+Em um terminal, inicie a API:
+
+```bash
+cd backend
+npm run dev
+```
+
+A API estará em [http://localhost:3001](http://localhost:3001). Confira a conexão em [http://localhost:3001/saude](http://localhost:3001/saude).
+
+Em outro terminal, inicie o frontend:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Abra [http://localhost:3000](http://localhost:3000).
+
+### 6. Teste pagamentos com Stripe (opcional)
+
+Crie os preços recorrentes em BRL no Stripe, preencha os IDs no `backend/.env` e mantenha `ASSINATURA_MODO_TESTE=false`. Instale o Stripe CLI e autentique a máquina uma vez com `stripe login`. Com o backend rodando na porta `3001`, abra outro terminal e encaminhe os eventos para a API local:
 
 ```bash
 stripe listen --events checkout.session.completed,checkout.session.expired,customer.subscription.created,customer.subscription.updated,customer.subscription.paused,customer.subscription.resumed,customer.subscription.deleted,invoice.paid,invoice.payment_failed --forward-to localhost:3001/api/webhooks/stripe
 ```
 
-Copie o segredo `whsec_...` exibido pelo CLI para `STRIPE_WEBHOOK_SECRET`. Em produção, configure no Dashboard Stripe o endpoint HTTPS `/api/webhooks/stripe` para os eventos `checkout.session.completed`, `checkout.session.expired`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.paused`, `customer.subscription.resumed`, `customer.subscription.deleted`, `invoice.paid` e `invoice.payment_failed`.
+Deixe o terminal do Stripe CLI aberto enquanto testa. Copie o `whsec_...` exibido pelo CLI para `STRIPE_WEBHOOK_SECRET` em `backend/.env` e reinicie o backend se alterar esse valor. O segredo é sensível: não o versione nem compartilhe. Para desenvolvimento sem checkout, use `ASSINATURA_MODO_TESTE=true`.
 
-Para testar o checkout Stripe, mantenha `ASSINATURA_MODO_TESTE=false` em `backend/.env` e reinicie o backend. Com `true`, o botão ativa o Premium localmente sem acessar o Stripe.
+Em produção, configure no Dashboard Stripe o endpoint HTTPS `https://api.agendeaki.seudominio.com/api/webhooks/stripe` (substitua pelo seu domínio) para os mesmos eventos listados no comando acima.
 
-**`frontend/.env.local`**
+### 7. Notificações push (opcional)
 
-| Variável | Descrição |
-| --- | --- |
-| `NEXT_PUBLIC_API_URL` | URL da API (ex.: `http://localhost:3001`) |
-| `NEXT_PUBLIC_SUPABASE_URL` | URL pública do projeto Supabase |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Chave anônima pública do Supabase |
-| `NEXT_PUBLIC_HERE_API_KEY` | Chave HERE para exibir os tiles no navegador; restrinja-a ao domínio do frontend |
-
-> Nunca versione arquivos `.env` reais ou exponha a `SUPABASE_SECRET_KEY` ou `HERE_API_KEY` no frontend. A chave `NEXT_PUBLIC_HERE_API_KEY` fica visível no navegador por necessidade do mapa; use uma chave própria, limitada ao domínio do frontend no painel da HERE.
-
-### 4. Instale as dependências
-
-Em dois terminais, instale as dependências de cada aplicação:
+O envio usa Web Push com chaves VAPID. Gere um par com:
 
 ```bash
 cd backend
-npm install
+npx web-push generate-vapid-keys
 ```
+
+Configure `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` no ambiente do backend. Mantenha a chave privada somente no servidor.
+
+O painel do salão inclui uma central de notificações com contador de itens não lidos e avisos toast enquanto estiver aberto. Os eventos são persistidos em `tb_notificacao_salao` e enviados por push aos dispositivos inscritos. A ativação por dispositivo fica no dashboard Premium e em Configurações.
+
+Em uma base existente, aplique `database/migracoes/2026-10-09-notificacoes-push.sql` e `database/migracoes/2026-10-09-central-notificacoes.sql` no MySQL. Em uma instalação nova, `database/script.sql` cria as tabelas necessárias.
+
+O navegador e o sistema operacional precisam permitir notificações. Em produção, o site deve usar HTTPS; em desenvolvimento, `localhost` é aceito pelos navegadores.
+
+## Como rodar VPS
+
+As instruções abaixo usam uma VPS Ubuntu/Debian com MySQL, Node.js 20.9 ou superior e npm instalados. O exemplo usa `agendeaki.seudominio.com` para o frontend e `api.agendeaki.seudominio.com` para a API; substitua pelos domínios configurados no DNS. Nginx e Certbot serão instalados na etapa de configuração do proxy.
+
+### 1. Prepare o servidor e o banco
+
+Configure os registros DNS dos dois domínios para o IP da VPS e permita tráfego nas portas **22**, **80** e **443**. Mantenha as portas da aplicação (`3000` e `3001`) acessíveis somente localmente.
+
+Clone o repositório na VPS:
 
 ```bash
-cd frontend
-npm install
+sudo mkdir -p /var/www/monorepo-agendeaki
+sudo chown "$USER":"$USER" /var/www/monorepo-agendeaki
+git clone <URL_DO_REPOSITORIO> /var/www/monorepo-agendeaki
 ```
 
-### 5. Inicie a API
-
-No terminal do backend:
+Instale Nginx e Certbot:
 
 ```bash
-npm run dev
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
 ```
 
-A API estará disponível em [http://localhost:3001](http://localhost:3001). Para confirmar que está ativa, acesse [http://localhost:3001/saude](http://localhost:3001/saude).
-
-### 6. Inicie o frontend
-
-No terminal do frontend:
+Crie o banco e um usuário MySQL com acesso local. Para uma base nova, importe o esquema a partir da raiz do repositório:
 
 ```bash
-npm run dev
+cd /var/www/monorepo-agendeaki
+mysql -u root -p < database/script.sql
 ```
 
-Abra [http://localhost:3000](http://localhost:3000) no navegador.
+No MySQL, conceda acesso ao usuário que será configurado no `backend/.env`:
 
-## Comandos úteis
+```sql
+CREATE USER 'agendeaki_user'@'localhost' IDENTIFIED BY 'SENHA_FORTE';
+GRANT ALL PRIVILEGES ON tcc_salao.* TO 'agendeaki_user'@'localhost';
+FLUSH PRIVILEGES;
+```
 
-| Diretório | Comando | Descrição |
-| --- | --- | --- |
-| `backend/` | `npm run dev` | Inicia a API em modo de desenvolvimento, com recarga automática |
-| `backend/` | `npm start` | Inicia a API em modo normal |
-| `backend/` | `npm test` | Executa os testes do motor de horários |
-| `frontend/` | `npm run dev` | Inicia o Next.js em modo de desenvolvimento |
-| `frontend/` | `npm run build` | Gera a versão de produção do frontend |
-| `frontend/` | `npm start` | Serve o build de produção do frontend |
+Se a aplicação já tiver dados, faça backup e aplique as migrações pendentes conforme a seção de atualização de base existente acima.
+
+### 2. Publique o código e configure os ambientes
+
+Crie `backend/.env` e `frontend/.env.local` usando os modelos:
+
+```bash
+cp /var/www/monorepo-agendeaki/backend/.env.example /var/www/monorepo-agendeaki/backend/.env
+cp /var/www/monorepo-agendeaki/frontend/.env.example /var/www/monorepo-agendeaki/frontend/.env.local
+```
+
+Na VPS, use:
+
+- `FRONTEND_URL=https://agendeaki.seudominio.com` no `backend/.env`;
+- `NEXT_PUBLIC_API_URL=https://api.agendeaki.seudominio.com` no `frontend/.env.local`;
+- `PORT=3001` e credenciais de produção para MySQL, Supabase, HERE e Stripe;
+- `ASSINATURA_MODO_TESTE=false` para pagamentos reais;
+- chaves `DOCUMENT_ENCRYPTION_KEY` e `DOCUMENT_HMAC_KEY` geradas separadamente e persistentes.
+
+Configure também o webhook Stripe no Dashboard para `https://api.agendeaki.seudominio.com/api/webhooks/stripe` e os eventos listados na seção local do Stripe. Se usar notificações push, gere e configure as chaves VAPID no backend e aplique as duas migrações de notificações em uma base existente.
+
+### 3. Instale dependências e gere o build
+
+```bash
+cd /var/www/monorepo-agendeaki/backend
+npm ci
+
+cd /var/www/monorepo-agendeaki/frontend
+npm ci
+npm run build
+```
+
+`NEXT_PUBLIC_API_URL` é incorporada ao build do frontend. Se alterar o domínio da API, gere o build novamente.
+
+### 4. Mantenha os processos ativos com PM2
+
+Instale PM2 uma vez no servidor e inicie cada aplicação em modo de produção:
+
+```bash
+npm install --global pm2
+
+cd /var/www/monorepo-agendeaki/backend
+pm2 start npm --name agendeaki-api -- start
+
+cd /var/www/monorepo-agendeaki/frontend
+pm2 start npm --name agendeaki-web -- start
+
+pm2 save
+pm2 startup
+```
+
+Execute o comando adicional exibido por `pm2 startup` para habilitar a inicialização automática após reinicializações. A API escuta em `3001` e o Next.js em `3000`.
+
+### 5. Configure Nginx e HTTPS
+
+Configure dois hosts Nginx que encaminhem para as portas locais. Salve os blocos abaixo em `/etc/nginx/sites-available/agendeaki`. Exemplo do host do frontend:
+
+```nginx
+server {
+    listen 80;
+    server_name agendeaki.seudominio.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+Crie um segundo bloco para a API:
+
+```nginx
+server {
+    listen 80;
+    server_name api.agendeaki.seudominio.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Ative os hosts no Nginx, valide a configuração e emita certificados HTTPS com Certbot para os dois domínios:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/agendeaki /etc/nginx/sites-enabled/agendeaki
+sudo nginx -t
+sudo systemctl reload nginx
+sudo certbot --nginx -d agendeaki.seudominio.com -d api.agendeaki.seudominio.com
+```
+
+Depois, confira `https://api.agendeaki.seudominio.com/saude`, acesse o frontend e verifique os logs com `pm2 logs`.
+
+### Atualizações futuras
+
+Faça backup do banco antes de cada atualização. Baixe a nova versão do código, aplique apenas as migrações necessárias, instale dependências com `npm ci`, gere novamente o build do frontend e reinicie os processos:
+
+```bash
+pm2 restart agendeaki-api
+pm2 restart agendeaki-web
+```
+
+Não substitua as chaves de proteção de documentos ao atualizar o código. Preserve os arquivos `.env` fora do controle de versão e mantenha cópias seguras das chaves e dos backups.
 
 ---
 
