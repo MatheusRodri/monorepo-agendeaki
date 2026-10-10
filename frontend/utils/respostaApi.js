@@ -1,3 +1,36 @@
+const perfisValidos = ['cliente', 'salao'];
+
+function obterPerfilAtual() {
+  if (typeof window === 'undefined') return null;
+  return window.location.pathname.startsWith('/salao') ? 'salao' : 'cliente';
+}
+
+function obterChaves(perfilUsuario) {
+  const sufixo = perfilUsuario === 'salao' ? 'Salao' : 'Cliente';
+  return {
+    tokenAcesso: `tokenAcesso${sufixo}`,
+    tokenAtualizacao: `tokenAtualizacao${sufixo}`,
+  };
+}
+
+function migrarSessaoLegada() {
+  if (typeof window === 'undefined') return;
+
+  const perfilLegado = localStorage.getItem('perfilUsuario');
+  const tokenLegado = localStorage.getItem('tokenAcesso') || sessionStorage.getItem('tokenAcesso');
+  if (perfisValidos.includes(perfilLegado) && tokenLegado) {
+    const chaves = obterChaves(perfilLegado);
+    if (!localStorage.getItem(chaves.tokenAcesso)) {
+      localStorage.setItem(chaves.tokenAcesso, tokenLegado);
+    }
+  }
+
+  localStorage.removeItem('tokenAcesso');
+  localStorage.removeItem('perfilUsuario');
+  sessionStorage.removeItem('tokenAcesso');
+  sessionStorage.removeItem('perfilUsuario');
+}
+
 export function obterUrlApi() {
   const estaEmAmbienteLocal = typeof window !== 'undefined'
     && ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -9,22 +42,35 @@ export function obterUrlApi() {
   return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 }
 
-export function armazenarSessao(tokenAcesso, perfilUsuario) {
-  sessionStorage.setItem('tokenAcesso', tokenAcesso);
-  sessionStorage.setItem('perfilUsuario', perfilUsuario);
-  localStorage.setItem('tokenAcesso', tokenAcesso);
-  localStorage.setItem('perfilUsuario', perfilUsuario);
+export function armazenarSessao(tokenAcesso, tokenAtualizacao, perfilUsuario) {
+  if (typeof window === 'undefined' || !perfisValidos.includes(perfilUsuario)) return;
+  migrarSessaoLegada();
+  const chaves = obterChaves(perfilUsuario);
+  localStorage.setItem(chaves.tokenAcesso, tokenAcesso);
+  if (tokenAtualizacao) localStorage.setItem(chaves.tokenAtualizacao, tokenAtualizacao);
+  else localStorage.removeItem(chaves.tokenAtualizacao);
 }
 
-export function obterTokenAcesso() {
-  if (typeof window === 'undefined') return null;
-
-  return sessionStorage.getItem('tokenAcesso') || localStorage.getItem('tokenAcesso');
+export function obterTokenAcesso(perfilUsuario = obterPerfilAtual()) {
+  if (typeof window === 'undefined' || !perfisValidos.includes(perfilUsuario)) return null;
+  migrarSessaoLegada();
+  return localStorage.getItem(obterChaves(perfilUsuario).tokenAcesso);
 }
 
-export function limparSessao() {
-  sessionStorage.removeItem('tokenAcesso');
-  sessionStorage.removeItem('perfilUsuario');
-  localStorage.removeItem('tokenAcesso');
-  localStorage.removeItem('perfilUsuario');
+export function obterTokenAtualizacao(perfilUsuario) {
+  if (typeof window === 'undefined' || !perfisValidos.includes(perfilUsuario)) return null;
+  migrarSessaoLegada();
+  return localStorage.getItem(obterChaves(perfilUsuario).tokenAtualizacao);
+}
+
+export function limparSessao(perfilUsuario) {
+  if (typeof window === 'undefined') return;
+  migrarSessaoLegada();
+
+  const perfisParaLimpar = perfisValidos.includes(perfilUsuario) ? [perfilUsuario] : perfisValidos;
+  perfisParaLimpar.forEach((perfil) => {
+    const chaves = obterChaves(perfil);
+    localStorage.removeItem(chaves.tokenAcesso);
+    localStorage.removeItem(chaves.tokenAtualizacao);
+  });
 }

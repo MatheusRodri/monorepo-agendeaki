@@ -87,7 +87,7 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
     evento.preventDefault();
     if (!servico || !selecao.data || !selecao.horario || !selecao.idFuncionario) return;
     const retorno = caminhoAtual(slugSalao, slugFilial, selecao);
-    if (!obterTokenAcesso()) {
+    if (!obterTokenAcesso('cliente')) {
       localStorage.setItem('retornoAgendamento', retorno);
       roteador.push(`/cliente?retorno=${encodeURIComponent(retorno)}`);
       return;
@@ -110,7 +110,7 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
       atualizarSelecao({ horario: '' });
     } catch (erro) {
       if (erro.status === 401) {
-        limparSessao(); localStorage.setItem('retornoAgendamento', retorno);
+        limparSessao('cliente'); localStorage.setItem('retornoAgendamento', retorno);
         roteador.push(`/cliente?retorno=${encodeURIComponent(retorno)}`);
       } else definirMensagem(erro.message);
     } finally { definirEnviando(false); }
@@ -128,7 +128,7 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
       {servico && <Etapa numero="2" titulo="Escolha o profissional"><div className="opcoes-agendamento opcoes-agendamento--compactas"><button className={selecao.idFuncionario === 'qualquer' ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: 'qualquer' })} type="button"><strong>Sem preferência</strong><small>Atribuição automática no momento da confirmação.</small></button>{servico.profissionais.map((item) => <button className={String(item.idFuncionario) === String(selecao.idFuncionario) ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} key={item.idFuncionario} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: String(item.idFuncionario) })} type="button"><strong>{item.nome}</strong></button>)}</div></Etapa>}
       {selecao.idFuncionario && <Etapa numero="3" titulo="Escolha a data"><label className="campo-formulario campo-data-agendamento"><span>Data do atendimento</span><input max={dataMaxima} min={dataLocal()} onChange={(evento) => atualizarSelecao({ data: evento.target.value, horario: '' })} required type="date" value={selecao.data} /></label></Etapa>}
       {selecao.data && <Etapa numero="4" titulo="Escolha o horário"><div className="grade-horarios">{horarios.map((item) => <button className={item.inicio === selecao.horario ? 'horario-disponivel horario-disponivel--ativo' : 'horario-disponivel'} key={item.inicio} onClick={() => atualizarSelecao({ horario: item.inicio })} type="button">{item.inicio}</button>)}</div>{mensagem && <p className="estado-lista">{mensagem}</p>}</Etapa>}
-      {selecao.horario && <Etapa numero="5" titulo="Revise e confirme"><div className="resumo-agendamento"><strong>{servico.nome}</strong><span>{selecao.data.split('-').reverse().join('/')} às {selecao.horario}</span><span>{servico.duracaoMinutos} min · R$ {servico.valor.toFixed(2).replace('.', ',')}</span></div><label className="campo-formulario"><span>Observação <small>Opcional</small></span><textarea maxLength="500" onChange={(evento) => definirObservacao(evento.target.value)} value={observacao} /></label>{mensagem && <p className="mensagem-formulario">{mensagem}</p>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Confirmando...' : obterTokenAcesso() ? 'Confirmar agendamento' : 'Entrar para confirmar'} →</button></Etapa>}
+      {selecao.horario && <Etapa numero="5" titulo="Revise e confirme"><div className="resumo-agendamento"><strong>{servico.nome}</strong><span>{selecao.data.split('-').reverse().join('/')} às {selecao.horario}</span><span>{servico.duracaoMinutos} min · R$ {servico.valor.toFixed(2).replace('.', ',')}</span></div><label className="campo-formulario"><span>Observação <small>Opcional</small></span><textarea maxLength="500" onChange={(evento) => definirObservacao(evento.target.value)} value={observacao} /></label>{mensagem && <p className="mensagem-formulario">{mensagem}</p>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Confirmando...' : obterTokenAcesso('cliente') ? 'Confirmar agendamento' : 'Entrar para confirmar'} →</button></Etapa>}
     </form>
     <section className="avaliacoes-publicas"><h2>Avaliações desta filial</h2><p>{avaliacoes.resumo.quantidade ? `★ ${Number(avaliacoes.resumo.mediaSalao).toFixed(1)} · ${avaliacoes.resumo.quantidade} avaliações` : 'Esta filial ainda não recebeu avaliações.'}</p><div className="lista-avaliacoes">{avaliacoes.avaliacoes.map((avaliacao) => <article className="cartao-avaliacao" key={avaliacao.idAvaliacao}><strong>{avaliacao.primeiroNome}</strong><small>{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(new Date(avaliacao.dataAvaliacao))} · {avaliacao.servico}</small><span>Filial {avaliacao.notaSalao} ★ · Serviço {avaliacao.notaServico} ★</span>{avaliacao.comentario && <p>{avaliacao.comentario}</p>}</article>)}</div>{avaliacoes.temMais && <button className="botao-secundario" onClick={() => definirPaginaAvaliacoes((atual) => atual + 1)} type="button">Ver mais avaliações</button>}</section>
   </main>;
