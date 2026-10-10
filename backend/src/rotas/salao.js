@@ -435,7 +435,15 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       detalhesValidacao: erro.errors?.map((item) => ({ campo: item.path, mensagem: item.message })),
       stack: erro.stack,
     });
-    if (!resposta.headersSent) resposta.status(500).json({ mensagem: erro.message });
+    if (!resposta.headersSent) {
+      const conflitoNome = erro.name === 'SequelizeUniqueConstraintError'
+        && erro.errors?.some((item) => item.path === 'uk_unidade_nome_salao');
+      resposta.status(conflitoNome ? 409 : 500).json({
+        mensagem: conflitoNome
+          ? 'Já existe uma filial com esse nome neste salão. Confira a lista de filiais, inclusive as removidas da descoberta.'
+          : erro.message,
+      });
+    }
   }
 }
 

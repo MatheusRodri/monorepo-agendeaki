@@ -34,6 +34,7 @@ export default function FormularioFilial({ endereco, filial, buscarCep, buscarCo
   const [ajusteManualAtivo, definirAjusteManualAtivo] = useState(false);
   const [buscandoCep, definirBuscandoCep] = useState(false);
   const [buscandoEndereco, definirBuscandoEndereco] = useState(false);
+  const [salvando, definirSalvando] = useState(false);
   const temporizadorCep = useRef(null);
 
   useEffect(() => {
@@ -99,15 +100,22 @@ export default function FormularioFilial({ endereco, filial, buscarCep, buscarCo
   }
 
   async function enviarFormulario(evento) {
-    const resultado = await salvarFilial(
-      evento,
-      filial ? `/filiais/${filial.idUnidade}` : '/filiais',
-      filial ? 'PATCH' : 'POST',
-      { horarios, ...(coordenadas ? coordenadas : {}) },
-    );
+    evento.preventDefault();
+    if (salvando) return;
+    definirSalvando(true);
+    try {
+      const resultado = await salvarFilial(
+        evento,
+        filial ? `/filiais/${filial.idUnidade}` : '/filiais',
+        filial ? 'PATCH' : 'POST',
+        { horarios, ...(coordenadas ? coordenadas : {}) },
+      );
 
-    if (!filial && resultado) {
-      definirCep(''); definirNumero(''); definirTelefone(''); definirCoordenadas(null); definirHorarios(criarHorarios()); definirSugestoesEndereco([]);
+      if (!filial && resultado) {
+        definirCep(''); definirNumero(''); definirTelefone(''); definirCoordenadas(null); definirHorarios(criarHorarios()); definirSugestoesEndereco([]);
+      }
+    } finally {
+      definirSalvando(false);
     }
   }
 
@@ -122,6 +130,6 @@ export default function FormularioFilial({ endereco, filial, buscarCep, buscarCo
     {sugestoesEndereco.length > 0 && <section className="sugestoes-endereco"><strong>Confirme o endereço encontrado</strong><p>Selecione a opção que corresponde à entrada da filial.</p>{sugestoesEndereco.map((sugestao) => <button key={sugestao.id} onClick={() => selecionarEndereco(sugestao)} type="button">{sugestao.endereco}</button>)}</section>}
     <section className="ajuste-localizacao"><div><strong>Localização da filial</strong><p>{coordenadas ? ajusteManualAtivo ? 'Clique no mapa ou arraste o pin até a entrada correta da filial.' : 'Localização definida pelo endereço selecionado.' : 'Informe o CEP, o número e selecione o endereço sugerido.'}</p></div>{coordenadas && <button className={ajusteManualAtivo ? 'botao-secundario botao-ajuste-localizacao botao-ajuste-localizacao--ativo' : 'botao-secundario botao-ajuste-localizacao'} onClick={() => definirAjusteManualAtivo(!ajusteManualAtivo)} type="button">{ajusteManualAtivo ? 'Concluir ajuste manual' : 'Ajustar localização manualmente'}</button>}<MapaAjusteFilial aoAjustar={ajustarCoordenadasManualmente} coordenadas={coordenadas} modoAjuste={ajusteManualAtivo} />{coordenadas && <small>Latitude {coordenadas.latitude.toFixed(6)} · Longitude {coordenadas.longitude.toFixed(6)}</small>}</section>
     <section className="horarios-filial"><div><strong>Horários de funcionamento</strong><p>Defina quando esta unidade recebe clientes.</p></div>{horarios.map((horario) => <div className="linha-horario" key={horario.diaSemana}><span>{diasSemana[horario.diaSemana]}</span><label><input checked={horario.fechado} onChange={(evento) => alterarHorario(horario.diaSemana, 'fechado', evento.target.checked)} type="checkbox" /> Fechado</label><input disabled={horario.fechado} onChange={(evento) => alterarHorario(horario.diaSemana, 'abertura', evento.target.value)} required={!horario.fechado} type="time" value={horario.abertura} /><span>até</span><input disabled={horario.fechado} onChange={(evento) => alterarHorario(horario.diaSemana, 'fechamento', evento.target.value)} required={!horario.fechado} type="time" value={horario.fechamento} /></div>)}</section>
-    <button className="botao-enviar">{filial ? 'Atualizar filial' : 'Criar filial'} <span>→</span></button>
+    <button className="botao-enviar" disabled={salvando}>{salvando ? 'Salvando...' : filial ? 'Atualizar filial' : 'Criar filial'} <span>→</span></button>
   </form>;
 }
