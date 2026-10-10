@@ -21,3 +21,4 @@
 @import './styles/gestao-responsivo.css';
 @import './styles/avaliacoes.css';
 @import './styles/pwa.css';
+@import '../components/TelaManutencao/tela-manutencao.css';
