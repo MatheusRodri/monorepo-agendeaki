@@ -87,7 +87,44 @@ async function consultarEnderecoLegado(requisicao, resposta) {
   resposta.status(200).json({ caminho: `/${filiais[0].slugSalao}/${filiais[0].slugFilial}` });
 }
 
+async function consultarAvaliacoes(requisicao, resposta) {
+  const idUnidade = Number(requisicao.params.idUnidade);
+  if (!Number.isSafeInteger(idUnidade) || idUnidade <= 0) {
+    resposta.status(400).json({ mensagem: 'Filial inválida.' }); return;
+  }
+  const pagina = Math.max(1, Math.min(1000, Number.parseInt(requisicao.query.pagina, 10) || 1));
+  const filiais = await bancoDeDados.query(
+    `SELECT u.id_unidade AS idUnidade FROM tb_unidade u INNER JOIN tb_salao s ON s.id_salao=u.fk_salao
+     WHERE u.id_unidade=:idUnidade AND u.st_ativo=TRUE AND s.st_ativo=TRUE LIMIT 1`,
+    { replacements: { idUnidade }, type: QueryTypes.SELECT },
+  );
+  if (!filiais.length) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  const [resumo] = await bancoDeDados.query(
+    `SELECT COUNT(*) AS quantidade, ROUND(AVG(nu_nota_salao),1) AS mediaSalao
+     FROM tb_avaliacao WHERE fk_unidade=:idUnidade`,
+    { replacements: { idUnidade }, type: QueryTypes.SELECT },
+  );
+  const servicos = await bancoDeDados.query(
+    `SELECT fk_servico AS idServico, COUNT(*) AS quantidade, ROUND(AVG(nu_nota_servico),1) AS mediaServico
+     FROM tb_avaliacao WHERE fk_unidade=:idUnidade GROUP BY fk_servico`,
+    { replacements: { idUnidade }, type: QueryTypes.SELECT },
+  );
+  const avaliacoes = await bancoDeDados.query(
+    `SELECT av.id_avaliacao AS idAvaliacao, av.nu_nota_salao AS notaSalao,
+            av.nu_nota_servico AS notaServico, av.ds_comentario AS comentario,
+            av.dt_criacao AS dataAvaliacao, a.nm_servico_agendado AS servico,
+            SUBSTRING_INDEX(TRIM(c.nm_usuario), ' ', 1) AS primeiroNome
+     FROM tb_avaliacao av INNER JOIN tb_agendamento a ON a.id_agendamento=av.fk_agendamento
+     INNER JOIN tb_usuario c ON c.id_usuario=av.fk_usuario
+     WHERE av.fk_unidade=:idUnidade ORDER BY av.dt_criacao DESC, av.id_avaliacao DESC
+     LIMIT 20 OFFSET :deslocamento`,
+    { replacements: { idUnidade, deslocamento: (pagina - 1) * 20 }, type: QueryTypes.SELECT },
+  );
+  resposta.status(200).json({ resumo, servicos, avaliacoes, pagina, temMais: pagina * 20 < Number(resumo.quantidade) });
+}
+
 roteadorPublico.get('/agendamento/unidade/:idUnidade', consultarEnderecoLegado);
+roteadorPublico.get('/avaliacoes/:idUnidade', consultarAvaliacoes);
 roteadorPublico.get('/agendamento/:slugSalao/:slugFilial/horarios', consultarHorarios);
 roteadorPublico.get('/agendamento/:slugSalao/:slugFilial', consultarPagina);
 

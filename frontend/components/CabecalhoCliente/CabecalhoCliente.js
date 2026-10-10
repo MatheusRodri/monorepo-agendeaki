@@ -11,7 +11,7 @@ const navegacao = [['inicio', 'Explorar', '/cliente/inicio'], ['agendamentos', '
 export default function CabecalhoCliente({ secao }) {
   const [nome, definirNome] = useState('cliente');
   useEffect(() => {
-    const token = obterTokenAcesso();
+    const token = obterTokenAcesso('cliente');
     if (!token) return;
     requisitarApi('/api/clientes/perfil')
       .then((dados) => { if (dados.perfil?.nome) definirNome(dados.perfil.nome.split(' ')[0]); }).catch(() => {});

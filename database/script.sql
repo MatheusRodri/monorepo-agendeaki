@@ -15,10 +15,10 @@ CREATE TABLE IF NOT EXISTS tb_usuario (
   id_usuario BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   nm_usuario VARCHAR(120) NOT NULL,
   ds_email VARCHAR(254) NOT NULL,
-  nu_cpf CHAR(11) NULL,
   dt_nascimento DATE NULL,
   tp_documento ENUM('CPF', 'CNPJ') NULL,
-  nu_documento VARCHAR(14) NULL,
+  ds_documento_cifrado VARCHAR(255) NULL,
+  ds_documento_indice CHAR(64) NULL,
 
   tp_usuario ENUM(
     'CLIENTE',
@@ -40,11 +40,8 @@ CREATE TABLE IF NOT EXISTS tb_usuario (
   CONSTRAINT uk_usuario_email
     UNIQUE (ds_email),
 
-  CONSTRAINT uk_usuario_cpf
-    UNIQUE (nu_cpf),
-
-  CONSTRAINT uk_usuario_documento
-    UNIQUE (nu_documento),
+  CONSTRAINT uk_usuario_documento_indice
+    UNIQUE (ds_documento_indice),
 
   CONSTRAINT uk_usuario_autenticacao_externa
     UNIQUE (id_autenticacao_externa)
@@ -88,6 +85,35 @@ CREATE TABLE IF NOT EXISTS tb_salao (
     ON DELETE RESTRICT
     ON UPDATE CASCADE
 ) ENGINE = InnoDB;
+
+CREATE TABLE IF NOT EXISTS tb_inscricao_notificacao (
+  id_inscricao BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  fk_salao BIGINT UNSIGNED NOT NULL,
+  ds_endpoint VARCHAR(2048) NOT NULL,
+  ds_endpoint_hash CHAR(64) NOT NULL,
+  ds_chave_publica VARCHAR(255) NOT NULL,
+  ds_chave_auth VARCHAR(255) NOT NULL,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id_inscricao),
+  CONSTRAINT uk_inscricao_notificacao_endpoint UNIQUE (ds_endpoint_hash),
+  INDEX idx_inscricao_notificacao_salao (fk_salao),
+  CONSTRAINT fk_inscricao_notificacao_salao FOREIGN KEY (fk_salao)
+    REFERENCES tb_salao (id_salao) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tb_notificacao_salao (
+  id_notificacao BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  fk_salao BIGINT UNSIGNED NOT NULL,
+  nm_titulo VARCHAR(120) NOT NULL,
+  ds_mensagem VARCHAR(300) NOT NULL,
+  ds_link VARCHAR(255) NOT NULL DEFAULT '/salao/notificacoes',
+  st_lida BOOLEAN NOT NULL DEFAULT FALSE,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id_notificacao),
+  INDEX idx_notificacao_salao_nao_lidas (fk_salao, st_lida, dt_criacao),
+  CONSTRAINT fk_notificacao_salao_salao FOREIGN KEY (fk_salao)
+    REFERENCES tb_salao (id_salao) ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 
 -- =====================================================
@@ -536,7 +562,8 @@ CREATE TABLE IF NOT EXISTS tb_agendamento (
   cd_status ENUM(
     'AGENDADO',
     'REALIZADO',
-    'CANCELADO'
+    'CANCELADO',
+    'NAO_COMPARECEU'
   ) NOT NULL DEFAULT 'AGENDADO',
 
   ds_observacao VARCHAR(500) NULL,
@@ -628,6 +655,32 @@ CREATE TABLE IF NOT EXISTS tb_agendamento (
     CHECK (
       nu_duracao_minutos > 0
     )
+) ENGINE = InnoDB;
+
+-- =====================================================
+-- AVALIAÇÕES DE AGENDAMENTOS REALIZADOS
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS tb_avaliacao (
+  id_avaliacao BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  fk_agendamento BIGINT UNSIGNED NOT NULL,
+  fk_usuario BIGINT UNSIGNED NOT NULL,
+  fk_unidade BIGINT UNSIGNED NOT NULL,
+  fk_servico BIGINT UNSIGNED NOT NULL,
+  nu_nota_salao TINYINT UNSIGNED NOT NULL,
+  nu_nota_servico TINYINT UNSIGNED NOT NULL,
+  ds_comentario VARCHAR(500) NULL,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id_avaliacao),
+  CONSTRAINT uk_avaliacao_agendamento UNIQUE (fk_agendamento),
+  INDEX idx_avaliacao_unidade_data (fk_unidade, dt_criacao),
+  INDEX idx_avaliacao_servico (fk_servico),
+  CONSTRAINT ck_avaliacao_nota_salao CHECK (nu_nota_salao BETWEEN 1 AND 5),
+  CONSTRAINT ck_avaliacao_nota_servico CHECK (nu_nota_servico BETWEEN 1 AND 5),
+  CONSTRAINT fk_avaliacao_agendamento FOREIGN KEY (fk_agendamento) REFERENCES tb_agendamento (id_agendamento) ON DELETE CASCADE,
+  CONSTRAINT fk_avaliacao_usuario FOREIGN KEY (fk_usuario) REFERENCES tb_usuario (id_usuario) ON DELETE CASCADE,
+  CONSTRAINT fk_avaliacao_unidade FOREIGN KEY (fk_unidade) REFERENCES tb_unidade (id_unidade),
+  CONSTRAINT fk_avaliacao_servico FOREIGN KEY (fk_servico) REFERENCES tb_servico (id_servico)
 ) ENGINE = InnoDB;
 
 

@@ -230,6 +230,56 @@
   transform: translateX(3px);
 }
 
+.cartao-salao--pro,
+.cartao-salao--pro:hover {
+  border-color: #b78b37;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #b78b37 45%, transparent);
+}
+
+.selo-pro {
+  background: #b78b37;
+  border-radius: 999px;
+  color: #fff;
+  font-size: .62rem;
+  margin-left: .35rem;
+  padding: .15rem .4rem;
+}
+
+.filtro-ordenacao {
+  align-items: center;
+  color: var(--texto-suave);
+  display: flex;
+  font-size: .73rem;
+  font-weight: 700;
+  gap: .7rem;
+  padding: .85rem 0;
+}
+
+.filtro-ordenacao select {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  color: var(--texto);
+  margin-left: auto;
+  padding: .45rem;
+}
+
+.botao-centralizar {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 999px;
+  box-shadow: var(--sombra);
+  color: var(--texto);
+  cursor: pointer;
+  font-size: .76rem;
+  font-weight: 700;
+  left: 1rem;
+  padding: .7rem 1rem;
+  position: absolute;
+  top: 1rem;
+  z-index: 2;
+}
+
 .cartao-salao__icone {
   align-items: center;
   background: var(--creme);

@@ -32,7 +32,7 @@ function criarConteudoPopup(salao) {
   return conteudo;
 }
 
-export default function MapaSaloes({ aoSelecionarSalao, coordenadas, salaoSelecionado, saloes }) {
+export default function MapaSaloes({ aoSelecionarSalao, centralizarNoCliente = false, coordenadas, salaoSelecionado, saloes }) {
   const elementoMapa = useRef(null);
   const instanciaMapa = useRef(null);
   const moduloMapa = useRef(null);
@@ -112,8 +112,8 @@ export default function MapaSaloes({ aoSelecionarSalao, coordenadas, salaoSeleci
       pontos.push([longitude, latitude]);
     });
 
-    if (pontos.length > 1) mapa.fitBounds(pontos, { padding: 48, maxZoom: 13 });
-  }, [aoSelecionarSalao, coordenadas, mapaPronto, saloes]);
+    if (pontos.length > 1 && !centralizarNoCliente) mapa.fitBounds(pontos, { padding: 48, maxZoom: 13 });
+  }, [aoSelecionarSalao, centralizarNoCliente, coordenadas, mapaPronto, saloes]);
 
   useEffect(() => {
     const marcador = salaoSelecionado ? marcadoresPorUnidade.current.get(salaoSelecionado.idUnidade) : null;

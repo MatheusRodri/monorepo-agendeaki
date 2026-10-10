@@ -15,6 +15,10 @@
 @import './styles/salao-filiais.css';
 @import './styles/salao-responsivo.css';
 @import './styles/gestao-dashboard.css';
+@import './styles/notificacoes.css';
 @import './styles/gestao-listas.css';
 @import './styles/gestao-agendamentos.css';
 @import './styles/gestao-responsivo.css';
+@import './styles/avaliacoes.css';
+@import './styles/pwa.css';
+@import '../components/TelaManutencao/tela-manutencao.css';

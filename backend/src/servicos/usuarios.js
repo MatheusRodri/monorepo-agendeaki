@@ -1,7 +1,10 @@
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
+import { decifrarDocumento, prepararDocumento } from './documentosProtegidos.js';
 
 export async function sincronizarUsuario({ cpf = null, dataNascimento = null, documento = null, email, idAutenticacaoExterna, nome, perfil, tipoDocumento = null }) {
+  const tipoEfetivo = tipoDocumento ?? (cpf ? 'CPF' : null);
+  const protegido = prepararDocumento(tipoEfetivo, documento ?? cpf);
   const usuariosPorAutenticacao = await bancoDeDados.query(
     'SELECT id_usuario AS idUsuario FROM tb_usuario WHERE id_autenticacao_externa = :idAutenticacaoExterna LIMIT 1',
     {
@@ -28,21 +31,20 @@ export async function sincronizarUsuario({ cpf = null, dataNascimento = null, do
        SET id_autenticacao_externa = :idAutenticacaoExterna,
            nm_usuario = :nome,
            tp_usuario = :perfil,
-           nu_cpf = COALESCE(:cpf, nu_cpf),
            dt_nascimento = COALESCE(:dataNascimento, dt_nascimento),
            tp_documento = COALESCE(:tipoDocumento, tp_documento),
-           nu_documento = COALESCE(:documento, nu_documento)
+           ds_documento_cifrado = COALESCE(:documentoCifrado, ds_documento_cifrado),
+           ds_documento_indice = COALESCE(:documentoIndice, ds_documento_indice)
        WHERE id_usuario = :idUsuario`,
       {
         replacements: {
           idAutenticacaoExterna,
           idUsuario: usuariosPorEmail[0].idUsuario,
-          cpf,
           dataNascimento,
-          documento,
+          ...protegido,
           nome,
           perfil,
-          tipoDocumento,
+          tipoDocumento: tipoEfetivo,
         },
       },
     );
@@ -51,10 +53,10 @@ export async function sincronizarUsuario({ cpf = null, dataNascimento = null, do
   }
 
   await bancoDeDados.query(
-    `INSERT INTO tb_usuario (nm_usuario, ds_email, nu_cpf, dt_nascimento, tp_documento, nu_documento, tp_usuario, id_autenticacao_externa)
-     VALUES (:nome, :email, :cpf, :dataNascimento, :tipoDocumento, :documento, :perfil, :idAutenticacaoExterna)`,
+    `INSERT INTO tb_usuario (nm_usuario, ds_email, dt_nascimento, tp_documento, ds_documento_cifrado, ds_documento_indice, tp_usuario, id_autenticacao_externa)
+     VALUES (:nome, :email, :dataNascimento, :tipoDocumento, :documentoCifrado, :documentoIndice, :perfil, :idAutenticacaoExterna)`,
     {
-      replacements: { cpf, dataNascimento, documento, email, idAutenticacaoExterna, nome, perfil, tipoDocumento },
+      replacements: { ...protegido, dataNascimento, email, idAutenticacaoExterna, nome, perfil, tipoDocumento: tipoEfetivo },
     },
   );
 
@@ -71,25 +73,30 @@ export async function sincronizarUsuario({ cpf = null, dataNascimento = null, do
 
 export async function obterDadosCadastraisUsuario(idUsuario) {
   const usuarios = await bancoDeDados.query(
-    `SELECT id_usuario AS idUsuario, nm_usuario AS nome, ds_email AS email, nu_cpf AS cpf,
+    `SELECT id_usuario AS idUsuario, nm_usuario AS nome, ds_email AS email,
             DATE_FORMAT(dt_nascimento, '%Y-%m-%d') AS dataNascimento,
-            tp_documento AS tipoDocumento, nu_documento AS documento
+            tp_documento AS tipoDocumento, ds_documento_cifrado AS documentoCifrado
      FROM tb_usuario WHERE id_usuario = :idUsuario LIMIT 1`,
     { replacements: { idUsuario }, type: QueryTypes.SELECT },
   );
-  return usuarios[0] ?? null;
+  if (!usuarios[0]) return null;
+  const { documentoCifrado, ...perfil } = usuarios[0];
+  const documento = decifrarDocumento(documentoCifrado);
+  return { ...perfil, cpf: perfil.tipoDocumento === 'CPF' ? documento : null, documento };
 }
 
 export async function atualizarDadosCadastraisUsuario(idUsuario, { cpf = null, dataNascimento, documento = null, nome, tipoDocumento = null }) {
+  const tipoEfetivo = tipoDocumento ?? (cpf ? 'CPF' : null);
+  const protegido = prepararDocumento(tipoEfetivo, documento ?? cpf);
   await bancoDeDados.query(
     `UPDATE tb_usuario
      SET nm_usuario = COALESCE(:nome, nm_usuario),
-         nu_cpf = COALESCE(:cpf, nu_cpf),
          dt_nascimento = :dataNascimento,
          tp_documento = COALESCE(:tipoDocumento, tp_documento),
-         nu_documento = COALESCE(:documento, nu_documento)
+         ds_documento_cifrado = COALESCE(:documentoCifrado, ds_documento_cifrado),
+         ds_documento_indice = COALESCE(:documentoIndice, ds_documento_indice)
      WHERE id_usuario = :idUsuario`,
-    { replacements: { cpf, dataNascimento, documento, idUsuario, nome: nome?.trim() || null, tipoDocumento } },
+    { replacements: { ...protegido, dataNascimento, idUsuario, nome: nome?.trim() || null, tipoDocumento: tipoEfetivo } },
   );
   return obterDadosCadastraisUsuario(idUsuario);
 }

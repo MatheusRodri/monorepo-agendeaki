@@ -61,8 +61,8 @@ export default function FormularioAutenticacao({ modo, perfil }) {
     try {
       const dadosResposta = await requisitarApi(`/api/${configuracao.rotaApi}/${estaNoCadastro ? 'cadastro' : 'login'}`, { dados: dadosEnvio, metodo: 'POST' });
       if (estaNoCadastro) { definirConfirmarEmail(dadosFormulario.email); return; }
-      if (!dadosResposta.tokenAcesso) throw new Error('O login não retornou uma sessão válida.');
-      armazenarSessao(dadosResposta.tokenAcesso, perfil);
+      if (!dadosResposta.tokenAcesso || !dadosResposta.tokenAtualizacao) throw new Error('O login não retornou uma sessão válida.');
+      armazenarSessao(dadosResposta.tokenAcesso, dadosResposta.tokenAtualizacao, perfil);
       if (dadosResposta.cadastroIncompleto) { definirCompletarPerfil({ tokenAcesso: dadosResposta.tokenAcesso, perfil: dadosResposta.usuario }); return; }
       irParaArea();
     } catch (erro) { definirTipoMensagem('erro'); definirMensagem(erro.message); } finally { definirEnviando(false); }

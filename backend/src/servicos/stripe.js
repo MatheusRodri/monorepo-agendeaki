@@ -15,8 +15,10 @@ export function obterOfertaPremium() {
       testeGratisDias: 7,
       opcoes: Object.values(planosPremium).map(({ periodicidade, valor }) => ({ periodicidade, valor })),
       recursos: [
-        { nome: 'Dashboard com gráficos', disponivel: false },
-        { nome: 'Aviso de novo agendamento via N8N', disponivel: false },
+        { nome: 'Dashboard avançado', descricao: 'Painel mais detalhado para te auxiliar na tomada de decisão.' },
+        { nome: 'Notificações', descricao: 'Receba notificações direto no dispositivo caso o cliente faça um agendamento, cancele ou altere.' },
+        { nome: 'Destaque', descricao: 'Ganhe destaque na lista de salões da sua região.' },
+        { nome: 'Exportação de dados e relatórios', descricao: 'Exporte seus dados e relatórios.' },
       ],
     },
   };

@@ -1,0 +1,14 @@
+.pagina-offline {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem;
+  text-align: center;
+}
+
+.pagina-offline > div { max-width: 480px; }
+.pagina-offline .marca__simbolo { display: inline-flex; margin-bottom: 1.5rem; }
+.pagina-offline h1 { color: var(--ameixa); font-family: 'Playfair Display', Georgia, serif; }
+.pagina-offline p { color: var(--texto-suave); line-height: 1.6; }
+.pagina-offline .botao-enviar { display: inline-block; margin-top: 1rem; }

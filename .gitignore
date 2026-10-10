@@ -2,3 +2,4 @@
 */node_modules
 *.next
 frontend/public/maplibre/
+backend/.backups/

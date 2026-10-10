@@ -7,6 +7,7 @@ import roteadorCliente from './rotas/cliente.js';
 import roteadorPublico from './rotas/publico.js';
 import roteadorSalao from './rotas/salao.js';
 import roteadorWebhooks from './rotas/webhooks.js';
+import { validarChavesDocumentos } from './servicos/documentosProtegidos.js';
 
 const aplicacao = express();
 const porta = Number(process.env.PORT ?? 3001);
@@ -53,6 +54,7 @@ aplicacao.use((erro, _requisicao, resposta, _proximaFuncao) => {
 
 async function iniciarServidor() {
   try {
+    validarChavesDocumentos();
     await bancoDeDados.authenticate();
     console.log('Conexão com o banco de dados validada com sucesso.');
 
@@ -60,7 +62,7 @@ async function iniciarServidor() {
       console.log(`Servidor disponível em http://localhost:${porta}`);
     });
   } catch (erro) {
-    console.error('Não foi possível iniciar o servidor: o banco de dados não existe ou está inacessível.');
+    console.error('Não foi possível iniciar o servidor.');
     console.error(erro.message);
     process.exitCode = 1;
   } finally {

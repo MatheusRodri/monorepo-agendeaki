@@ -5,6 +5,7 @@ import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../con
 import { cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
 import { listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { notificarSalaoDoAgendamento } from '../servicos/notificacoesPush.js';
 
 const roteadorCliente = Router();
 const raiosPermitidos = [1, 5, 10];
@@ -192,6 +193,12 @@ async function listarSaloesProximos(requisicao, resposta) {
             u.nu_cep AS cep,
             u.nu_latitude AS latitude,
             u.nu_longitude AS longitude,
+            CASE WHEN ass.cd_status IN ('AUTORIZADA', 'EM_TESTE')
+              OR (ass.cd_status IN ('CANCELADA', 'CANCELAMENTO_AGENDADO')
+                  AND ass.dt_proxima_cobranca > NOW())
+              THEN TRUE ELSE FALSE END AS proAtivo,
+            COALESCE(av.quantidade, 0) AS quantidadeAvaliacoes,
+            av.mediaSalao AS mediaAvaliacao,
             (6371 * ACOS(
               COS(RADIANS(:latitude)) * COS(RADIANS(u.nu_latitude)) *
               COS(RADIANS(u.nu_longitude) - RADIANS(:longitude)) +
@@ -199,6 +206,14 @@ async function listarSaloesProximos(requisicao, resposta) {
             )) AS distanciaKm
      FROM tb_unidade u
      INNER JOIN tb_salao s ON s.id_salao = u.fk_salao
+     LEFT JOIN tb_assinatura_salao ass ON ass.id_assinatura_salao = (
+       SELECT ultima.id_assinatura_salao FROM tb_assinatura_salao ultima
+       WHERE ultima.fk_salao=s.id_salao ORDER BY ultima.dt_criacao DESC, ultima.id_assinatura_salao DESC LIMIT 1
+     )
+     LEFT JOIN (
+       SELECT fk_unidade, COUNT(*) AS quantidade, ROUND(AVG(nu_nota_salao),1) AS mediaSalao
+       FROM tb_avaliacao GROUP BY fk_unidade
+     ) av ON av.fk_unidade=u.id_unidade
      WHERE u.st_ativo = TRUE
        AND s.st_ativo = TRUE
        AND u.nu_latitude IS NOT NULL
@@ -338,7 +353,7 @@ async function criarAgendamento(requisicao, resposta) {
     );
     if (conflitos.length) { const erro = new Error('Este horário acabou de ser reservado. Escolha outro horário.'); erro.status = 409; throw erro; }
 
-    await bancoDeDados.query(
+    const [idAgendamentoCriado] = await bancoDeDados.query(
       `INSERT INTO tb_agendamento (
         fk_usuario, fk_unidade, fk_funcionario, fk_servico, dt_inicio, dt_fim,
         nm_servico_agendado, vl_servico_agendado, nu_duracao_minutos, ds_observacao
@@ -364,6 +379,7 @@ async function criarAgendamento(requisicao, resposta) {
     );
 
     await transacao.commit();
+    void notificarSalaoDoAgendamento(Number(idAgendamentoCriado), 'Novo agendamento', 'Um cliente acabou de agendar um horário.');
     resposta.status(201).json({ mensagem: 'Agendamento realizado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, dataHoraFim: reserva.dataFimBanco, idFuncionario: reserva.idFuncionario });
   } catch (erro) {
     await transacao.rollback();
@@ -377,7 +393,7 @@ async function listarAgendamentos(requisicao, resposta, tipoListagem) {
 
   const condicaoData = tipoListagem === 'futuros'
     ? "a.dt_inicio >= NOW() AND a.cd_status = 'AGENDADO'"
-    : "a.dt_inicio < NOW() OR a.cd_status IN ('REALIZADO', 'CANCELADO')";
+    : "a.dt_inicio < NOW() OR a.cd_status IN ('REALIZADO', 'CANCELADO', 'NAO_COMPARECEU')";
   const ordenacao = tipoListagem === 'futuros' ? 'ASC' : 'DESC';
   const agendamentos = await bancoDeDados.query(
     `SELECT a.id_agendamento AS idAgendamento,
@@ -390,6 +406,8 @@ async function listarAgendamentos(requisicao, resposta, tipoListagem) {
             a.vl_servico_agendado AS valor,
             a.ds_observacao AS observacao,
             a.cd_status AS status,
+            av.id_avaliacao AS idAvaliacao,
+            CASE WHEN a.cd_status='REALIZADO' AND av.id_avaliacao IS NULL THEN TRUE ELSE FALSE END AS podeAvaliar,
             f.nm_funcionario AS profissional,
             s.nm_salao AS salao,
             u.nm_unidade AS unidade,
@@ -398,6 +416,7 @@ async function listarAgendamentos(requisicao, resposta, tipoListagem) {
      INNER JOIN tb_funcionario f ON f.id_funcionario = a.fk_funcionario
      INNER JOIN tb_unidade u ON u.id_unidade = a.fk_unidade
      INNER JOIN tb_salao s ON s.id_salao = u.fk_salao
+     LEFT JOIN tb_avaliacao av ON av.fk_agendamento = a.id_agendamento
      WHERE a.fk_usuario = :idUsuario AND (${condicaoData})
      ORDER BY a.dt_inicio ${ordenacao}`,
     { replacements: { idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
@@ -406,12 +425,56 @@ async function listarAgendamentos(requisicao, resposta, tipoListagem) {
   resposta.status(200).json({ agendamentos });
 }
 
+async function avaliarAgendamento(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const idAgendamento = Number(requisicao.params.idAgendamento);
+  const notaSalao = Number(requisicao.body?.notaSalao);
+  const notaServico = Number(requisicao.body?.notaServico);
+  const comentario = String(requisicao.body?.comentario ?? '').trim();
+  if (!Number.isSafeInteger(idAgendamento) || idAgendamento <= 0
+    || !Number.isInteger(notaSalao) || notaSalao < 1 || notaSalao > 5
+    || !Number.isInteger(notaServico) || notaServico < 1 || notaServico > 5
+    || comentario.length > 500) {
+    resposta.status(400).json({ mensagem: 'Informe notas de 1 a 5 e comentário de até 500 caracteres.' });
+    return;
+  }
+  const agendamentos = await bancoDeDados.query(
+    `SELECT id_agendamento AS idAgendamento, fk_unidade AS idUnidade, fk_servico AS idServico,
+            cd_status AS status FROM tb_agendamento
+     WHERE id_agendamento=:idAgendamento AND fk_usuario=:idUsuario LIMIT 1`,
+    { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
+  );
+  const agendamento = agendamentos[0];
+  if (!agendamento) { resposta.status(404).json({ mensagem: 'Agendamento não encontrado.' }); return; }
+  if (agendamento.status !== 'REALIZADO') {
+    resposta.status(409).json({ mensagem: 'A avaliação fica disponível após o atendimento ser marcado como realizado.' });
+    return;
+  }
+  try {
+    await bancoDeDados.query(
+      `INSERT INTO tb_avaliacao (fk_agendamento, fk_usuario, fk_unidade, fk_servico,
+         nu_nota_salao, nu_nota_servico, ds_comentario)
+       VALUES (:idAgendamento, :idUsuario, :idUnidade, :idServico, :notaSalao, :notaServico, :comentario)`,
+      { replacements: { ...agendamento, idUsuario: cliente.idUsuario, notaSalao, notaServico, comentario: comentario || null } },
+    );
+    resposta.status(201).json({ mensagem: 'Avaliação publicada com sucesso.' });
+  } catch (erro) {
+    if (erro.name === 'SequelizeUniqueConstraintError') {
+      resposta.status(409).json({ mensagem: 'Este agendamento já foi avaliado.' });
+      return;
+    }
+    throw erro;
+  }
+}
+
 async function cancelarAgendamento(requisicao, resposta) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
   const idAgendamento = Number(requisicao.params.idAgendamento);
   const resultado = await bancoDeDados.query(`UPDATE tb_agendamento SET cd_status = 'CANCELADO' WHERE id_agendamento = :idAgendamento AND fk_usuario = :idUsuario AND cd_status = 'AGENDADO' AND dt_inicio > NOW()`, { replacements: { idAgendamento, idUsuario: cliente.idUsuario } });
   if (!resultado[1]?.affectedRows && !resultado[0]?.affectedRows) { resposta.status(404).json({ mensagem: 'Esse agendamento não pode mais ser cancelado.' }); return; }
+  void notificarSalaoDoAgendamento(idAgendamento, 'Agendamento cancelado', 'Um cliente cancelou um horário marcado.');
   resposta.status(200).json({ mensagem: 'Agendamento cancelado com sucesso.' });
 }
 
@@ -477,6 +540,7 @@ async function atualizarAgendamento(requisicao, resposta) {
     if (conflitos.length) { const erro = new Error('Esse horário acabou de ser reservado. Escolha outro.'); erro.status = 409; throw erro; }
     await bancoDeDados.query(`UPDATE tb_agendamento SET fk_unidade=:idUnidade, fk_funcionario=:idFuncionario, fk_servico=:idServico, dt_inicio=:dataInicioBanco, dt_fim=:dataFimBanco, nm_servico_agendado=:nomeServico, vl_servico_agendado=:valorServico, nu_duracao_minutos=:duracaoMinutos, ds_observacao=:observacao WHERE id_agendamento=:idAgendamento`, { replacements: { ...reserva, idAgendamento, idServico, idUnidade, observacao: requisicao.body?.observacao?.trim() || null }, transaction: transacao });
     await transacao.commit();
+    void notificarSalaoDoAgendamento(idAgendamento, 'Agendamento alterado', 'Um cliente alterou os dados de um horário marcado.');
     resposta.status(200).json({ mensagem: 'Agendamento atualizado com sucesso.' });
   } catch (erro) { await transacao.rollback(); resposta.status(erro.status ?? 400).json({ mensagem: erro.message }); }
 }
@@ -539,6 +603,7 @@ roteadorCliente.patch('/senha', alterarSenha);
 roteadorCliente.get('/sugestoes-saloes', sugerirSaloes);
 roteadorCliente.get('/saloes/:idUnidade/servicos', listarServicosSalao);
 roteadorCliente.post('/agendamentos', criarAgendamento);
+roteadorCliente.post('/agendamentos/:idAgendamento/avaliacao', avaliarAgendamento);
 roteadorCliente.get('/agendamentos/:idAgendamento/horarios', listarHorariosReagendamento);
 roteadorCliente.patch('/agendamentos/:idAgendamento', atualizarAgendamento);
 roteadorCliente.patch('/agendamentos/:idAgendamento/cancelar', cancelarAgendamento);

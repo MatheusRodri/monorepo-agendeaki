@@ -179,6 +179,35 @@ async function realizarLogin(requisicao, resposta, perfil) {
   }
 }
 
+async function renovarSessao(requisicao, resposta, perfil) {
+  const tokenAtualizacao = requisicao.body?.tokenAtualizacao;
+  if (!tokenAtualizacao) {
+    return resposta.status(400).json({ mensagem: 'Informe o token de atualização para renovar a sessão.' });
+  }
+
+  try {
+    const clienteSupabase = obterClienteSupabase();
+    const { data: dadosAutenticacao, error: erroAutenticacao } = await clienteSupabase.auth.refreshSession({
+      refresh_token: tokenAtualizacao,
+    });
+
+    if (erroAutenticacao || !dadosAutenticacao?.session?.access_token) {
+      return resposta.status(401).json({ mensagem: 'A sessão expirou. Faça login novamente.' });
+    }
+
+    if (dadosAutenticacao.user?.user_metadata?.perfil !== perfil) {
+      return resposta.status(403).json({ mensagem: 'A sessão não corresponde a esta área.' });
+    }
+
+    return resposta.status(200).json({
+      tokenAcesso: dadosAutenticacao.session.access_token,
+      tokenAtualizacao: dadosAutenticacao.session.refresh_token,
+    });
+  } catch (erro) {
+    return resposta.status(500).json({ mensagem: erro.message });
+  }
+}
+
 async function realizarLogout(requisicao, resposta) {
   const tokenAcesso = extrairTokenAcesso(requisicao);
 
@@ -250,12 +279,14 @@ async function redefinirSenha(requisicao, resposta, perfil) {
 
 roteadorAutenticacao.post('/clientes/cadastro', (requisicao, resposta) => criarConta(requisicao, resposta, perfis.cliente));
 roteadorAutenticacao.post('/clientes/login', (requisicao, resposta) => realizarLogin(requisicao, resposta, perfis.cliente));
+roteadorAutenticacao.post('/clientes/refresh', (requisicao, resposta) => renovarSessao(requisicao, resposta, perfis.cliente));
 roteadorAutenticacao.post('/clientes/logout', realizarLogout);
 roteadorAutenticacao.post('/clientes/recuperar-senha', (requisicao, resposta) => solicitarRedefinicaoSenha(requisicao, resposta, perfis.cliente));
 roteadorAutenticacao.post('/clientes/redefinir-senha', (requisicao, resposta) => redefinirSenha(requisicao, resposta, perfis.cliente));
 
 roteadorAutenticacao.post('/saloes/cadastro', (requisicao, resposta) => criarConta(requisicao, resposta, perfis.salao));
 roteadorAutenticacao.post('/saloes/login', (requisicao, resposta) => realizarLogin(requisicao, resposta, perfis.salao));
+roteadorAutenticacao.post('/saloes/refresh', (requisicao, resposta) => renovarSessao(requisicao, resposta, perfis.salao));
 roteadorAutenticacao.post('/saloes/logout', realizarLogout);
 roteadorAutenticacao.post('/saloes/recuperar-senha', (requisicao, resposta) => solicitarRedefinicaoSenha(requisicao, resposta, perfis.salao));
 roteadorAutenticacao.post('/saloes/redefinir-senha', (requisicao, resposta) => redefinirSenha(requisicao, resposta, perfis.salao));
