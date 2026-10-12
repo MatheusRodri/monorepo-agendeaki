@@ -16,6 +16,14 @@ import { consultarInscricaoPush, criarNotificacaoCliente, enviarNotificacaoPushC
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
 const duracoesServicoPermitidas = [30, 45, 60, 90, 120];
+const motivosCancelamento = {
+  BLOQUEIO_AGENDA: 'Bloqueio emergencial da agenda pelo salão',
+  INDISPONIBILIDADE_PROFISSIONAL: 'Indisponibilidade do profissional',
+  SOLICITACAO_CLIENTE: 'Solicitação do cliente',
+  PROBLEMA_UNIDADE: 'Problema na unidade',
+  ERRO_AGENDAMENTO: 'Erro no agendamento',
+  OUTRO: 'Outro motivo',
+};
 
 function extrairTokenAcesso(requisicao) {
   const cabecalhoAutorizacao = requisicao.headers.authorization;
@@ -792,11 +800,19 @@ async function criarBloqueio(requisicao, resposta) {
     const profissionais = await bancoDeDados.query('SELECT id_funcionario FROM tb_funcionario WHERE id_funcionario=:idFuncionario AND fk_unidade=:idUnidade AND st_ativo=TRUE LIMIT 1', { replacements: { idFuncionario, idUnidade }, type: QueryTypes.SELECT });
     if (!profissionais.length) { resposta.status(404).json({ mensagem: 'Profissional não encontrado nesta filial.' }); return; }
   }
-  const motivo = requisicao.body?.motivo?.trim() || null;
+  const codigoMotivo = requisicao.body?.codigoMotivo;
+  const detalheMotivo = typeof requisicao.body?.detalheMotivo === 'string' ? requisicao.body.detalheMotivo.trim() : '';
+  if (!Object.hasOwn(motivosCancelamento, codigoMotivo) || (codigoMotivo === 'OUTRO' && !detalheMotivo)) {
+    resposta.status(400).json({ mensagem: 'Selecione o motivo do bloqueio e descreva o motivo quando escolher “Outro”.' }); return;
+  }
+  if (detalheMotivo.length > 200) { resposta.status(400).json({ mensagem: 'O detalhe do motivo deve ter até 200 caracteres.' }); return; }
+  const motivo = `${motivosCancelamento[codigoMotivo]}${detalheMotivo ? `: ${detalheMotivo}` : ''}`;
   const transacao = await bancoDeDados.transaction();
+  const notificacoes = [];
   try {
     const conflitos = await bancoDeDados.query(
-      `SELECT id_agendamento AS idAgendamento FROM tb_agendamento
+      `SELECT id_agendamento AS idAgendamento, fk_usuario AS idUsuario
+       FROM tb_agendamento
        WHERE fk_unidade=:idUnidade AND cd_status='AGENDADO'
          AND (:idFuncionario IS NULL OR fk_funcionario=:idFuncionario)
        AND dt_inicio < :dataHoraFim AND dt_fim > :dataHoraInicio
@@ -808,17 +824,30 @@ async function criarBloqueio(requisicao, resposta) {
       await bancoDeDados.query(
         `UPDATE tb_agendamento SET cd_status='CANCELADO', dt_cancelamento=NOW(),
                 fk_usuario_cancelamento=:idUsuario,
+                cd_origem_cancelamento='SALAO',
+                cd_motivo_cancelamento=:codigoMotivo,
                 ds_motivo_cancelamento=:motivoCancelamento
          WHERE id_agendamento IN (:idsAgendamentos) AND cd_status='AGENDADO'`,
         {
           replacements: {
             idUsuario: administrador.idUsuario,
+            codigoMotivo,
             idsAgendamentos,
-            motivoCancelamento: motivo ? `Bloqueio de agenda: ${motivo}` : 'Bloqueio emergencial da agenda pelo salão.',
+            motivoCancelamento: motivo,
           },
           transaction: transacao,
         },
       );
+      for (const agendamento of conflitos) {
+        if (!agendamento.idUsuario) continue;
+        const titulo = 'Agendamento cancelado';
+        const mensagem = `Seu agendamento foi cancelado pelo salão. Motivo: ${motivo}`;
+        const link = `/cliente/agendamentos?historico=${agendamento.idAgendamento}`;
+        const idNotificacao = await criarNotificacaoCliente(agendamento.idUsuario, agendamento.idAgendamento, {
+          tipo: 'CANCELAMENTO', titulo, mensagem, link,
+        }, transacao);
+        notificacoes.push({ idUsuario: agendamento.idUsuario, idNotificacao, titulo, mensagem, link });
+      }
     }
     await bancoDeDados.query(
       `INSERT INTO tb_bloqueio_agenda
@@ -827,6 +856,9 @@ async function criarBloqueio(requisicao, resposta) {
       { replacements: { dataHoraFim, dataHoraInicio, idFuncionario, idUnidade, motivo }, transaction: transacao },
     );
     await transacao.commit();
+    notificacoes.forEach((item) => {
+      void enviarNotificacaoPushCliente(item.idUsuario, item.titulo, item.mensagem, item.idNotificacao, item.link);
+    });
     resposta.status(201).json({
       mensagem: idsAgendamentos.length
         ? `Bloqueio criado e ${idsAgendamentos.length} agendamento(s) cancelado(s).`
@@ -1048,10 +1080,79 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
   resposta.status(200).json({ mensagem: status === 'REALIZADO' ? 'Atendimento confirmado como realizado.' : 'Ausência registrada.' });
 }
 
+async function cancelarAgendamentoSalao(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const idAgendamento = Number(requisicao.params.idAgendamento);
+  if (!Number.isSafeInteger(idAgendamento) || idAgendamento <= 0) {
+    resposta.status(400).json({ mensagem: 'Agendamento inválido.' }); return;
+  }
+  const codigoMotivo = requisicao.body?.codigoMotivo;
+  const detalheMotivo = typeof requisicao.body?.detalheMotivo === 'string' ? requisicao.body.detalheMotivo.trim() : '';
+  if (!Object.hasOwn(motivosCancelamento, codigoMotivo) || (codigoMotivo === 'OUTRO' && !detalheMotivo)) {
+    resposta.status(400).json({ mensagem: 'Selecione o motivo do cancelamento e descreva o motivo quando escolher “Outro”.' }); return;
+  }
+  if (detalheMotivo.length > 200) {
+    resposta.status(400).json({ mensagem: 'O detalhe do motivo deve ter até 200 caracteres.' }); return;
+  }
+  const motivo = `${motivosCancelamento[codigoMotivo]}${detalheMotivo ? `: ${detalheMotivo}` : ''}`;
+
+  const transacao = await bancoDeDados.transaction();
+  let dadosNotificacao = null;
+  try {
+    const linhas = await bancoDeDados.query(
+      `SELECT a.fk_usuario AS idUsuario
+       FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+       WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao
+         AND a.cd_status='AGENDADO' LIMIT 1 FOR UPDATE`,
+      { replacements: { idAgendamento, idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    const agendamento = linhas[0];
+    if (!agendamento) {
+      await transacao.rollback();
+      resposta.status(409).json({ mensagem: 'Este agendamento não está mais disponível para cancelamento.' });
+      return;
+    }
+    const [resultado] = await bancoDeDados.query(
+      `UPDATE tb_agendamento SET cd_status='CANCELADO', dt_cancelamento=NOW(),
+         fk_usuario_cancelamento=:idUsuario, cd_origem_cancelamento='SALAO',
+         cd_motivo_cancelamento=:codigoMotivo, ds_motivo_cancelamento=:motivo
+       WHERE id_agendamento=:idAgendamento AND cd_status='AGENDADO'`,
+      { replacements: { codigoMotivo, idAgendamento, idUsuario: administrador.idUsuario, motivo }, transaction: transacao },
+    );
+    if (!resultado.affectedRows) {
+      await transacao.rollback();
+      resposta.status(409).json({ mensagem: 'Este agendamento mudou de status antes do cancelamento.' });
+      return;
+    }
+    if (agendamento.idUsuario) {
+      const titulo = 'Agendamento cancelado';
+      const mensagem = `Seu agendamento foi cancelado pelo salão. Motivo: ${motivo}`;
+      const link = `/cliente/agendamentos?historico=${idAgendamento}`;
+      const idNotificacao = await criarNotificacaoCliente(agendamento.idUsuario, idAgendamento, {
+        tipo: 'CANCELAMENTO', titulo, mensagem, link,
+      }, transacao);
+      dadosNotificacao = { idUsuario: agendamento.idUsuario, idNotificacao, titulo, mensagem, link };
+    }
+    await transacao.commit();
+  } catch (erro) {
+    await transacao.rollback();
+    throw erro;
+  }
+  if (dadosNotificacao) {
+    void enviarNotificacaoPushCliente(dadosNotificacao.idUsuario, dadosNotificacao.titulo, dadosNotificacao.mensagem, dadosNotificacao.idNotificacao, dadosNotificacao.link);
+  }
+  resposta.status(200).json({ mensagem: 'Agendamento cancelado com sucesso.' });
+}
+
 async function obterAgendamentoReagendavel(idAgendamento, idSalao, transaction) {
   const agendamentos = await bancoDeDados.query(
-    `SELECT a.id_agendamento AS idAgendamento, a.fk_unidade AS idUnidade,
-            a.fk_servico AS idServico, a.nu_duracao_minutos AS duracaoMinutos
+    `SELECT a.id_agendamento AS idAgendamento, a.fk_usuario AS idUsuario,
+            a.fk_unidade AS idUnidade, a.fk_servico AS idServico,
+            a.fk_funcionario AS idFuncionario,
+            DATE_FORMAT(a.dt_inicio, '%Y-%m-%d %H:%i:%s') AS dataHoraInicio,
+            a.nm_servico_agendado AS servico, a.nu_duracao_minutos AS duracaoMinutos
      FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
      WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao
        AND a.cd_status='AGENDADO' LIMIT 1 ${transaction ? 'FOR UPDATE' : ''}`,
@@ -1092,6 +1193,7 @@ async function reagendarAgendamentoSalao(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Agendamento ou profissional inválido.' }); return;
   }
   const transaction = await bancoDeDados.transaction();
+  let dadosNotificacao = null;
   try {
     const agendamento = await obterAgendamentoReagendavel(idAgendamento, salao.idSalao, transaction);
     if (!agendamento) { const erro = new Error('Agendamento indisponível para reagendamento.'); erro.status = 409; throw erro; }
@@ -1101,9 +1203,9 @@ async function reagendarAgendamentoSalao(requisicao, resposta) {
       ignorarIdAgendamento: idAgendamento, duracaoMinutos: agendamento.duracaoMinutos, transaction,
     });
     const conflitos = await bancoDeDados.query(
-      `SELECT id_agendamento FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
-       AND id_agendamento<>:idAgendamento AND cd_status='AGENDADO'
-       AND dt_inicio<:dataFimBanco AND dt_fim>:dataInicioBanco FOR UPDATE`,
+      `SELECT id_agendamento FROM tb_agendamento WHERE fk_funcionario = :idFuncionario
+       AND id_agendamento <> :idAgendamento AND cd_status = 'AGENDADO'
+       AND dt_inicio < :dataFimBanco AND dt_fim > :dataInicioBanco FOR UPDATE`,
       { replacements: { ...reserva, idAgendamento }, transaction, type: QueryTypes.SELECT },
     );
     if (conflitos.length) { const erro = new Error('Este horário acabou de ser reservado.'); erro.status = 409; throw erro; }
@@ -1112,7 +1214,23 @@ async function reagendarAgendamentoSalao(requisicao, resposta) {
          dt_fim=:dataFimBanco WHERE id_agendamento=:idAgendamento AND cd_status='AGENDADO'`,
       { replacements: { ...reserva, idAgendamento }, transaction },
     );
+    const houveAlteracao = Number(agendamento.idFuncionario) !== Number(reserva.idFuncionario)
+      || agendamento.dataHoraInicio !== reserva.dataInicioBanco;
+    if (houveAlteracao && agendamento.idUsuario) {
+      const titulo = 'Agendamento reagendado';
+      const [dataNova, horarioNovo] = reserva.dataInicioBanco.split(' ');
+      const [ano, mes, dia] = dataNova.split('-');
+      const mensagem = `O salão reagendou seu atendimento de ${agendamento.servico} para ${dia}/${mes}/${ano} às ${horarioNovo.slice(0, 5)}.`;
+      const link = `/cliente/agendamentos?agendamento=${idAgendamento}`;
+      const idNotificacao = await criarNotificacaoCliente(agendamento.idUsuario, idAgendamento, {
+        tipo: 'REAGENDAMENTO', titulo, mensagem, link,
+      }, transaction);
+      dadosNotificacao = { idUsuario: agendamento.idUsuario, idNotificacao, titulo, mensagem, link };
+    }
     await transaction.commit();
+    if (dadosNotificacao) {
+      void enviarNotificacaoPushCliente(dadosNotificacao.idUsuario, dadosNotificacao.titulo, dadosNotificacao.mensagem, dadosNotificacao.idNotificacao, dadosNotificacao.link);
+    }
     resposta.status(200).json({ mensagem: 'Agendamento reagendado com sucesso.' });
   } catch (erro) {
     await transaction.rollback();
@@ -1225,21 +1343,35 @@ async function indicadoresPremium(requisicao, resposta) {
     if (dataInicio) { filtros.dataInicio = dataInicio; condicoesAgendamentos.push('DATE(a.dt_inicio)>=:dataInicio'); }
     if (dataFim) { filtros.dataFim = dataFim; condicoesAgendamentos.push('DATE(a.dt_inicio)<=:dataFim'); }
     const condicaoAgendamentos = condicoesAgendamentos.join(' AND ');
+    const filtroDataAnaliseAgendamentos = dataInicio && dataFim
+      ? `(a.cd_status = 'CANCELADO' AND DATE(COALESCE(a.dt_cancelamento,a.dt_inicio)) BETWEEN :dataInicio AND :dataFim)
+        OR (a.cd_status <> 'CANCELADO' AND DATE(a.dt_inicio) BETWEEN :dataInicio AND :dataFim)`
+      : dataInicio
+        ? `(a.cd_status = 'CANCELADO' AND DATE(COALESCE(a.dt_cancelamento,a.dt_inicio)) >= :dataInicio)
+          OR (a.cd_status <> 'CANCELADO' AND DATE(a.dt_inicio) >= :dataInicio)`
+        : dataFim
+          ? `(a.cd_status = 'CANCELADO' AND DATE(COALESCE(a.dt_cancelamento,a.dt_inicio)) <= :dataFim)
+            OR (a.cd_status <> 'CANCELADO' AND DATE(a.dt_inicio) <= :dataFim)`
+          : null;
+    const condicaoAnaliseAgendamentos = [...condicoes, ...(filtroDataAnaliseAgendamentos ? [`(${filtroDataAnaliseAgendamentos})`] : [])].join(' AND ');
     const periodoAgendamento = [dataInicio ? 'DATE(a.dt_inicio)>=:dataInicio' : null, dataFim ? 'DATE(a.dt_inicio)<=:dataFim' : null].filter(Boolean).join(' AND ');
     const restricaoAgendamento = periodoAgendamento ? ` AND ${periodoAgendamento}` : '';
+    const periodoCancelamento = [dataInicio ? 'DATE(COALESCE(a.dt_cancelamento,a.dt_inicio))>=:dataInicio' : null, dataFim ? 'DATE(COALESCE(a.dt_cancelamento,a.dt_inicio))<=:dataFim' : null].filter(Boolean).join(' AND ');
+    const restricaoCancelamento = periodoCancelamento ? ` AND ${periodoCancelamento}` : '';
     const periodoRealizacao = [dataInicio ? 'DATE(a.dt_realizacao)>=:dataInicio' : null, dataFim ? 'DATE(a.dt_realizacao)<=:dataFim' : null].filter(Boolean).join(' AND ');
     const restricaoRealizacao = periodoRealizacao ? ` AND ${periodoRealizacao}` : '';
     const condicaoRealizacoes = [...condicoes, 'a.cd_status=\'REALIZADO\'', ...(dataInicio ? ['DATE(a.dt_realizacao)>=:dataInicio'] : []), ...(dataFim ? ['DATE(a.dt_realizacao)<=:dataFim'] : [])].join(' AND ');
     const periodoAnteriorAgendamentos = 'DATE(a.dt_inicio) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
+    const periodoAnteriorCancelamentos = 'DATE(COALESCE(a.dt_cancelamento,a.dt_inicio)) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
     const periodoAnteriorRealizacoes = 'DATE(a.dt_realizacao) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
     const filtrosComparacao = { ...filtros, dataInicioAnterior, dataFimAnterior };
     const idClienteSql = "COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))";
-    const [resumo, receitaPrevista, comparacaoAnterior, receitaPorDia, receitaPorServico, receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes, clientesInativos, profissionais, disponibilidade, filiais, servicos, funcionarios] = await Promise.all([
+    const [resumo, receitaPrevista, comparacaoAnterior, receitaPorDia, receitaPorServico, receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes, clientesInativos, profissionais, disponibilidade, filiais, servicos, funcionarios, cancelamentosPorMotivo, analiseAgendamentos] = await Promise.all([
       bancoDeDados.query(`SELECT
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.vl_servico_agendado ELSE 0 END),0) AS receitaRealizada,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos,
-        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados,
+        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoCancelamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados,
         COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosMarcados,
@@ -1258,7 +1390,7 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' AND a.dt_inicio<NOW() THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis,
-        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorCancelamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase}`, { replacements: filtrosComparacao, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT DATE_FORMAT(a.dt_realizacao,'%Y-%m-%d') AS data, SUM(a.vl_servico_agendado) AS valor
@@ -1317,7 +1449,7 @@ async function indicadoresPremium(requisicao, resposta) {
       bancoDeDados.query(`SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS profissional,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.nu_duracao_minutos ELSE 0 END),0) AS minutosAtendimentoRealizado,
-        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS cancelamentos,
+        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoCancelamento} THEN 1 ELSE 0 END),0) AS cancelamentos,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.vl_servico_agendado ELSE 0 END),0) AS receitaRealizada
         FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
         LEFT JOIN tb_agendamento a ON a.fk_funcionario=f.id_funcionario
@@ -1335,6 +1467,51 @@ async function indicadoresPremium(requisicao, resposta) {
       bancoDeDados.query('SELECT id_unidade AS idUnidade, nm_unidade AS nome FROM tb_unidade WHERE fk_salao=:idSalao AND st_ativo=TRUE ORDER BY nm_unidade', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
       bancoDeDados.query('SELECT s.id_servico AS idServico, s.nm_servico AS nome FROM tb_servico s INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY s.nm_servico', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
       bancoDeDados.query('SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS nome FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade WHERE u.fk_salao=:idSalao AND f.st_ativo=TRUE ORDER BY f.nm_funcionario', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT
+        CASE a.cd_motivo_cancelamento
+          WHEN 'BLOQUEIO_AGENDA' THEN 'Bloqueio da agenda'
+          WHEN 'INDISPONIBILIDADE_PROFISSIONAL' THEN 'Indisponibilidade do profissional'
+          WHEN 'SOLICITACAO_CLIENTE' THEN 'Solicitação do cliente'
+          WHEN 'PROBLEMA_UNIDADE' THEN 'Problema na unidade'
+          WHEN 'ERRO_AGENDAMENTO' THEN 'Erro no agendamento'
+          WHEN 'OUTRO' THEN 'Outro motivo'
+          ELSE 'Sem classificação'
+        END AS motivo,
+        COUNT(*) AS quantidade
+        FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        WHERE ${condicaoBase} AND a.cd_status='CANCELADO'${restricaoCancelamento}
+        GROUP BY motivo ORDER BY quantidade DESC, motivo`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT a.id_agendamento AS idAgendamento,
+        a.dt_inicio AS dataInicio, a.dt_fim AS dataFim,
+        COALESCE(c.nm_usuario, cs.nm_cliente, 'Cliente sem identificação') AS cliente,
+        COALESCE(c.ds_email, cs.ds_email) AS email,
+        COALESCE(c.nu_telefone, cs.nu_telefone) AS telefone,
+        a.nm_servico_agendado AS servico,
+        u.nm_unidade AS unidade,
+        f.nm_funcionario AS profissional,
+        a.cd_status AS status,
+        a.vl_servico_agendado AS valor,
+        (SELECT p.cd_status_pagamento FROM tb_pagamento p
+          WHERE p.fk_agendamento=a.id_agendamento
+          ORDER BY p.dt_criacao DESC, p.id_pagamento DESC LIMIT 1) AS statusPagamento,
+        CASE a.cd_motivo_cancelamento
+          WHEN 'BLOQUEIO_AGENDA' THEN 'Bloqueio da agenda'
+          WHEN 'INDISPONIBILIDADE_PROFISSIONAL' THEN 'Indisponibilidade do profissional'
+          WHEN 'SOLICITACAO_CLIENTE' THEN 'Solicitação do cliente'
+          WHEN 'PROBLEMA_UNIDADE' THEN 'Problema na unidade'
+          WHEN 'ERRO_AGENDAMENTO' THEN 'Erro no agendamento'
+          WHEN 'OUTRO' THEN 'Outro motivo'
+          ELSE NULL
+        END AS motivoCancelamento,
+        a.ds_motivo_cancelamento AS detalheCancelamento,
+        a.cd_origem_cancelamento AS origemCancelamento
+        FROM tb_agendamento a
+        INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+        INNER JOIN tb_funcionario f ON f.id_funcionario=a.fk_funcionario
+        LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario
+        LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao
+        WHERE ${condicaoAnaliseAgendamentos}
+        ORDER BY COALESCE(a.dt_cancelamento,a.dt_inicio) DESC, a.id_agendamento DESC`, { replacements: filtros, type: QueryTypes.SELECT }),
     ]);
     const ocorrenciasSemana = Array(7).fill(Math.floor(quantidadeDiasPeriodo / 7));
     const diasRestantes = quantidadeDiasPeriodo % 7;
@@ -1394,6 +1571,7 @@ async function indicadoresPremium(requisicao, resposta) {
     resposta.status(200).json({
       resumo: resumo[0], comparacaoAnterior: comparacaoAnterior[0], receitaPorDia, receitaPorServico,
       receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes: clientes[0], clientesInativos,
+      cancelamentosPorMotivo, analiseAgendamentos,
       profissionais: desempenhoProfissionais, insights,
       periodoComparacao: { dataInicioAnterior, dataFimAnterior },
       filtros: { dataInicio, dataFim, idUnidade, idServico, idFuncionario },
@@ -1601,6 +1779,7 @@ roteadorSalao.post('/bloqueios', criarBloqueio); roteadorSalao.delete('/bloqueio
 roteadorSalao.get('/clientes', listarClientes); roteadorSalao.get('/agendamentos', listarAgendamentos); roteadorSalao.get('/agendamentos/horarios', listarHorariosAgendamento); roteadorSalao.post('/agendamentos', criarAgendamentoSalao);
 roteadorSalao.patch('/agendamentos/:idAgendamento/confirmar-atendimento', confirmarAtendimentoAgendamento);
 roteadorSalao.patch('/agendamentos/:idAgendamento/nao-compareceu', registrarAusenciaAgendamento);
+roteadorSalao.patch('/agendamentos/:idAgendamento/cancelar', cancelarAgendamentoSalao);
 roteadorSalao.get('/agendamentos/:idAgendamento/horarios-reagendamento', horariosReagendamentoSalao);
 roteadorSalao.patch('/agendamentos/:idAgendamento/reagendar', reagendarAgendamentoSalao);
 roteadorSalao.get('/avaliacoes', listarAvaliacoesSalao);
