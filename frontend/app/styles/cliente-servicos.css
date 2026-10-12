@@ -179,6 +179,87 @@
 .resumo-agendamento strong { color: var(--ameixa); }
 .resumo-agendamento span { color: var(--texto-suave); font-size: .78rem; }
 
+.modal-revisao-agendamento {
+  align-items: center;
+  background: rgba(26, 15, 27, .68);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 1.25rem;
+  position: fixed;
+  z-index: 1100;
+}
+
+.modal-revisao-agendamento__conteudo {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 20px;
+  box-shadow: var(--sombra);
+  margin-block: auto;
+  max-width: 560px;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  width: 100%;
+}
+
+.modal-revisao-agendamento__conteudo h2 {
+  color: var(--ameixa);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(1.5rem, 5vw, 2rem);
+  margin: .3rem 0 1.25rem;
+}
+
+.modal-revisao-agendamento__detalhes {
+  background: var(--fundo-suave);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  display: grid;
+  gap: .9rem 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  padding: 1rem;
+}
+
+.modal-revisao-agendamento__detalhes div { min-width: 0; }
+.modal-revisao-agendamento__detalhes dt { color: var(--texto-suave); font-size: .7rem; margin-bottom: .2rem; }
+.modal-revisao-agendamento__detalhes dd { color: var(--ameixa); font-size: .88rem; font-weight: 700; margin: 0; overflow-wrap: anywhere; }
+.modal-revisao-agendamento__detalhes dd small { color: var(--texto-suave); display: block; font-size: .68rem; font-weight: 500; margin-top: .15rem; }
+
+.modal-revisao-agendamento__mensagem {
+  background: var(--creme);
+  border-radius: 10px;
+  color: var(--ameixa);
+  font-size: .82rem;
+  line-height: 1.5;
+  margin: 1rem 0 0;
+  padding: .8rem 1rem;
+}
+
+.modal-revisao-agendamento__sucesso { text-align: center; }
+.modal-revisao-agendamento__icone { align-items: center; background: #e5f4e9; border-radius: 50%; color: #267444; display: flex; font-size: 1.5rem; font-weight: 800; height: 52px; justify-content: center; margin: 0 auto 1rem; width: 52px; }
+.modal-revisao-agendamento__texto { color: var(--texto-suave); font-size: .86rem; line-height: 1.55; margin: -.5rem 0 1.2rem; }
+.modal-revisao-agendamento__sucesso .modal-revisao-agendamento__detalhes { text-align: left; }
+.modal-revisao-agendamento__ir-agendamentos { margin-top: 1.25rem; width: 100%; }
+
+.modal-revisao-agendamento__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+  justify-content: flex-end;
+  margin-top: 1.25rem;
+}
+
+.modal-revisao-agendamento__acoes button { min-height: 44px; }
+.modal-revisao-agendamento__cancelar { color: #a43d45; }
+
+@media (max-width: 520px) {
+  .modal-revisao-agendamento { align-items: flex-end; padding: .65rem; }
+  .modal-revisao-agendamento__conteudo { border-radius: 18px; max-height: calc(100dvh - 1.3rem); overflow-y: auto; padding: 1.15rem; }
+  .modal-revisao-agendamento__detalhes { gap: .8rem; grid-template-columns: 1fr; }
+  .modal-revisao-agendamento__acoes { display: grid; grid-template-columns: 1fr 1fr; }
+  .modal-revisao-agendamento__acoes .botao-enviar { grid-column: 1 / -1; grid-row: 1; }
+}
+
 @media (max-width: 700px) {
   .opcoes-agendamento, .opcoes-agendamento--compactas { grid-template-columns: 1fr; }
   .grade-horarios { grid-template-columns: repeat(3, minmax(0, 1fr)); }

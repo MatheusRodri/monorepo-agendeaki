@@ -26,12 +26,11 @@ function agruparServicos(linhas) {
 async function buscarPagina(slugSalao, slugFilial) {
   const filiais = await bancoDeDados.query(
     `SELECT s.id_salao AS idSalao, s.nm_salao AS nomeSalao, s.ds_slug AS slugSalao,
-            s.ds_email AS emailSalao, s.nu_telefone AS telefoneSalao,
             u.id_unidade AS idUnidade, u.nm_unidade AS nomeUnidade, u.ds_slug AS slugFilial,
             u.tp_categoria AS categoria, u.ds_rua AS rua, u.nu_endereco AS numero,
             u.ds_complemento AS complemento, u.ds_bairro AS bairro,
             u.ds_municipio AS municipio, u.ds_estado AS estado, u.nu_cep AS cep,
-            COALESCE(u.nu_telefone, s.nu_telefone) AS telefone
+            u.ds_email AS email, u.nu_telefone AS telefone
      FROM tb_salao s INNER JOIN tb_unidade u ON u.fk_salao = s.id_salao
      WHERE s.ds_slug = :slugSalao AND u.ds_slug = :slugFilial
        AND s.st_ativo = TRUE AND u.st_ativo = TRUE LIMIT 1`,

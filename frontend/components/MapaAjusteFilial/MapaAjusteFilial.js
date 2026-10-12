@@ -2,24 +2,17 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { obterEstiloMapaHere } from '../../utils/here';
+import { toastErro } from '../../utils/toast';
 
 const centroInicial = { latitude: -23.5505, longitude: -46.6333 };
 
-export default function MapaAjusteFilial({ coordenadas, modoAjuste = false, aoAjustar }) {
+export default function MapaAjusteFilial({ coordenadas }) {
   const elementoMapa = useRef(null);
   const instanciaMapa = useRef(null);
   const marcador = useRef(null);
   const moduloMapa = useRef(null);
-  const ajusteManualAtual = useRef(modoAjuste);
-  const aoAjustarAtual = useRef(aoAjustar);
   const [mapaPronto, definirMapaPronto] = useState(false);
   const [erro, definirErro] = useState('');
-
-  useEffect(() => {
-    ajusteManualAtual.current = modoAjuste;
-    aoAjustarAtual.current = aoAjustar;
-    requestAnimationFrame(() => instanciaMapa.current?.resize());
-  }, [aoAjustar, modoAjuste]);
 
   useEffect(() => {
     let estaAtivo = true;
@@ -45,7 +38,7 @@ export default function MapaAjusteFilial({ coordenadas, modoAjuste = false, aoAj
       definirMapaPronto(true);
     }
 
-    iniciarMapa().catch((causa) => { if (estaAtivo) definirErro(causa.message || 'Não foi possível carregar o mapa agora.'); });
+    iniciarMapa().catch((causa) => { if (estaAtivo) { definirErro('Mapa indisponível no momento.'); toastErro(causa.message || 'Não foi possível carregar o mapa agora.'); } });
     return () => {
       estaAtivo = false;
       instanciaMapa.current?.remove();
@@ -59,33 +52,15 @@ export default function MapaAjusteFilial({ coordenadas, modoAjuste = false, aoAj
     if (!coordenadas || !maplibregl || !instanciaMapa.current) return;
     const posicao = [coordenadas.longitude, coordenadas.latitude];
     if (!marcador.current) {
-      marcador.current = new maplibregl.Marker({ color: '#e55353', draggable: true })
+      marcador.current = new maplibregl.Marker({ color: '#e55353', draggable: false })
         .setLngLat(posicao)
         .addTo(instanciaMapa.current);
-      marcador.current.on('dragend', () => {
-        if (!ajusteManualAtual.current) return;
-        const novaPosicao = marcador.current.getLngLat();
-        aoAjustarAtual.current?.({ latitude: novaPosicao.lat, longitude: novaPosicao.lng });
-      });
     } else {
       marcador.current.setLngLat(posicao);
     }
     instanciaMapa.current.flyTo({ center: posicao, essential: true, zoom: 17 });
   }, [coordenadas, mapaPronto]);
 
-  useEffect(() => {
-    const mapa = instanciaMapa.current;
-    if (!mapa || !mapaPronto) return undefined;
-
-    function ajustarPorClique(evento) {
-      if (!ajusteManualAtual.current) return;
-      aoAjustarAtual.current?.({ latitude: evento.lngLat.lat, longitude: evento.lngLat.lng });
-    }
-
-    mapa.on('click', ajustarPorClique);
-    return () => mapa.off('click', ajustarPorClique);
-  }, [mapaPronto]);
-
   if (erro) return <p className="estado-localizacao">{erro}</p>;
-  return <div aria-label={modoAjuste ? 'Mapa para ajustar a localização da filial' : 'Mapa da localização da filial'} className={modoAjuste ? 'mapa-ajuste-filial mapa-ajuste-filial--ajustavel maplibregl-map' : 'mapa-ajuste-filial maplibregl-map'} ref={elementoMapa} />;
+  return <div aria-label="Mapa da localização da filial" className="mapa-ajuste-filial maplibregl-map" ref={elementoMapa} />;
 }

@@ -186,7 +186,13 @@ export async function listarHorariosDisponiveis({
   return {
     data,
     duracaoMinutos,
-    horarios: [...horariosPorInicio.values()].sort((a, b) => a.inicio.localeCompare(b.inicio)),
+    horarios: [...horariosPorInicio.values()]
+      .sort((a, b) => a.inicio.localeCompare(b.inicio))
+      .map((item) => ({
+        ...item,
+        profissionalSugerido: [...item.profissionais]
+          .sort((a, b) => a.idFuncionario - b.idFuncionario)[0] ?? null,
+      })),
     servico: {
       idServico: Number(contexto[0].idServico),
       nome: contexto[0].nomeServico,
@@ -219,6 +225,7 @@ export async function resolverReserva({
     dataInicioBanco: paraBanco(inicioNormalizado),
     duracaoMinutos: disponibilidade.duracaoMinutos,
     idFuncionario: profissional.idFuncionario,
+    nomeFuncionario: profissional.nome,
     nomeServico: disponibilidade.servico.nome,
     valorServico: disponibilidade.servico.valor,
   };

@@ -1,23 +1,23 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { toastSucesso } from '../../utils/toast';
 
 const dias = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 const edicaoPadrao = { ativo: true, fim: '18:00', inicio: '09:00', pausaAtiva: false, pausaFim: '13:00', pausaInicio: '12:00' };
 
-export default function DisponibilidadeSalao({ filiais = [], requisitar }) {
+export default function DisponibilidadeSalao({ filiais = [], mostrarToastErro, requisitar }) {
   const [idUnidade, definirIdUnidade] = useState(String(filiais[0]?.idUnidade ?? ''));
   const [dados, definirDados] = useState({ bloqueios: [], funcionarios: [] });
   const [idFuncionario, definirIdFuncionario] = useState('');
   const [periodos, definirPeriodos] = useState([]);
   const [diaEmEdicao, definirDiaEmEdicao] = useState(null);
   const [edicaoDia, definirEdicaoDia] = useState(edicaoPadrao);
-  const [mensagem, definirMensagem] = useState('');
 
   async function carregar(unidade = idUnidade) {
     if (!unidade) return;
-    try { definirDados(await requisitar(`/disponibilidade?idUnidade=${unidade}`)); definirMensagem(''); }
-    catch (erro) { definirMensagem(erro.message); }
+    try { definirDados(await requisitar(`/disponibilidade?idUnidade=${unidade}`)); }
+    catch (erro) { mostrarToastErro(erro.message); }
   }
 
   useEffect(() => { carregar(idUnidade); }, [idUnidade]);
@@ -43,7 +43,6 @@ export default function DisponibilidadeSalao({ filiais = [], requisitar }) {
       pausaInicio: periodosAtuais.length > 1 ? periodosAtuais[0].fim : '12:00',
     });
     definirDiaEmEdicao(diaSemana);
-    definirMensagem('');
   }
 
   function aplicarEdicaoDia() {
@@ -52,9 +51,9 @@ export default function DisponibilidadeSalao({ filiais = [], requisitar }) {
       definirDiaEmEdicao(null);
       return;
     }
-    if (edicaoDia.inicio >= edicaoDia.fim) { definirMensagem('O início da jornada precisa ser anterior ao fim.'); return; }
+    if (edicaoDia.inicio >= edicaoDia.fim) { mostrarToastErro('O início da jornada precisa ser anterior ao fim.'); return; }
     if (edicaoDia.pausaAtiva && !(edicaoDia.inicio < edicaoDia.pausaInicio && edicaoDia.pausaInicio < edicaoDia.pausaFim && edicaoDia.pausaFim < edicaoDia.fim)) {
-      definirMensagem('A pausa precisa ficar dentro da jornada e ter início anterior ao fim.');
+      mostrarToastErro('A pausa precisa ficar dentro da jornada e ter início anterior ao fim.');
       return;
     }
     const novosPeriodos = edicaoDia.pausaAtiva
@@ -66,14 +65,13 @@ export default function DisponibilidadeSalao({ filiais = [], requisitar }) {
     definirPeriodos((atuais) => [...atuais.filter((periodo) => periodo.diaSemana !== diaEmEdicao), ...novosPeriodos]
       .sort((a, b) => a.diaSemana - b.diaSemana || a.inicio.localeCompare(b.inicio)));
     definirDiaEmEdicao(null);
-    definirMensagem('');
   }
 
   async function salvarPeriodos() {
     try {
       const resultado = await requisitar(`/funcionarios/${idFuncionario}/disponibilidade`, { method: 'PUT', body: JSON.stringify({ periodos }) });
-      definirMensagem(resultado.mensagem); await carregar();
-    } catch (erro) { definirMensagem(erro.message); }
+      toastSucesso(resultado.mensagem); await carregar();
+    } catch (erro) { mostrarToastErro(erro.message); }
   }
 
   async function criarBloqueio(evento) {
@@ -82,18 +80,18 @@ export default function DisponibilidadeSalao({ filiais = [], requisitar }) {
     const formulario = new FormData(evento.currentTarget);
     try {
       const resultado = await requisitar('/bloqueios', { method: 'POST', body: JSON.stringify({ ...Object.fromEntries(formulario), idUnidade }) });
-      definirMensagem(resultado.mensagem); evento.currentTarget.reset(); await carregar();
-    } catch (erro) { definirMensagem(erro.message); }
+      toastSucesso(resultado.mensagem); evento.currentTarget.reset(); await carregar();
+    } catch (erro) { mostrarToastErro(erro.message); }
   }
 
   async function removerBloqueio(idBloqueio) {
-    try { const resultado = await requisitar(`/bloqueios/${idBloqueio}`, { method: 'DELETE' }); definirMensagem(resultado.mensagem); await carregar(); }
-    catch (erro) { definirMensagem(erro.message); }
+    try { const resultado = await requisitar(`/bloqueios/${idBloqueio}`, { method: 'DELETE' }); toastSucesso(resultado.mensagem); await carregar(); }
+    catch (erro) { mostrarToastErro(erro.message); }
   }
 
   return <><p className="sobretitulo">Organização da agenda</p><h1>Disponibilidade.</h1>
     <label className="campo-formulario seletor-disponibilidade"><span>Filial</span><select onChange={(evento) => { definirIdUnidade(evento.target.value); definirIdFuncionario(''); }} value={idUnidade}><option value="">Selecione</option>{filiais.map((item) => <option key={item.idUnidade} value={item.idUnidade}>{item.nome}</option>)}</select></label>
-    {mensagem && <p className="mensagem-formulario">{mensagem}</p>}
+
     {idUnidade && <section className="secao-painel"><h2>Jornada dos profissionais</h2><p className="descricao-secao">Edite cada dia e, quando necessário, informe o intervalo de almoço ou outra pausa.</p><label className="campo-formulario seletor-disponibilidade"><span>Profissional</span><select onChange={(evento) => definirIdFuncionario(evento.target.value)} value={idFuncionario}><option value="">Selecione</option>{dados.funcionarios.map((item) => <option key={item.idFuncionario} value={item.idFuncionario}>{item.nome}</option>)}</select></label>
       {idFuncionario && <div className="editor-disponibilidade"><div className="lista-periodos lista-jornada-semanal">{dias.map((dia, diaSemana) => <LinhaJornada dia={dia} edicao={edicaoDia} emEdicao={diaEmEdicao === diaSemana} key={dia} periodos={periodosDoDia(diaSemana)} aoAlterarEdicao={definirEdicaoDia} aoAplicar={aplicarEdicaoDia} aoCancelar={() => definirDiaEmEdicao(null)} aoEditar={() => editarDia(diaSemana)} />)}</div><button className="botao-enviar" onClick={salvarPeriodos} type="button">Salvar jornada →</button></div>}
     </section>}

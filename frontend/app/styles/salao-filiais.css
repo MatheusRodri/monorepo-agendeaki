@@ -1,3 +1,50 @@
+.conteudo-salao--filiais {
+  max-width: none;
+}
+
+.formulario-salao--filial {
+  max-width: none;
+  width: 100%;
+}
+
+.dados-contato-filial {
+  border-bottom: 1px solid var(--borda);
+  display: grid;
+  gap: 1rem;
+  grid-column: 1 / -1;
+  margin-bottom: .25rem;
+  padding-bottom: 1.35rem;
+}
+
+.dados-contato-filial__cabecalho {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.dados-contato-filial__cabecalho strong {
+  color: var(--ameixa);
+  font-size: .95rem;
+}
+
+.dados-contato-filial__cabecalho p {
+  color: var(--texto-suave);
+  font-size: .78rem;
+  margin: .25rem 0 0;
+}
+
+.dados-contato-filial__checkbox {
+  justify-self: end;
+  margin-top: -.25rem;
+}
+
+.dados-contato-filial__campos {
+  display: grid;
+  gap: 0 1rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .ajuste-localizacao,
 .horarios-filial {
   border-top: 1px solid var(--borda);
@@ -28,20 +75,6 @@
   height: 270px;
   overflow: hidden;
   width: 100%;
-}
-
-.mapa-ajuste-filial--ajustavel {
-  cursor: crosshair;
-}
-
-.botao-ajuste-localizacao {
-  justify-self: start;
-}
-
-.botao-ajuste-localizacao--ativo {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
 }
 
 .estado-localizacao {
@@ -167,3 +200,19 @@
   opacity: .45;
 }
 
+@media (max-width: 1100px) {
+  .dados-contato-filial__campos {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .dados-contato-filial__campos {
+    grid-template-columns: 1fr;
+  }
+
+  .dados-contato-filial__cabecalho {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

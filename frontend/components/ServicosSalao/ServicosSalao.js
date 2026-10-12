@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
 import { requisitarApi } from '../../utils/api';
+import { toastErro } from '../../utils/toast';
 
 export default function ServicosSalao({ idUnidade }) {
   const [servicos, definirServicos] = useState([]);
@@ -16,7 +17,8 @@ export default function ServicosSalao({ idUnidade }) {
         definirServicos(dadosResposta.servicos);
         definirMensagem(dadosResposta.servicos.length ? '' : 'Esta unidade ainda não possui serviços disponíveis.');
       } catch (erro) {
-        definirMensagem(erro.message);
+        definirMensagem('');
+        toastErro(erro.message);
       }
     }
 

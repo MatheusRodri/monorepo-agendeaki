@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { obterEstiloMapaHere } from '../../utils/here';
+import { toastErro } from '../../utils/toast';
 
 const centroInicial = { latitude: -23.5505, longitude: -46.6333 };
 
@@ -63,7 +64,7 @@ export default function MapaSaloes({ aoSelecionarSalao, centralizarNoCliente = f
       instanciaMapa.current.once('load', () => { if (estaAtivo) definirMapaPronto(true); });
     }
 
-    iniciarMapa().catch((causa) => { if (estaAtivo) definirErro(causa.message || 'Não foi possível carregar o mapa agora.'); });
+    iniciarMapa().catch((causa) => { if (estaAtivo) { definirErro('Mapa indisponível no momento.'); toastErro(causa.message || 'Não foi possível carregar o mapa agora.'); } });
     return () => {
       estaAtivo = false;
       marcadoresPorUnidade.current.clear();
@@ -112,7 +113,24 @@ export default function MapaSaloes({ aoSelecionarSalao, centralizarNoCliente = f
       pontos.push([longitude, latitude]);
     });
 
-    if (pontos.length > 1 && !centralizarNoCliente) mapa.fitBounds(pontos, { padding: 48, maxZoom: 13 });
+    if (pontos.length > 1 && !centralizarNoCliente) {
+      const limites = pontos.reduce((acumulado, [longitude, latitude]) => ({
+        leste: Math.max(acumulado.leste, longitude),
+        norte: Math.max(acumulado.norte, latitude),
+        sul: Math.min(acumulado.sul, latitude),
+        oeste: Math.min(acumulado.oeste, longitude),
+      }), {
+        leste: -Infinity,
+        norte: -Infinity,
+        sul: Infinity,
+        oeste: Infinity,
+      });
+
+      mapa.fitBounds(
+        [[limites.oeste, limites.sul], [limites.leste, limites.norte]],
+        { padding: 48, maxZoom: 13 },
+      );
+    }
   }, [aoSelecionarSalao, centralizarNoCliente, coordenadas, mapaPronto, saloes]);
 
   useEffect(() => {

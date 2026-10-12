@@ -1,4 +1,10 @@
 @media (max-width: 780px) {
+  .area-cliente {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .cabecalho-area {
     min-height: 68px;
   }
@@ -14,13 +20,17 @@
 
   .area-cliente__conteudo {
     display: block;
+    flex: 0 0 auto;
     height: auto;
+    min-height: auto;
   }
 
   .painel-exploracao {
     border-bottom: 1px solid var(--borda);
     border-right: 0;
     max-height: none;
+    min-height: auto;
+    overflow-y: visible;
   }
 
   .mapa-area,
@@ -97,4 +107,3 @@
     text-align: left;
   }
 }
-
