@@ -1,14 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { toastErro } from '../../utils/toast';
 
 export default function BotaoResetarPwa() {
   const [carregando, setCarregando] = useState(false);
-  const [mensagem, setMensagem] = useState('');
 
   async function resetarAplicativo() {
     setCarregando(true);
-    setMensagem('');
 
     try {
       const resposta = await fetch(`/offline?atualizar=${Date.now()}`, { cache: 'no-store' });
@@ -30,7 +29,7 @@ export default function BotaoResetarPwa() {
 
       window.location.replace('/');
     } catch {
-      setMensagem('Não consegui acessar o site. Confira sua conexão e tente novamente.');
+      toastErro('Não consegui acessar o site. Confira sua conexão e tente novamente.');
       setCarregando(false);
     }
   }
@@ -55,11 +54,6 @@ export default function BotaoResetarPwa() {
       >
         {carregando ? 'Atualizando aplicativo…' : 'Forçar atualização do aplicativo'}
       </button>
-      {mensagem && (
-        <p aria-live="polite" style={{ color: '#a84e50', fontSize: 13, lineHeight: 1.5, margin: '10px 0 0' }}>
-          {mensagem}
-        </p>
-      )}
     </div>
   );
 }

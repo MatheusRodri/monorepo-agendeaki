@@ -1,6 +1,7 @@
 import './globals.css';
 import RegistrarPwa from '../components/RegistrarPwa/RegistrarPwa';
 import TelaManutencao from '../components/TelaManutencao/TelaManutencao';
+import ToastProvider from '../components/ToastProvider/ToastProvider';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,7 @@ export default function LayoutPrincipal({ children }) {
   return (
     <html lang="pt-BR">
       <body>
+        <ToastProvider />
         {emManutencao ? <TelaManutencao /> : <><RegistrarPwa />{children}</>}
       </body>
     </html>
