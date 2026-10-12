@@ -5,12 +5,22 @@ import { toastSucesso } from '../../utils/toast';
 
 const dias = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 const edicaoPadrao = { ativo: true, fim: '18:00', inicio: '09:00', pausaAtiva: false, pausaFim: '13:00', pausaInicio: '12:00' };
+const opcoesMotivoBloqueio = [
+  ['BLOQUEIO_AGENDA', 'Bloqueio emergencial da agenda pelo salão'],
+  ['INDISPONIBILIDADE_PROFISSIONAL', 'Indisponibilidade do profissional'],
+  ['SOLICITACAO_CLIENTE', 'Solicitação do cliente'],
+  ['PROBLEMA_UNIDADE', 'Problema na unidade'],
+  ['ERRO_AGENDAMENTO', 'Erro no agendamento'],
+  ['OUTRO', 'Outro motivo'],
+];
 
 export default function DisponibilidadeSalao({ filiais = [], mostrarToastErro, requisitar }) {
   const [idUnidade, definirIdUnidade] = useState(String(filiais[0]?.idUnidade ?? ''));
   const [dados, definirDados] = useState({ bloqueios: [], funcionarios: [] });
   const [idFuncionario, definirIdFuncionario] = useState('');
   const [periodos, definirPeriodos] = useState([]);
+  const [codigoMotivoBloqueio, definirCodigoMotivoBloqueio] = useState('BLOQUEIO_AGENDA');
+  const [detalheMotivoBloqueio, definirDetalheMotivoBloqueio] = useState('');
   const [diaEmEdicao, definirDiaEmEdicao] = useState(null);
   const [edicaoDia, definirEdicaoDia] = useState(edicaoPadrao);
 
@@ -77,10 +87,11 @@ export default function DisponibilidadeSalao({ filiais = [], mostrarToastErro, r
   async function criarBloqueio(evento) {
     evento.preventDefault();
     if (!window.confirm('Os agendamentos confirmados que coincidirem com este período serão cancelados. Deseja continuar?')) return;
-    const formulario = new FormData(evento.currentTarget);
+    const elementoFormulario = evento.currentTarget;
+    const formulario = new FormData(elementoFormulario);
     try {
       const resultado = await requisitar('/bloqueios', { method: 'POST', body: JSON.stringify({ ...Object.fromEntries(formulario), idUnidade }) });
-      toastSucesso(resultado.mensagem); evento.currentTarget.reset(); await carregar();
+      toastSucesso(resultado.mensagem); elementoFormulario.reset(); definirCodigoMotivoBloqueio('BLOQUEIO_AGENDA'); definirDetalheMotivoBloqueio(''); await carregar();
     } catch (erro) { mostrarToastErro(erro.message); }
   }
 
@@ -95,7 +106,7 @@ export default function DisponibilidadeSalao({ filiais = [], mostrarToastErro, r
     {idUnidade && <section className="secao-painel"><h2>Jornada dos profissionais</h2><p className="descricao-secao">Edite cada dia e, quando necessário, informe o intervalo de almoço ou outra pausa.</p><label className="campo-formulario seletor-disponibilidade"><span>Profissional</span><select onChange={(evento) => definirIdFuncionario(evento.target.value)} value={idFuncionario}><option value="">Selecione</option>{dados.funcionarios.map((item) => <option key={item.idFuncionario} value={item.idFuncionario}>{item.nome}</option>)}</select></label>
       {idFuncionario && <div className="editor-disponibilidade"><div className="lista-periodos lista-jornada-semanal">{dias.map((dia, diaSemana) => <LinhaJornada dia={dia} edicao={edicaoDia} emEdicao={diaEmEdicao === diaSemana} key={dia} periodos={periodosDoDia(diaSemana)} aoAlterarEdicao={definirEdicaoDia} aoAplicar={aplicarEdicaoDia} aoCancelar={() => definirDiaEmEdicao(null)} aoEditar={() => editarDia(diaSemana)} />)}</div><button className="botao-enviar" onClick={salvarPeriodos} type="button">Salvar jornada →</button></div>}
     </section>}
-    {idUnidade && <section className="secao-painel"><h2>Bloquear agenda</h2><p className="descricao-secao">Use para imprevistos, folgas ou férias. Os agendamentos confirmados dentro do período serão cancelados. Deixe o profissional vazio para bloquear toda a filial.</p><form className="formulario-salao grade-formulario" onSubmit={criarBloqueio}><label className="campo-formulario"><span>Profissional <small>Opcional</small></span><select name="idFuncionario"><option value="">Toda a filial</option>{dados.funcionarios.map((item) => <option key={item.idFuncionario} value={item.idFuncionario}>{item.nome}</option>)}</select></label><CampoDataHora nome="dataHoraInicio" rotulo="Início" /><CampoDataHora nome="dataHoraFim" rotulo="Fim" /><label className="campo-formulario"><span>Motivo <small>Opcional</small></span><input maxLength="200" name="motivo" /></label><button className="botao-enviar">Bloquear e cancelar conflitos →</button></form><div className="grade-gestao lista-bloqueios">{dados.bloqueios.map((item) => <article className="cartao-gestao" key={item.idBloqueio}><div><strong>{item.profissional || 'Toda a filial'}</strong><span>{formatarDataHora(item.dataHoraInicio)} até {formatarDataHora(item.dataHoraFim)}</span><small>{item.motivo || 'Sem motivo informado'}</small></div><button className="botao-secundario" onClick={() => removerBloqueio(item.idBloqueio)} type="button">Remover</button></article>)}</div></section>}
+    {idUnidade && <section className="secao-painel"><h2>Bloquear agenda</h2><p className="descricao-secao">Use para imprevistos, folgas ou férias. Os agendamentos confirmados dentro do período serão cancelados. Deixe o profissional vazio para bloquear toda a filial.</p><form className="formulario-salao grade-formulario" onSubmit={criarBloqueio}><label className="campo-formulario"><span>Profissional <small>Opcional</small></span><select name="idFuncionario"><option value="">Toda a filial</option>{dados.funcionarios.map((item) => <option key={item.idFuncionario} value={item.idFuncionario}>{item.nome}</option>)}</select></label><CampoDataHora nome="dataHoraInicio" rotulo="Início" /><CampoDataHora nome="dataHoraFim" rotulo="Fim" /><label className="campo-formulario"><span>Motivo do bloqueio</span><select name="codigoMotivo" onChange={(evento) => { definirCodigoMotivoBloqueio(evento.target.value); definirDetalheMotivoBloqueio(''); }} required value={codigoMotivoBloqueio}>{opcoesMotivoBloqueio.map(([codigo, rotulo]) => <option key={codigo} value={codigo}>{rotulo}</option>)}</select></label>{codigoMotivoBloqueio === 'OUTRO' && <label className="campo-formulario"><span>Descreva o motivo</span><input maxLength="200" name="detalheMotivo" onChange={(evento) => definirDetalheMotivoBloqueio(evento.target.value)} required value={detalheMotivoBloqueio} /></label>}<button className="botao-enviar">Bloquear e cancelar conflitos →</button></form><div className="grade-gestao lista-bloqueios">{dados.bloqueios.map((item) => <article className="cartao-gestao" key={item.idBloqueio}><div><strong>{item.profissional || 'Toda a filial'}</strong><span>{formatarDataHora(item.dataHoraInicio)} até {formatarDataHora(item.dataHoraFim)}</span><small>{item.motivo || 'Sem motivo informado'}</small></div><button className="botao-secundario" onClick={() => removerBloqueio(item.idBloqueio)} type="button">Remover</button></article>)}</div></section>}
   </>;
 }
 

@@ -100,6 +100,7 @@ export default function AreaSalao({ secao }) {
     const aoReceberPush = (evento) => {
       if (evento.data?.type !== 'AGENDEAKI_PUSH_NOTIFICATION' || !evento.data.notificacao) return;
       const notificacaoRecebida = evento.data.notificacao;
+      if (notificacaoRecebida.audience !== 'salao') return;
       const idNotificacao = Number(notificacaoRecebida.id);
       if (Number.isSafeInteger(idNotificacao) && idNotificacao > 0) {
         if (idsNotificacoesConhecidos.current.has(idNotificacao)) return;
@@ -466,17 +467,18 @@ function DashboardPremium({ dados, filtrosDashboard, definirFiltrosDashboard, re
       <Indicador titulo="Atendimentos realizados" valor={resumo.quantidadeAgendamentosRealizados ?? 0} />
       <Indicador titulo="Agendamentos cancelados" valor={resumo.quantidadeAgendamentosCancelados ?? 0} variante="neutra" />
       <Indicador titulo="Não compareceram" valor={resumo.quantidadeNaoCompareceu ?? 0} variante="neutra" />
-      <Indicador titulo="Atendimentos aguardando confirmação" valor={resumo.quantidadeAtendimentosAConfirmar ?? 0} />
     </div>
     <div className="dashboard-premium__graficos">
       <section className="secao-painel"><h2>Evolução da receita</h2><p>Valor dos serviços concluídos, pela data em que foram marcados como realizados.</p><GraficoLinha dados={dados.receitaPorDia ?? []} campo="valor" cor="var(--ameixa)" vazio="Nenhum serviço realizado neste período." /></section>
       <section className="secao-painel"><h2>Receita por serviço</h2><p>Valor dos serviços realizados no período.</p><GraficoBarras dados={dados.receitaPorServico ?? []} campo="servico" valor="valor" formatar={dinheiro} vazio="Nenhum serviço realizado para estes filtros." /></section>
+      <section className="secao-painel dashboard-premium__grafico-largo"><h2>Cancelamentos por motivo</h2><p>Distribuição dos agendamentos cancelados no período e nos filtros selecionados.</p><GraficoBarras dados={dados.cancelamentosPorMotivo ?? []} campo="motivo" valor="quantidade" formatar={(quantidade) => `${quantidade} ${Number(quantidade) === 1 ? 'agendamento' : 'agendamentos'}`} vazio="Nenhum cancelamento para estes filtros." /></section>
       <section className="secao-painel dashboard-premium__grafico-largo"><h2>Evolução dos agendamentos</h2><p>Todos os agendamentos pela data de início.</p><GraficoLinha dados={dados.agendamentosPorDia ?? []} campo="quantidade" cor="var(--verde-escuro, #397b61)" vazio="Nenhum agendamento para estes filtros." /><DistribuicaoStatus resumo={resumo} /></section>
       <section className="secao-painel dashboard-premium__grafico-largo"><h2>Demanda por dia e horário</h2><p>Agendamentos concluídos ou marcados; cancelamentos aparecem no detalhe de cada célula.</p><MapaCalor dados={dados.mapaCalor ?? []} /></section>
       <section className="secao-painel"><h2>Clientes atendidos</h2><p>Novos e recorrentes pela primeira visita concluída registrada no salão.</p><div className="dashboard-premium__cliente-metricas"><Indicador titulo="Clientes atendidos" valor={dados.clientes?.clientesAtendidos ?? 0} /><Indicador titulo="Novos clientes" valor={dados.clientes?.clientesNovos ?? 0} /><Indicador titulo="Clientes recorrentes" valor={dados.clientes?.clientesRecorrentes ?? 0} /></div></section>
       <section className="secao-painel"><h2>Desempenho dos profissionais</h2><p>Atendimentos e valores dos serviços realizados; ocupação comparada à disponibilidade semanal cadastrada.</p><TabelaProfissionais profissionais={dados.profissionais ?? []} dinheiro={dinheiro} /></section>
       <section className="secao-painel dashboard-premium__grafico-largo"><h2>Insights do negócio</h2><p>Sugestões geradas por regras aplicadas aos dados deste período.</p><ListaInsights insights={dados.insights ?? []} /></section>
       <section className="secao-painel dashboard-premium__grafico-largo"><h2>Clientes sem retorno há 90 dias</h2><p>Clientes com atendimento realizado, sem novo atendimento concluído nos últimos 90 dias.</p><TabelaClientesInativos clientes={dados.clientesInativos ?? []} /></section>
+      <section className="secao-painel dashboard-premium__grafico-largo"><h2>Análise de agendamentos</h2><p>Inclui todos os status. Agendamentos entram pela data marcada; cancelamentos, pela data do cancelamento. Aplicam-se os filtros selecionados.</p><TabelaAnaliseAgendamentos agendamentos={dados.analiseAgendamentos ?? []} dinheiro={dinheiro} /></section>
     </div>
     <small className="dashboard-premium__nota">Receita realizada soma o valor dos serviços marcados como realizados, pela data da confirmação. O pagamento continua sendo controlado separadamente. A receita prevista considera os agendamentos futuros ativos.</small>
     <small className="dashboard-premium__nota">Clientes novos são os que tiveram seu primeiro atendimento marcado como realizado no período. Recorrentes são os que já tinham ao menos um atendimento realizado antes do período. Clientes inativos são os que estão há 90 dias sem atendimento realizado. A disponibilidade profissional é uma estimativa baseada na grade semanal e não desconta feriados nem bloqueios pontuais.</small>
@@ -493,9 +495,14 @@ function exportarDashboardCsv(dados, filtros) {
     ['Receita prevista próximos 30 dias', dados.resumo?.receitaPrevista],
     ['Agendamentos', dados.resumo?.quantidadeAgendamentosTotal],
     ['Atendimentos realizados', dados.resumo?.quantidadeAgendamentosRealizados],
-    ['Aguardando confirmação', dados.resumo?.quantidadeAtendimentosAConfirmar],
     ['Cancelamentos', dados.resumo?.quantidadeAgendamentosCancelados],
     ['Não compareceram', dados.resumo?.quantidadeNaoCompareceu],
+    [],
+    ['Cancelamentos por motivo', 'Quantidade'],
+    ...(dados.cancelamentosPorMotivo ?? []).map((item) => [item.motivo, item.quantidade]),
+    [],
+    ['Agendamento', 'Data', 'Cliente', 'Email', 'Telefone', 'Serviço', 'Filial', 'Profissional', 'Status', 'Valor', 'Pagamento', 'Motivo', 'Detalhe do cancelamento', 'Origem'],
+    ...(dados.analiseAgendamentos ?? []).map((item) => [item.idAgendamento, item.dataInicio, item.cliente, item.email, item.telefone, item.servico, item.unidade, item.profissional, item.status, item.valor, item.statusPagamento, item.motivoCancelamento, item.detalheCancelamento, item.origemCancelamento]),
     [],
     ['Receita por serviço', 'Valor atual', 'Valor período anterior'],
     ...(dados.receitaPorServico ?? []).map((item) => [item.servico, item.valor, (dados.receitaPorServicoAnterior ?? []).find((anterior) => anterior.servico === item.servico)?.valor ?? 'Fora do top 8 no período anterior']),
@@ -531,6 +538,14 @@ function ListaInsights({ insights }) {
 function TabelaClientesInativos({ clientes }) {
   if (!clientes.length) return <p className="dashboard-premium__vazio">Nenhum cliente atingiu 90 dias sem atendimento realizado.</p>;
   return <div className="tabela-premium__rolagem"><table className="tabela-premium"><thead><tr><th>Cliente</th><th>Email</th><th>Telefone</th><th>Último atendimento</th></tr></thead><tbody>{clientes.map((cliente) => <tr key={cliente.idCliente}><th>{cliente.cliente}</th><td>{cliente.email || '—'}</td><td>{cliente.telefone || '—'}</td><td>{formatarDataHora(cliente.ultimoAtendimento)}</td></tr>)}</tbody></table></div>;
+}
+
+function TabelaAnaliseAgendamentos({ agendamentos, dinheiro }) {
+  if (!agendamentos.length) return <p className="dashboard-premium__vazio">Nenhum agendamento encontrado para estes filtros.</p>;
+  const statusLegivel = { AGENDADO: 'Agendado', REALIZADO: 'Realizado', CANCELADO: 'Cancelado', NAO_COMPARECEU: 'Não compareceu' };
+  const pagamentoLegivel = { PENDENTE: 'Pendente', APROVADO: 'Aprovado', RECUSADO: 'Recusado', CANCELADO: 'Cancelado', REEMBOLSADO: 'Reembolsado' };
+  const origemLegivel = { CLIENTE: 'Cliente', SALAO: 'Salão', NAO_IDENTIFICADO: 'Não identificada' };
+  return <div className="tabela-premium__rolagem"><table className="tabela-premium tabela-premium--agendamentos"><thead><tr><th>#</th><th>Data</th><th>Cliente</th><th>Contato</th><th>Serviço</th><th>Filial</th><th>Profissional</th><th>Status</th><th>Valor</th><th>Pagamento</th><th>Motivo do cancelamento</th><th>Cancelado por</th></tr></thead><tbody>{agendamentos.map((item) => <tr key={item.idAgendamento}><td>{item.idAgendamento}</td><td>{formatarDataHora(item.dataInicio)}</td><th>{item.cliente}</th><td>{[item.email, item.telefone].filter(Boolean).join(' · ') || '—'}</td><td>{item.servico}</td><td>{item.unidade}</td><td>{item.profissional}</td><td><span className={`status-agendamento status-agendamento--${String(item.status).toLowerCase()}`}>{statusLegivel[item.status] ?? item.status}</span></td><td>{dinheiro(item.valor)}</td><td>{pagamentoLegivel[item.statusPagamento] ?? '—'}</td><td>{item.status === 'CANCELADO' ? [item.motivoCancelamento, item.detalheCancelamento].filter(Boolean).join(': ') || 'Sem motivo informado' : '—'}</td><td>{origemLegivel[item.origemCancelamento] ?? '—'}</td></tr>)}</tbody></table></div>;
 }
 
 function IndicadorComparado({ titulo, valor, variacao, inverso = false }) {

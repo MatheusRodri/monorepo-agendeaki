@@ -14,14 +14,18 @@ self.addEventListener('activate', (evento) => {
 
 self.addEventListener('push', (evento) => {
   const dados = evento.data?.json() ?? {};
-  const destinoSolicitado = new URL(dados.url || '/salao/agendamentos', self.location.origin);
+  const audience = dados.audience === 'cliente' ? 'cliente' : 'salao';
+  const destinoPadrao = audience === 'cliente' ? '/cliente/notificacoes' : '/salao/agendamentos';
+  const destinoSolicitado = new URL(dados.url || destinoPadrao, self.location.origin);
   const destino = destinoSolicitado.origin === self.location.origin
     ? `${destinoSolicitado.pathname}${destinoSolicitado.search}${destinoSolicitado.hash}`
-    : '/salao/agendamentos';
+    : destinoPadrao;
   const notificacao = {
     id: dados.id,
+    audience,
     titulo: dados.title || 'Agende Aki',
     mensagem: dados.body || 'Você tem uma atualização no seu salão.',
+    link: destino,
   };
   evento.waitUntil(Promise.all([
     self.registration.showNotification(notificacao.titulo, {
@@ -31,7 +35,14 @@ self.addEventListener('push', (evento) => {
       data: { url: destino },
     }),
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientes) => {
-      clientes.forEach((cliente) => cliente.postMessage({ type: 'AGENDEAKI_PUSH_NOTIFICATION', notificacao }));
+      clientes.forEach((cliente) => {
+        const caminho = new URL(cliente.url).pathname;
+        const clienteDoPublico = audience === 'cliente' && caminho.startsWith('/cliente/');
+        const salaoDoPublico = audience === 'salao' && caminho.startsWith('/salao/');
+        if (clienteDoPublico || salaoDoPublico) {
+          cliente.postMessage({ type: 'AGENDEAKI_PUSH_NOTIFICATION', notificacao });
+        }
+      });
     }),
   ]));
 });

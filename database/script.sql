@@ -587,6 +587,15 @@ CREATE TABLE IF NOT EXISTS tb_agendamento (
   ds_observacao VARCHAR(500) NULL,
 
   ds_motivo_cancelamento VARCHAR(500) NULL,
+  cd_motivo_cancelamento ENUM(
+    'BLOQUEIO_AGENDA',
+    'INDISPONIBILIDADE_PROFISSIONAL',
+    'SOLICITACAO_CLIENTE',
+    'PROBLEMA_UNIDADE',
+    'ERRO_AGENDAMENTO',
+    'OUTRO'
+  ) NULL,
+  cd_origem_cancelamento ENUM('CLIENTE', 'SALAO', 'NAO_IDENTIFICADO') NULL,
   dt_cancelamento DATETIME NULL,
   fk_usuario_cancelamento BIGINT UNSIGNED NULL,
 
@@ -679,13 +688,14 @@ CREATE TABLE IF NOT EXISTS tb_notificacao_cliente (
   id_notificacao BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   fk_usuario BIGINT UNSIGNED NOT NULL,
   fk_agendamento BIGINT UNSIGNED NOT NULL,
+  cd_tipo ENUM('AVALIACAO', 'CANCELAMENTO', 'REAGENDAMENTO') NOT NULL DEFAULT 'AVALIACAO',
   nm_titulo VARCHAR(120) NOT NULL,
   ds_mensagem VARCHAR(300) NOT NULL,
   ds_link VARCHAR(255) NOT NULL,
   st_lida BOOLEAN NOT NULL DEFAULT FALSE,
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id_notificacao),
-  CONSTRAINT uk_notificacao_cliente_agendamento UNIQUE (fk_agendamento),
+  INDEX idx_notificacao_cliente_agendamento (fk_agendamento),
   INDEX idx_notificacao_cliente_usuario_nao_lida (fk_usuario, st_lida, dt_criacao),
   CONSTRAINT fk_notificacao_cliente_usuario FOREIGN KEY (fk_usuario)
     REFERENCES tb_usuario (id_usuario) ON DELETE CASCADE ON UPDATE CASCADE,
