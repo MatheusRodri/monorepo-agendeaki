@@ -5,10 +5,21 @@ import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../con
 import { cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
 import { listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
-import { notificarSalaoDoAgendamento } from '../servicos/notificacoesPush.js';
+import {
+  criarNotificacaoCliente,
+  consultarInscricaoPushCliente,
+  enviarNotificacaoPushCliente,
+  listarNotificacoesCliente,
+  marcarNotificacaoClienteLida,
+  marcarTodasNotificacoesClienteLidas,
+  obterChavePublicaPush,
+  removerInscricaoPushCliente,
+  salvarInscricaoPushCliente,
+  notificarSalaoDoAgendamento,
+} from '../servicos/notificacoesPush.js';
 
 const roteadorCliente = Router();
-const raiosPermitidos = [1, 5, 10];
+const raiosPermitidos = [0, 1, 5, 10];
 
 function extrairTokenAcesso(requisicao) {
   const cabecalhoAutorizacao = requisicao.headers.authorization;
@@ -87,7 +98,7 @@ async function obterCoordenadas(requisicao) {
   }
 
   if (!raiosPermitidos.includes(raioKm)) {
-    return { mensagem: 'O raio deve ser de 1 km, 5 km ou 10 km.' };
+    return { mensagem: 'A distância deve ser sem limite, 1 km, 5 km ou 10 km.' };
   }
 
   return { cidade, latitude, longitude, raioKm };
@@ -222,7 +233,7 @@ async function listarSaloesProximos(requisicao, resposta) {
          (:idUnidade > 0 AND u.id_unidade = :idUnidade)
          OR (:idUnidade = 0 AND (:busca = '' OR s.nm_salao LIKE :buscaComCuringa OR u.nm_unidade LIKE :buscaComCuringa OR u.ds_municipio LIKE :buscaComCuringa))
        )
-     HAVING (:buscaPorUnidadeSelecionada = TRUE OR distanciaKm <= :raioKm)
+       HAVING (:buscaPorUnidadeSelecionada = TRUE OR :raioKm = 0 OR distanciaKm <= :raioKm)
      ORDER BY distanciaKm, s.nm_salao, u.nm_unidade`,
     {
       replacements: { ...coordenadas, busca, buscaComCuringa: `%${busca}%`, idUnidade: buscaPorUnidadeSelecionada ? idUnidade : 0, buscaPorUnidadeSelecionada },
@@ -380,7 +391,7 @@ async function criarAgendamento(requisicao, resposta) {
 
     await transacao.commit();
     void notificarSalaoDoAgendamento(Number(idAgendamentoCriado), 'Novo agendamento', 'Um cliente acabou de agendar um horário.');
-    resposta.status(201).json({ mensagem: 'Agendamento realizado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, dataHoraFim: reserva.dataFimBanco, idFuncionario: reserva.idFuncionario });
+    resposta.status(201).json({ mensagem: 'Agendamento realizado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, dataHoraFim: reserva.dataFimBanco, idFuncionario: reserva.idFuncionario, nomeFuncionario: reserva.nomeFuncionario });
   } catch (erro) {
     await transacao.rollback();
     resposta.status(erro.status ?? 500).json({ mensagem: erro.message });
@@ -423,6 +434,117 @@ async function listarAgendamentos(requisicao, resposta, tipoListagem) {
   );
 
   resposta.status(200).json({ agendamentos });
+}
+
+async function consultarNotificacoesCliente(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  resposta.status(200).json(await listarNotificacoesCliente(cliente.idUsuario));
+}
+
+async function marcarNotificacaoClienteComoLida(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const idNotificacao = Number(requisicao.params.idNotificacao);
+  if (!Number.isSafeInteger(idNotificacao) || idNotificacao <= 0) {
+    resposta.status(400).json({ mensagem: 'Notificação inválida.' });
+    return;
+  }
+  const atualizada = await marcarNotificacaoClienteLida(cliente.idUsuario, idNotificacao);
+  if (!atualizada) {
+    const existentes = await bancoDeDados.query(
+      'SELECT id_notificacao FROM tb_notificacao_cliente WHERE id_notificacao=:idNotificacao AND fk_usuario=:idUsuario LIMIT 1',
+      { replacements: { idNotificacao, idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
+    );
+    if (!existentes.length) {
+      resposta.status(404).json({ mensagem: 'Notificação não encontrada.' });
+      return;
+    }
+  }
+  resposta.status(200).json({ mensagem: 'Notificação marcada como lida.' });
+}
+
+async function marcarNotificacaoAgendamentoClienteComoLida(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const idAgendamento = Number(requisicao.params.idAgendamento);
+  if (!Number.isSafeInteger(idAgendamento) || idAgendamento <= 0) {
+    resposta.status(400).json({ mensagem: 'Agendamento inválido.' });
+    return;
+  }
+  const [resultado] = await bancoDeDados.query(
+    `UPDATE tb_notificacao_cliente SET st_lida=TRUE
+     WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento AND st_lida=FALSE`,
+    { replacements: { idUsuario: cliente.idUsuario, idAgendamento } },
+  );
+  if (!resultado.affectedRows) {
+    const existentes = await bancoDeDados.query(
+      'SELECT id_notificacao FROM tb_notificacao_cliente WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento LIMIT 1',
+      { replacements: { idUsuario: cliente.idUsuario, idAgendamento }, type: QueryTypes.SELECT },
+    );
+    if (!existentes.length) {
+      resposta.status(404).json({ mensagem: 'Notificação não encontrada.' });
+      return;
+    }
+  }
+  resposta.status(200).json({ mensagem: 'Notificação marcada como lida.' });
+}
+
+async function marcarTodasNotificacoesClienteComoLidas(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  await marcarTodasNotificacoesClienteLidas(cliente.idUsuario);
+  resposta.status(200).json({ mensagem: 'Notificações marcadas como lidas.' });
+}
+
+function inscricaoPushValida(inscricao) {
+  let endpointValido = false;
+  try {
+    const endpoint = new URL(inscricao?.endpoint);
+    endpointValido = endpoint.protocol === 'https:'
+      || (endpoint.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname));
+  } catch {}
+  return typeof inscricao?.endpoint === 'string' && inscricao.endpoint.length <= 2048
+    && endpointValido && Boolean(inscricao?.keys?.p256dh) && Boolean(inscricao?.keys?.auth);
+}
+
+async function chavePublicaNotificacoesCliente(_requisicao, resposta) {
+  const chavePublica = obterChavePublicaPush();
+  if (!chavePublica) {
+    resposta.status(503).json({ mensagem: 'Notificações ainda não foram configuradas neste ambiente.' });
+    return;
+  }
+  resposta.status(200).json({ chavePublica });
+}
+
+async function salvarInscricaoNotificacoesCliente(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const inscricao = requisicao.body;
+  if (!inscricaoPushValida(inscricao)) {
+    resposta.status(400).json({ mensagem: 'Inscrição de notificações inválida.' });
+    return;
+  }
+  await salvarInscricaoPushCliente(cliente.idUsuario, inscricao);
+  resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.' });
+}
+
+async function consultarInscricaoNotificacoesCliente(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  resposta.status(200).json({ ativa: await consultarInscricaoPushCliente(cliente.idUsuario, String(requisicao.query.endpoint ?? '')) });
+}
+
+async function excluirInscricaoNotificacoesCliente(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const endpoint = requisicao.body?.endpoint;
+  if (typeof endpoint !== 'string' || !endpoint) {
+    resposta.status(400).json({ mensagem: 'Informe o dispositivo a desativar.' });
+    return;
+  }
+  await removerInscricaoPushCliente(cliente.idUsuario, endpoint);
+  resposta.status(200).json({ mensagem: 'Notificações desativadas neste dispositivo.' });
 }
 
 async function avaliarAgendamento(requisicao, resposta) {
@@ -597,6 +719,14 @@ async function excluirConta(requisicao, resposta) {
 }
 
 roteadorCliente.get('/saloes-proximos', listarSaloesProximos);
+roteadorCliente.get('/notificacoes/chave-publica', chavePublicaNotificacoesCliente);
+roteadorCliente.get('/notificacoes/inscricao', consultarInscricaoNotificacoesCliente);
+roteadorCliente.post('/notificacoes/inscricao', salvarInscricaoNotificacoesCliente);
+roteadorCliente.delete('/notificacoes/inscricao', excluirInscricaoNotificacoesCliente);
+roteadorCliente.get('/notificacoes', consultarNotificacoesCliente);
+roteadorCliente.post('/notificacoes/lidas', marcarTodasNotificacoesClienteComoLidas);
+roteadorCliente.patch('/notificacoes/:idNotificacao/lida', marcarNotificacaoClienteComoLida);
+roteadorCliente.patch('/notificacoes/agendamentos/:idAgendamento/lida', marcarNotificacaoAgendamentoClienteComoLida);
 roteadorCliente.get('/perfil', consultarPerfil);
 roteadorCliente.patch('/perfil', atualizarPerfil);
 roteadorCliente.patch('/senha', alterarSenha);

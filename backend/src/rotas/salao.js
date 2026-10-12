@@ -4,13 +4,14 @@ import { randomUUID } from 'crypto';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { cnpjValido, cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
+import { decifrarDocumento, prepararDocumento } from '../servicos/documentosProtegidos.js';
 import { ativarAssinaturaPremium } from '../servicos/assinaturas.js';
 import { atualizarPeriodicidadeStripe, cancelarAssinaturaStripe, cancelarCheckoutStripe, criarCheckoutAssinatura, obterDadosPlanoPremium, obterOfertaPremium, obterPrecoStripe, consultarCheckoutStripe } from '../servicos/stripe.js';
 import { sincronizarAssinaturaStripe } from '../servicos/sincronizarAssinaturaStripe.js';
 import { criarSlugSalaoUnico, criarSlugUnidadeUnico } from '../servicos/slugs.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 import { listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
-import { consultarInscricaoPush, listarNotificacoesSalao, marcarNotificacaoSalaoLida, marcarTodasNotificacoesSalaoLidas, obterChavePublicaPush, removerInscricaoPush, salvarInscricaoPush } from '../servicos/notificacoesPush.js';
+import { consultarInscricaoPush, criarNotificacaoCliente, enviarNotificacaoPushCliente, listarNotificacoesSalao, marcarNotificacaoSalaoLida, marcarTodasNotificacoesSalaoLidas, obterChavePublicaPush, removerInscricaoPush, salvarInscricaoPush } from '../servicos/notificacoesPush.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -43,7 +44,7 @@ async function obterAdministradorAutenticado(requisicao, resposta) {
       return null;
     }
     console.info('[Autenticação salão] Usuário autenticado.', { rota: requisicao.originalUrl, idUsuario: dadosUsuario.user.id });
-    const administrador = await sincronizarUsuario({ email: dadosUsuario.user.email, idAutenticacaoExterna: dadosUsuario.user.id, nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email, perfil: 'ADMIN_SALAO' });
+    const administrador = await sincronizarUsuario({ email: dadosUsuario.user.email, idAutenticacaoExterna: dadosUsuario.user.id, nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email, perfil: 'ADMIN_SALAO', telefone: dadosUsuario.user.user_metadata.telefone ?? null });
     return { ...administrador, idAutenticacaoExterna: dadosUsuario.user.id };
   } catch (erro) {
     console.error('[Autenticação salão] Falha inesperada.', { rota: requisicao.originalUrl, mensagem: erro.message });
@@ -54,7 +55,7 @@ async function obterAdministradorAutenticado(requisicao, resposta) {
 
 async function obterSalaoAdministrador(idUsuario) {
   const saloes = await bancoDeDados.query(
-    `SELECT s.id_salao AS idSalao, s.nm_salao AS nome, s.ds_slug AS slug, s.ds_email AS email, s.nu_telefone AS telefone,
+    `SELECT s.id_salao AS idSalao, s.nm_salao AS nome, s.ds_slug AS slug,
             u.ds_email AS emailConta
      FROM tb_salao s INNER JOIN tb_usuario u ON u.id_usuario = s.fk_usuario_administrador
      WHERE s.fk_usuario_administrador = :idUsuario AND s.st_ativo = TRUE LIMIT 1`,
@@ -272,12 +273,12 @@ async function consultarCoordenadasFilial(requisicao, resposta) {
 
 async function criarSalao(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const { email = null, nome, telefone = null } = requisicao.body ?? {};
+  const { nome } = requisicao.body ?? {};
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do salão.' }); return; }
   const salaoExistente = await obterSalaoAdministrador(administrador.idUsuario);
   if (salaoExistente) { resposta.status(409).json({ mensagem: 'Já existe um salão cadastrado para este responsável.' }); return; }
   const slug = await criarSlugSalaoUnico(nome);
-  await bancoDeDados.query('INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_slug, ds_email, nu_telefone) VALUES (:idUsuario, :nome, :slug, :email, :telefone)', { replacements: { idUsuario: administrador.idUsuario, nome: nome.trim(), slug, email: email?.trim() || null, telefone: telefone?.trim() || null } });
+  await bancoDeDados.query('INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_slug) VALUES (:idUsuario, :nome, :slug)', { replacements: { idUsuario: administrador.idUsuario, nome: nome.trim(), slug } });
   resposta.status(201).json({ mensagem: 'Salão criado com sucesso.' });
 }
 
@@ -292,29 +293,31 @@ async function atualizarSalao(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario);
   if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const { email = null, nome, telefone = null } = requisicao.body ?? {};
+  const { nome } = requisicao.body ?? {};
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do salão.' }); return; }
   const slug = await criarSlugSalaoUnico(nome, { idSalao: salao.idSalao });
-  await bancoDeDados.query('UPDATE tb_salao SET nm_salao = :nome, ds_slug = :slug, ds_email = :email, nu_telefone = :telefone WHERE id_salao = :idSalao', { replacements: { idSalao: salao.idSalao, nome: nome.trim(), slug, email: email?.trim() || null, telefone: telefone?.trim() || null } });
+  await bancoDeDados.query('UPDATE tb_salao SET nm_salao = :nome, ds_slug = :slug WHERE id_salao = :idSalao', { replacements: { idSalao: salao.idSalao, nome: nome.trim(), slug } });
   resposta.status(200).json({ mensagem: 'Informações do salão atualizadas.' });
 }
 
 async function consultarPerfil(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const perfil = await obterDadosCadastraisUsuario(administrador.idUsuario);
-  resposta.status(200).json({ perfil, cadastroIncompleto: !perfil?.dataNascimento || !perfil?.tipoDocumento || !perfil?.documento });
+  resposta.status(200).json({ perfil, cadastroIncompleto: !perfil?.dataNascimento || !perfil?.tipoDocumento || !perfil?.documento || !perfil?.telefone });
 }
 
 async function atualizarPerfil(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const { dataNascimento, nome, tipoDocumento } = requisicao.body ?? {};
+  const { dataNascimento, nome, telefone, tipoDocumento } = requisicao.body ?? {};
   const documento = somenteNumeros(requisicao.body?.documento);
   const documentoValido = tipoDocumento === 'CPF' ? cpfValido(documento) : tipoDocumento === 'CNPJ' && cnpjValido(documento);
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do responsável.' }); return; }
+  const telefoneNormalizado = somenteNumeros(telefone);
+  if (telefoneNormalizado.length < 10 || telefoneNormalizado.length > 11) { resposta.status(400).json({ mensagem: 'Informe um telefone válido para o responsável.' }); return; }
   if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Você precisa ter pelo menos 18 anos.' }); return; }
   if (!documentoValido) { resposta.status(400).json({ mensagem: `Informe um ${tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido.` }); return; }
   try {
-    const perfil = await atualizarDadosCadastraisUsuario(administrador.idUsuario, { cpf: tipoDocumento === 'CPF' ? documento : null, dataNascimento, documento, nome, tipoDocumento });
+    const perfil = await atualizarDadosCadastraisUsuario(administrador.idUsuario, { cpf: tipoDocumento === 'CPF' ? documento : null, dataNascimento, documento, nome, telefone: telefoneNormalizado, tipoDocumento });
     resposta.status(200).json({ mensagem: 'Informações da conta atualizadas.', perfil, cadastroIncompleto: false });
   } catch (erro) { resposta.status(400).json({ mensagem: erro.name === 'SequelizeUniqueConstraintError' ? 'Este documento já está em uso.' : 'Não foi possível atualizar suas informações.' }); }
 }
@@ -395,7 +398,11 @@ async function excluirConta(requisicao, resposta) {
 async function listarFiliais(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const filiais = await bancoDeDados.query(`SELECT id_unidade AS idUnidade, nm_unidade AS nome, ds_slug AS slugFilial, tp_categoria AS categoria, ds_rua AS rua, nu_endereco AS numero, ds_complemento AS complemento, ds_bairro AS bairro, ds_municipio AS municipio, ds_estado AS estado, nu_cep AS cep, nu_telefone AS telefone, nu_latitude AS latitude, nu_longitude AS longitude, :slugSalao AS slugSalao, (SELECT COUNT(DISTINCT se.id_servico) FROM tb_servico se INNER JOIN tb_funcionario_servico fs ON fs.fk_servico=se.id_servico INNER JOIN tb_funcionario f ON f.id_funcionario=fs.fk_funcionario AND f.fk_unidade=tb_unidade.id_unidade WHERE se.fk_unidade=tb_unidade.id_unidade AND se.st_ativo=TRUE AND f.st_ativo=TRUE) AS quantidadeOpcoesAgendamento FROM tb_unidade WHERE fk_salao = :idSalao AND st_ativo = TRUE ORDER BY nm_unidade`, { replacements: { idSalao: salao.idSalao, slugSalao: salao.slug }, type: QueryTypes.SELECT });
+  const filiais = await bancoDeDados.query(`SELECT id_unidade AS idUnidade, nm_unidade AS nome, ds_slug AS slugFilial, tp_categoria AS categoria, ds_rua AS rua, nu_endereco AS numero, ds_complemento AS complemento, ds_bairro AS bairro, ds_municipio AS municipio, ds_estado AS estado, nu_cep AS cep, ds_email AS email, tp_documento AS tipoDocumento, ds_documento_cifrado AS documentoCifrado, nu_telefone AS telefone, nu_latitude AS latitude, nu_longitude AS longitude, :slugSalao AS slugSalao, (SELECT COUNT(DISTINCT se.id_servico) FROM tb_servico se INNER JOIN tb_funcionario_servico fs ON fs.fk_servico=se.id_servico INNER JOIN tb_funcionario f ON f.id_funcionario=fs.fk_funcionario AND f.fk_unidade=tb_unidade.id_unidade WHERE se.fk_unidade=tb_unidade.id_unidade AND se.st_ativo=TRUE AND f.st_ativo=TRUE) AS quantidadeOpcoesAgendamento FROM tb_unidade WHERE fk_salao = :idSalao AND st_ativo = TRUE ORDER BY nm_unidade`, { replacements: { idSalao: salao.idSalao, slugSalao: salao.slug }, type: QueryTypes.SELECT });
+  filiais.forEach((filial) => {
+    filial.documento = decifrarDocumento(filial.documentoCifrado);
+    delete filial.documentoCifrado;
+  });
   const idsUnidades = filiais.map((filial) => filial.idUnidade);
   const horarios = idsUnidades.length
     ? await bancoDeDados.query('SELECT fk_unidade AS idUnidade, nr_dia_semana AS diaSemana, hr_abertura AS abertura, hr_fechamento AS fechamento, st_fechado AS fechado FROM tb_horario_unidade WHERE fk_unidade IN (:idsUnidades) ORDER BY nr_dia_semana', { replacements: { idsUnidades }, type: QueryTypes.SELECT })
@@ -419,6 +426,13 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre o salão antes de cadastrar filiais.' }); return; }
   const dadosFilial = requisicao.body ?? {};
   if (!dadosFilial.nome?.trim() || !dadosFilial.numero?.trim() || !categoriasPermitidas.includes(dadosFilial.categoria)) { resposta.status(400).json({ mensagem: 'Informe nome, número e categoria válidos para a filial.' }); return; }
+  const email = String(dadosFilial.email ?? '').trim();
+  const telefone = somenteNumeros(dadosFilial.telefone);
+  const documento = somenteNumeros(dadosFilial.documento);
+  const documentoValido = dadosFilial.tipoDocumento === 'CPF' ? cpfValido(documento) : dadosFilial.tipoDocumento === 'CNPJ' && cnpjValido(documento);
+  if (!/^\S+@\S+\.\S+$/.test(email)) { resposta.status(400).json({ mensagem: 'Informe um e-mail válido para a filial.' }); return; }
+  if (telefone.length < 10 || telefone.length > 11) { resposta.status(400).json({ mensagem: 'Informe um telefone válido para a filial.' }); return; }
+  if (!documentoValido) { resposta.status(400).json({ mensagem: `Informe um ${dadosFilial.tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido para a filial.` }); return; }
   let horarios;
   try { horarios = normalizarHorariosUnidade(dadosFilial.horarios); } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); return; }
   const latitude = Number(dadosFilial.latitude);
@@ -432,7 +446,8 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
     return;
   }
   const coordenadas = { latitude, longitude };
-  const valores = { ...dadosFilial, ...enderecoCep, ...coordenadas, idSalao: salao.idSalao, idUnidade };
+  const protegido = prepararDocumento(dadosFilial.tipoDocumento, documento);
+  const valores = { ...dadosFilial, ...enderecoCep, ...coordenadas, ...protegido, email, telefone, documento, idSalao: salao.idSalao, idUnidade };
   const transacao = await bancoDeDados.transaction();
   if (idUnidade) {
     try {
@@ -452,7 +467,7 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       });
       if (conflitoExpediente) { await transacao.rollback(); resposta.status(409).json({ mensagem: 'O novo expediente deixaria um agendamento confirmado fora do horário.' }); return; }
       valores.slug = await criarSlugUnidadeUnico(dadosFilial.nome, salao.idSalao, { idUnidade, transaction: transacao });
-      await bancoDeDados.query(`UPDATE tb_unidade SET nm_unidade=:nome, ds_slug=:slug, tp_categoria=:categoria, ds_rua=:rua, nu_endereco=:numero, ds_complemento=:complemento, ds_bairro=:bairro, ds_municipio=:municipio, ds_estado=:estado, nu_cep=:cep, nu_latitude=:latitude, nu_longitude=:longitude, nu_telefone=:telefone WHERE id_unidade=:idUnidade`, { replacements: valores, transaction: transacao });
+      await bancoDeDados.query(`UPDATE tb_unidade SET nm_unidade=:nome, ds_slug=:slug, tp_categoria=:categoria, ds_rua=:rua, nu_endereco=:numero, ds_complemento=:complemento, ds_bairro=:bairro, ds_municipio=:municipio, ds_estado=:estado, nu_cep=:cep, ds_email=:email, tp_documento=:tipoDocumento, ds_documento_cifrado=:documentoCifrado, nu_latitude=:latitude, nu_longitude=:longitude, nu_telefone=:telefone WHERE id_unidade=:idUnidade`, { replacements: valores, transaction: transacao });
       await salvarHorariosUnidade(idUnidade, horarios, transacao);
       await transacao.commit();
       resposta.status(200).json({ mensagem: 'Filial, localização e horários atualizados.', coordenadas }); return;
@@ -467,7 +482,7 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
   try {
     valores.slug = await criarSlugUnidadeUnico(dadosFilial.nome, salao.idSalao, { transaction: transacao });
     etapa = 'inserir filial';
-    const [resultadoInsercao] = await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, ds_slug, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :slug, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
+    const [resultadoInsercao] = await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, ds_slug, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, ds_email, tp_documento, ds_documento_cifrado, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :slug, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :email, :tipoDocumento, :documentoCifrado, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
     idUnidadeCriada = Number(resultadoInsercao?.insertId) || null;
     etapa = 'identificar filial criada';
     const unidadesCriadas = await bancoDeDados.query('SELECT LAST_INSERT_ID() AS idUnidade', { transaction: transacao, type: QueryTypes.SELECT });
@@ -990,14 +1005,46 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
   const agendamento = agendamentos[0];
   if (!agendamento) { resposta.status(404).json({ mensagem: 'Agendamento não encontrado.' }); return; }
   if (agendamento.status !== 'AGENDADO') { resposta.status(409).json({ mensagem: 'Este agendamento já recebeu um resultado.' }); return; }
-  if (new Date(agendamento.dataHoraInicio) > new Date()) { resposta.status(409).json({ mensagem: 'O atendimento só pode ser confirmado após o horário agendado.' }); return; }
-  const [resultado] = await bancoDeDados.query(
-    `UPDATE tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-     SET a.cd_status=:status WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao
-       AND a.cd_status='AGENDADO' AND a.dt_inicio<=NOW()`,
-    { replacements: { idAgendamento, idSalao: salao.idSalao, status } },
-  );
-  if (!resultado.affectedRows) { resposta.status(409).json({ mensagem: 'O agendamento mudou de status ou ainda não chegou ao horário previsto.' }); return; }
+  if (status === 'NAO_COMPARECEU' && new Date(agendamento.dataHoraInicio) > new Date()) { resposta.status(409).json({ mensagem: 'A ausência só pode ser registrada após o horário agendado.' }); return; }
+  const condicaoHorario = status === 'NAO_COMPARECEU' ? ' AND a.dt_inicio<=NOW()' : '';
+  const atualizacaoRealizacao = status === 'REALIZADO' ? ', a.dt_realizacao=NOW()' : '';
+  const transacao = await bancoDeDados.transaction();
+  let dadosNotificacao = null;
+  try {
+    const [resultado] = await bancoDeDados.query(
+      `UPDATE tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
+       SET a.cd_status=:status${atualizacaoRealizacao} WHERE a.id_agendamento=:idAgendamento AND u.fk_salao=:idSalao
+         AND a.cd_status='AGENDADO'${condicaoHorario}`,
+      { replacements: { idAgendamento, idSalao: salao.idSalao, status }, transaction: transacao },
+    );
+    if (!resultado.affectedRows) {
+      await transacao.rollback();
+      resposta.status(409).json({ mensagem: status === 'REALIZADO' ? 'O agendamento mudou de status antes da confirmação.' : 'O agendamento mudou de status ou ainda não chegou ao horário previsto.' });
+      return;
+    }
+    if (status === 'REALIZADO') {
+      const linhas = await bancoDeDados.query(
+        `SELECT fk_usuario AS idUsuario, nm_servico_agendado AS servico
+         FROM tb_agendamento WHERE id_agendamento=:idAgendamento LIMIT 1`,
+        { replacements: { idAgendamento }, type: QueryTypes.SELECT, transaction: transacao },
+      );
+      const cliente = linhas[0];
+      if (cliente?.idUsuario) {
+        const titulo = 'Como foi seu atendimento?';
+        const mensagem = `Seu atendimento de ${cliente.servico} foi marcado como realizado. Avalie sua experiência.`;
+        const link = `/cliente/agendamentos?avaliar=${idAgendamento}`;
+        const idNotificacao = await criarNotificacaoCliente(cliente.idUsuario, idAgendamento, { titulo, mensagem, link }, transacao);
+        dadosNotificacao = { idUsuario: cliente.idUsuario, idNotificacao, titulo, mensagem, link };
+      }
+    }
+    await transacao.commit();
+  } catch (erro) {
+    await transacao.rollback();
+    throw erro;
+  }
+  if (dadosNotificacao) {
+    void enviarNotificacaoPushCliente(dadosNotificacao.idUsuario, dadosNotificacao.titulo, dadosNotificacao.mensagem, dadosNotificacao.idNotificacao, dadosNotificacao.link);
+  }
   resposta.status(200).json({ mensagem: status === 'REALIZADO' ? 'Atendimento confirmado como realizado.' : 'Ausência registrada.' });
 }
 
@@ -1117,7 +1164,7 @@ async function indicadores(requisicao, resposta) {
   if (dataInicio) { filtros.dataInicio = dataInicio; condicoesFiltros.push('DATE(a.dt_inicio)>=:dataInicio'); }
   if (dataFim) { filtros.dataFim = dataFim; condicoesFiltros.push('DATE(a.dt_inicio)<=:dataFim'); }
   const condicaoFiltros = condicoesFiltros.join(' AND ');
-  const resumo = await bancoDeDados.query(`SELECT COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos, COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados, COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU' THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu, COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN a.vl_servico_agendado ELSE 0 END),0) AS faturamento FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade WHERE ${condicaoFiltros}`, { replacements: filtros, type: QueryTypes.SELECT });
+  const resumo = await bancoDeDados.query(`SELECT COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos, COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados, COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU' THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu, COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO' THEN a.vl_servico_agendado ELSE 0 END),0) AS faturamento FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade WHERE ${condicaoFiltros}`, { replacements: filtros, type: QueryTypes.SELECT });
   const servicosMaisSolicitados = await bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, COUNT(*) AS quantidade FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade WHERE ${condicaoFiltros} GROUP BY a.nm_servico_agendado ORDER BY quantidade DESC LIMIT 3`, { replacements: filtros, type: QueryTypes.SELECT });
   const proximosAtendimentos = await bancoDeDados.query(`SELECT a.dt_inicio AS dataHoraInicio, a.nm_servico_agendado AS servico, COALESCE(c.nm_usuario, cs.nm_cliente) AS cliente FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao WHERE ${condicaoFiltros} AND a.dt_inicio>=NOW() AND a.cd_status='AGENDADO' ORDER BY a.dt_inicio LIMIT 5`, { replacements: filtros, type: QueryTypes.SELECT });
   const [filiais, servicos, funcionarios] = await Promise.all([bancoDeDados.query('SELECT id_unidade AS idUnidade, nm_unidade AS nome FROM tb_unidade WHERE fk_salao=:idSalao AND st_ativo=TRUE ORDER BY nm_unidade', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }), bancoDeDados.query('SELECT s.id_servico AS idServico, s.nm_servico AS nome FROM tb_servico s INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY s.nm_servico', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }), bancoDeDados.query('SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS nome FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade WHERE u.fk_salao=:idSalao AND f.st_ativo=TRUE ORDER BY f.nm_funcionario', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT })]);
@@ -1179,62 +1226,52 @@ async function indicadoresPremium(requisicao, resposta) {
     if (dataFim) { filtros.dataFim = dataFim; condicoesAgendamentos.push('DATE(a.dt_inicio)<=:dataFim'); }
     const condicaoAgendamentos = condicoesAgendamentos.join(' AND ');
     const periodoAgendamento = [dataInicio ? 'DATE(a.dt_inicio)>=:dataInicio' : null, dataFim ? 'DATE(a.dt_inicio)<=:dataFim' : null].filter(Boolean).join(' AND ');
-    const periodoPagamento = [dataInicio ? 'DATE(p.dt_pagamento)>=:dataInicio' : null, dataFim ? 'DATE(p.dt_pagamento)<=:dataFim' : null].filter(Boolean).join(' AND ');
-    const restricaoPagamento = periodoPagamento ? ` AND ${periodoPagamento}` : '';
     const restricaoAgendamento = periodoAgendamento ? ` AND ${periodoAgendamento}` : '';
-    const condicoesPagamentos = [...condicoes];
-    if (dataInicio) condicoesPagamentos.push('DATE(p.dt_pagamento)>=:dataInicio');
-    if (dataFim) condicoesPagamentos.push('DATE(p.dt_pagamento)<=:dataFim');
-    const condicaoPagamentos = condicoesPagamentos.join(' AND ');
+    const periodoRealizacao = [dataInicio ? 'DATE(a.dt_realizacao)>=:dataInicio' : null, dataFim ? 'DATE(a.dt_realizacao)<=:dataFim' : null].filter(Boolean).join(' AND ');
+    const restricaoRealizacao = periodoRealizacao ? ` AND ${periodoRealizacao}` : '';
+    const condicaoRealizacoes = [...condicoes, 'a.cd_status=\'REALIZADO\'', ...(dataInicio ? ['DATE(a.dt_realizacao)>=:dataInicio'] : []), ...(dataFim ? ['DATE(a.dt_realizacao)<=:dataFim'] : [])].join(' AND ');
     const periodoAnteriorAgendamentos = 'DATE(a.dt_inicio) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
-    const periodoAnteriorPagamentos = 'DATE(p.dt_pagamento) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
+    const periodoAnteriorRealizacoes = 'DATE(a.dt_realizacao) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
     const filtrosComparacao = { ...filtros, dataInicioAnterior, dataFimAnterior };
     const idClienteSql = "COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))";
-    const ultimoPagamento = `SELECT p1.* FROM tb_pagamento p1 INNER JOIN (SELECT fk_agendamento, MAX(id_pagamento) AS idPagamento FROM tb_pagamento GROUP BY fk_agendamento) ultimo ON ultimo.idPagamento=p1.id_pagamento`;
     const [resumo, receitaPrevista, comparacaoAnterior, receitaPorDia, receitaPorServico, receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes, clientesInativos, profissionais, disponibilidade, filiais, servicos, funcionarios] = await Promise.all([
       bancoDeDados.query(`SELECT
-        COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN p.vl_pagamento ELSE 0 END),0) AS receitaRealizada,
-        COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN 1 ELSE 0 END),0) AS atendimentosPagos,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.vl_servico_agendado ELSE 0 END),0) AS receitaRealizada,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos,
         COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados,
         COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
-        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosRealizados,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosMarcados,
         COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO' AND a.dt_inicio<NOW()${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
         COALESCE(SUM(CASE WHEN 1=1${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
         COALESCE(SUM(CASE WHEN (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-        LEFT JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
         WHERE ${condicaoBase}`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT COALESCE(SUM(a.vl_servico_agendado),0) AS receitaPrevista
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase} AND a.cd_status='AGENDADO' AND a.dt_inicio>=NOW()
           AND a.dt_inicio<DATE_ADD(NOW(), INTERVAL 30 DAY)`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT
-        COALESCE(SUM(CASE WHEN ${periodoAnteriorPagamentos} AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL THEN p.vl_pagamento ELSE 0 END),0) AS receitaRealizada,
-        COALESCE(SUM(CASE WHEN ${periodoAnteriorPagamentos} AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL THEN 1 ELSE 0 END),0) AS atendimentosPagos,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN a.vl_servico_agendado ELSE 0 END),0) AS receitaRealizada,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' AND a.dt_inicio<NOW() THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-        LEFT JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
         WHERE ${condicaoBase}`, { replacements: filtrosComparacao, type: QueryTypes.SELECT }),
-      bancoDeDados.query(`SELECT DATE_FORMAT(p.dt_pagamento,'%Y-%m-%d') AS data, SUM(p.vl_pagamento) AS valor
+      bancoDeDados.query(`SELECT DATE_FORMAT(a.dt_realizacao,'%Y-%m-%d') AS data, SUM(a.vl_servico_agendado) AS valor
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-        INNER JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
-        WHERE ${condicaoPagamentos} AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL
-        GROUP BY DATE_FORMAT(p.dt_pagamento,'%Y-%m-%d') ORDER BY DATE_FORMAT(p.dt_pagamento,'%Y-%m-%d')`, { replacements: filtros, type: QueryTypes.SELECT }),
-      bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, SUM(p.vl_pagamento) AS valor
+        WHERE ${condicaoRealizacoes}
+        GROUP BY DATE_FORMAT(a.dt_realizacao,'%Y-%m-%d') ORDER BY DATE_FORMAT(a.dt_realizacao,'%Y-%m-%d')`, { replacements: filtros, type: QueryTypes.SELECT }),
+      bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, SUM(a.vl_servico_agendado) AS valor
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-        INNER JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
-        WHERE ${condicaoPagamentos} AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL
+        WHERE ${condicaoRealizacoes}
         GROUP BY a.nm_servico_agendado ORDER BY valor DESC LIMIT 8`, { replacements: filtros, type: QueryTypes.SELECT }),
-      bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, SUM(p.vl_pagamento) AS valor
+      bancoDeDados.query(`SELECT a.nm_servico_agendado AS servico, SUM(a.vl_servico_agendado) AS valor
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-        INNER JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
-        WHERE ${condicoes.join(' AND ')} AND ${periodoAnteriorPagamentos}
-          AND p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL
+        WHERE ${condicoes.join(' AND ')} AND ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO'
         GROUP BY a.nm_servico_agendado ORDER BY valor DESC LIMIT 8`, { replacements: filtrosComparacao, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT DATE_FORMAT(a.dt_inicio,'%Y-%m-%d') AS data, COUNT(*) AS quantidade
         , SUM(CASE WHEN a.cd_status='AGENDADO' THEN 1 ELSE 0 END) AS agendados
@@ -1256,10 +1293,10 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN DATE(h.primeiroAtendimento) < :dataInicio THEN 1 ELSE 0 END),0) AS clientesRecorrentes
         FROM (SELECT DISTINCT ${idClienteSql} AS idCliente
           FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-          WHERE ${condicaoAgendamentos} AND a.cd_status='REALIZADO'
+          WHERE ${condicaoRealizacoes}
             AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)) periodo
         INNER JOIN (SELECT COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao)) AS idCliente,
-            MIN(a.dt_inicio) AS primeiroAtendimento
+            MIN(a.dt_realizacao) AS primeiroAtendimento
           FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
           WHERE u.fk_salao=:idSalao AND a.cd_status='REALIZADO'
             AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)
@@ -1268,25 +1305,23 @@ async function indicadoresPremium(requisicao, resposta) {
           MAX(COALESCE(c.nm_usuario,cs.nm_cliente)) AS cliente,
           MAX(COALESCE(c.ds_email,cs.ds_email)) AS email,
           MAX(cs.nu_telefone) AS telefone,
-          MAX(a.dt_inicio) AS ultimoAtendimento
+          MAX(a.dt_realizacao) AS ultimoAtendimento
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario
         LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao
         WHERE u.fk_salao=:idSalao AND a.cd_status='REALIZADO'
           AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)
         GROUP BY COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))
-        HAVING MAX(a.dt_inicio)<DATE_SUB(NOW(), INTERVAL 90 DAY)
+        HAVING MAX(a.dt_realizacao)<DATE_SUB(NOW(), INTERVAL 90 DAY)
         ORDER BY ultimoAtendimento ASC LIMIT 20`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS profissional,
-        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
-        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO' THEN a.nu_duracao_minutos ELSE 0 END),0) AS minutosAtendimentoRealizado,
-        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS cancelamentos,
-        COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN p.vl_pagamento ELSE 0 END),0) AS receitaRealizada,
-        COALESCE(SUM(CASE WHEN p.cd_status_pagamento='APROVADO' AND p.dt_pagamento IS NOT NULL${restricaoPagamento} THEN 1 ELSE 0 END),0) AS atendimentosPagos
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.nu_duracao_minutos ELSE 0 END),0) AS minutosAtendimentoRealizado,
+        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS cancelamentos,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.vl_servico_agendado ELSE 0 END),0) AS receitaRealizada
         FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
-        LEFT JOIN tb_agendamento a ON a.fk_funcionario=f.id_funcionario${restricaoAgendamento}
+        LEFT JOIN tb_agendamento a ON a.fk_funcionario=f.id_funcionario
           AND (:idServico = 0 OR a.fk_servico = :idServico)
-        LEFT JOIN (${ultimoPagamento}) p ON p.fk_agendamento=a.id_agendamento
         WHERE u.fk_salao = :idSalao AND (:idUnidade = 0 OR f.fk_unidade = :idUnidade)
           AND (:idFuncionario = 0 OR f.id_funcionario = :idFuncionario) AND f.st_ativo=TRUE
         GROUP BY f.id_funcionario, f.nm_funcionario ORDER BY atendimentosRealizados DESC, receitaRealizada DESC`, { replacements: { ...filtros, idUnidade, idServico, idFuncionario }, type: QueryTypes.SELECT }),
@@ -1317,7 +1352,7 @@ async function indicadoresPremium(requisicao, resposta) {
       const minutosAtendidos = Number(profissional.minutosAtendimentoRealizado ?? 0);
       return {
         ...profissional,
-        ticketMedio: Number(profissional.atendimentosPagos) ? Number(profissional.receitaRealizada) / Number(profissional.atendimentosPagos) : 0,
+        ticketMedio: Number(profissional.atendimentosRealizados) ? Number(profissional.receitaRealizada) / Number(profissional.atendimentosRealizados) : 0,
         horasDisponiveisEstimadas: horasDisponiveis,
         ocupacaoEstimada: minutosDisponiveis ? (minutosAtendidos / minutosDisponiveis) * 100 : null,
       };

@@ -14,6 +14,10 @@ self.addEventListener('activate', (evento) => {
 
 self.addEventListener('push', (evento) => {
   const dados = evento.data?.json() ?? {};
+  const destinoSolicitado = new URL(dados.url || '/salao/agendamentos', self.location.origin);
+  const destino = destinoSolicitado.origin === self.location.origin
+    ? `${destinoSolicitado.pathname}${destinoSolicitado.search}${destinoSolicitado.hash}`
+    : '/salao/agendamentos';
   const notificacao = {
     id: dados.id,
     titulo: dados.title || 'Agende Aki',
@@ -24,7 +28,7 @@ self.addEventListener('push', (evento) => {
       body: notificacao.mensagem,
       icon: '/icone-192.png',
       badge: '/icone-192.png',
-      data: { url: dados.url || '/salao/agendamentos' },
+      data: { url: destino },
     }),
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientes) => {
       clientes.forEach((cliente) => cliente.postMessage({ type: 'AGENDEAKI_PUSH_NOTIFICATION', notificacao }));
