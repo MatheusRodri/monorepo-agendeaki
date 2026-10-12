@@ -335,7 +335,7 @@ async function realizarLogout(requisicao, resposta) {
 
   try {
     const clienteSupabase = obterClienteSupabase(tokenAcesso);
-    const { error: erroAutenticacao } = await clienteSupabase.auth.signOut();
+    const { error: erroAutenticacao } = await clienteSupabase.auth.admin.signOut(tokenAcesso, 'local');
 
     if (erroAutenticacao) {
       return resposta.status(401).json({ mensagem: 'Não foi possível encerrar a sessão informada.' });
