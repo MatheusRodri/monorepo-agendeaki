@@ -119,12 +119,11 @@ export async function consultarInscricaoPushCliente(idUsuario, endpoint) {
   return inscricoes.length > 0;
 }
 
-export async function criarNotificacaoCliente(idUsuario, idAgendamento, { titulo, mensagem, link }, transaction) {
+export async function criarNotificacaoCliente(idUsuario, idAgendamento, { tipo = 'AVALIACAO', titulo, mensagem, link }, transaction) {
   const [idNotificacao] = await bancoDeDados.query(
-    `INSERT INTO tb_notificacao_cliente (fk_usuario, fk_agendamento, nm_titulo, ds_mensagem, ds_link)
-     VALUES (:idUsuario, :idAgendamento, :titulo, :mensagem, :link)
-     ON DUPLICATE KEY UPDATE id_notificacao=LAST_INSERT_ID(id_notificacao)`,
-    { replacements: { idUsuario, idAgendamento, titulo, mensagem, link }, transaction },
+    `INSERT INTO tb_notificacao_cliente (fk_usuario, fk_agendamento, cd_tipo, nm_titulo, ds_mensagem, ds_link)
+     VALUES (:idUsuario, :idAgendamento, :tipo, :titulo, :mensagem, :link)`,
+    { replacements: { idUsuario, idAgendamento, tipo, titulo, mensagem, link }, transaction },
   );
   return Number(idNotificacao) || null;
 }
@@ -133,8 +132,8 @@ export async function listarNotificacoesCliente(idUsuario) {
   const [notificacoes, contagem] = await Promise.all([
     bancoDeDados.query(
       `SELECT n.id_notificacao AS id, n.fk_agendamento AS idAgendamento,
-              n.nm_titulo AS titulo, n.ds_mensagem AS mensagem, n.ds_link AS link,
-              CASE WHEN n.st_lida=TRUE OR av.id_avaliacao IS NOT NULL THEN TRUE ELSE FALSE END AS lida,
+              n.cd_tipo AS tipo, n.nm_titulo AS titulo, n.ds_mensagem AS mensagem, n.ds_link AS link,
+              CASE WHEN n.st_lida=TRUE OR (n.cd_tipo='AVALIACAO' AND av.id_avaliacao IS NOT NULL) THEN TRUE ELSE FALSE END AS lida,
               n.dt_criacao AS criadaEm,
               a.cd_status AS statusAgendamento, av.id_avaliacao AS idAvaliacao
        FROM tb_notificacao_cliente n
@@ -149,7 +148,7 @@ export async function listarNotificacoesCliente(idUsuario) {
        INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
        LEFT JOIN tb_avaliacao av ON av.fk_agendamento=a.id_agendamento
        WHERE n.fk_usuario=:idUsuario AND n.st_lida=FALSE
-         AND a.cd_status='REALIZADO' AND av.id_avaliacao IS NULL`,
+         AND (n.cd_tipo<>'AVALIACAO' OR (a.cd_status='REALIZADO' AND av.id_avaliacao IS NULL))`,
       { replacements: { idUsuario }, type: QueryTypes.SELECT },
     ),
   ]);
@@ -186,7 +185,7 @@ export async function enviarNotificacaoPushCliente(idUsuario, titulo, mensagem, 
       try {
         await webpush.sendNotification(
           { endpoint: inscricao.endpoint, keys: { p256dh: inscricao.p256dh, auth: inscricao.auth } },
-          JSON.stringify({ id: idNotificacao, title: titulo, body: mensagem, url: link }),
+          JSON.stringify({ id: idNotificacao, audience: 'cliente', title: titulo, body: mensagem, url: link }),
         );
       } catch (erro) {
         if ([404, 410].includes(erro.statusCode)) {
@@ -227,7 +226,7 @@ export async function enviarNotificacaoSalao(idSalao, titulo, corpo, idNotificac
       console.info('[Notificações push] Nenhum dispositivo inscrito para receber o aviso.', { idSalao, titulo });
       return;
     }
-    const payload = JSON.stringify({ id: idNotificacao, title: titulo, body: corpo, url: '/salao/agendamentos' });
+    const payload = JSON.stringify({ id: idNotificacao, audience: 'salao', title: titulo, body: corpo, url: '/salao/agendamentos' });
     await Promise.all(inscricoes.map(async (inscricao) => {
       try {
         await webpush.sendNotification({ endpoint: inscricao.endpoint, keys: { p256dh: inscricao.p256dh, auth: inscricao.auth } }, payload);

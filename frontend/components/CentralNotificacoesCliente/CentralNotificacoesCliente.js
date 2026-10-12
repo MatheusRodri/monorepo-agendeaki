@@ -38,17 +38,17 @@ export default function CentralNotificacoesCliente() {
   }, []);
 
   async function marcarTodasComoLidas() {
-    setProcessando(true);
+    definirProcessando(true);
     try {
       await requisitarApi('/api/clientes/notificacoes/lidas', { metodo: 'POST' });
       definirNotificacoes((atuais) => atuais.map((item) => ({ ...item, lida: true })));
       definirNaoLidas(0);
     } catch (erro) { toastErro(erro.message); }
-    finally { setProcessando(false); }
+    finally { definirProcessando(false); }
   }
 
   async function abrirNotificacao(notificacao) {
-    setProcessando(true);
+    definirProcessando(true);
     try {
       if (!notificacao.lida) {
         try {
@@ -59,14 +59,15 @@ export default function CentralNotificacoesCliente() {
       }
       roteador.push(notificacao.link || `/cliente/agendamentos?avaliar=${notificacao.idAgendamento}`);
     }
-    finally { setProcessando(false); }
+    finally { definirProcessando(false); }
   }
 
   return <main className="pagina-agendamentos">
     <CabecalhoCliente secao="notificacoes" />
     <section className="conteudo-agendamentos conteudo-limitado">
       <p className="sobretitulo">Sua conta</p>
-      <h1>Notificações.</h1>
+      <h1 className="central-notificacoes__titulo">Notificações.</h1>
+      <p className="central-notificacoes__ajuda">Para receber avisos mesmo com o app fechado, <Link href="/cliente/configuracoes">ative as notificações nas configurações</Link>.</p>
       <div className="central-notificacoes__cabecalho">
         <p>{naoLidas ? `${naoLidas} não lida${naoLidas === 1 ? '' : 's'}` : 'Tudo em dia'}</p>
         {naoLidas > 0 && <button className="botao-secundario" disabled={processando} onClick={marcarTodasComoLidas} type="button">Marcar todas como lidas</button>}
@@ -74,7 +75,8 @@ export default function CentralNotificacoesCliente() {
       {carregando && <p className="estado-lista">Carregando suas notificações...</p>}
       {!carregando && notificacoes.length > 0 && <div className="central-notificacoes__lista">
         {notificacoes.map((notificacao) => {
-          const avaliada = Boolean(notificacao.idAvaliacao);
+          const conviteAvaliacao = notificacao.tipo === 'AVALIACAO';
+          const avaliada = conviteAvaliacao && Boolean(notificacao.idAvaliacao);
           return <article className={`central-notificacao${notificacao.lida ? '' : ' central-notificacao--nao-lida'}`} key={notificacao.id}>
             <span aria-hidden="true" className="central-notificacao__indicador" />
             <div>
@@ -85,13 +87,12 @@ export default function CentralNotificacoesCliente() {
             <div className="central-notificacao__acoes">
               {avaliada
                 ? <Link href="/cliente/agendamentos">Ver meus agendamentos</Link>
-                : <button className="botao-acao-notificacao" disabled={processando} onClick={() => abrirNotificacao(notificacao)} type="button">Avaliar atendimento</button>}
+                : <button className="botao-acao-notificacao" disabled={processando} onClick={() => abrirNotificacao(notificacao)} type="button">{conviteAvaliacao ? 'Avaliar atendimento' : notificacao.tipo === 'CANCELAMENTO' ? 'Ver agendamento' : 'Ver novo horário'}</button>}
             </div>
           </article>;
         })}
       </div>}
-      {!carregando && !notificacoes.length && <p className="estado-lista">As solicitações para avaliar seus atendimentos aparecerão aqui.</p>}
-      <p className="central-notificacoes__ajuda">Para receber avisos mesmo com o app fechado, <Link href="/cliente/configuracoes">ative as notificações nas configurações</Link>.</p>
+      {!carregando && !notificacoes.length && <p className="estado-lista">Avisos sobre seus agendamentos aparecerão aqui.</p>}
     </section>
   </main>;
 }

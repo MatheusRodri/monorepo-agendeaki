@@ -416,6 +416,7 @@ async function listarAgendamentos(requisicao, resposta, tipoListagem) {
             a.nm_servico_agendado AS servico,
             a.vl_servico_agendado AS valor,
             a.ds_observacao AS observacao,
+            a.ds_motivo_cancelamento AS motivoCancelamento,
             a.cd_status AS status,
             av.id_avaliacao AS idAvaliacao,
             CASE WHEN a.cd_status='REALIZADO' AND av.id_avaliacao IS NULL THEN TRUE ELSE FALSE END AS podeAvaliar,
@@ -474,12 +475,14 @@ async function marcarNotificacaoAgendamentoClienteComoLida(requisicao, resposta)
   }
   const [resultado] = await bancoDeDados.query(
     `UPDATE tb_notificacao_cliente SET st_lida=TRUE
-     WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento AND st_lida=FALSE`,
+     WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento
+       AND cd_tipo='AVALIACAO' AND st_lida=FALSE`,
     { replacements: { idUsuario: cliente.idUsuario, idAgendamento } },
   );
   if (!resultado.affectedRows) {
     const existentes = await bancoDeDados.query(
-      'SELECT id_notificacao FROM tb_notificacao_cliente WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento LIMIT 1',
+      `SELECT id_notificacao FROM tb_notificacao_cliente
+       WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento AND cd_tipo='AVALIACAO' LIMIT 1`,
       { replacements: { idUsuario: cliente.idUsuario, idAgendamento }, type: QueryTypes.SELECT },
     );
     if (!existentes.length) {
@@ -594,7 +597,7 @@ async function cancelarAgendamento(requisicao, resposta) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
   const idAgendamento = Number(requisicao.params.idAgendamento);
-  const resultado = await bancoDeDados.query(`UPDATE tb_agendamento SET cd_status = 'CANCELADO' WHERE id_agendamento = :idAgendamento AND fk_usuario = :idUsuario AND cd_status = 'AGENDADO' AND dt_inicio > NOW()`, { replacements: { idAgendamento, idUsuario: cliente.idUsuario } });
+  const resultado = await bancoDeDados.query(`UPDATE tb_agendamento SET cd_status = 'CANCELADO', dt_cancelamento = NOW(), cd_origem_cancelamento = 'CLIENTE', cd_motivo_cancelamento = 'SOLICITACAO_CLIENTE', ds_motivo_cancelamento = 'Solicitação do cliente' WHERE id_agendamento = :idAgendamento AND fk_usuario = :idUsuario AND cd_status = 'AGENDADO' AND dt_inicio > NOW()`, { replacements: { idAgendamento, idUsuario: cliente.idUsuario } });
   if (!resultado[1]?.affectedRows && !resultado[0]?.affectedRows) { resposta.status(404).json({ mensagem: 'Esse agendamento não pode mais ser cancelado.' }); return; }
   void notificarSalaoDoAgendamento(idAgendamento, 'Agendamento cancelado', 'Um cliente cancelou um horário marcado.');
   resposta.status(200).json({ mensagem: 'Agendamento cancelado com sucesso.' });
