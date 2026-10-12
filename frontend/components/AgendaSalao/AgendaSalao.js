@@ -15,11 +15,20 @@ function formatarDataHora(valor) {
 }
 
 const nomesStatus = { AGENDADO: 'Confirmado', REALIZADO: 'Realizado', CANCELADO: 'Cancelado', NAO_COMPARECEU: 'Não presente' };
+const opcoesMotivoCancelamento = [
+  ['BLOQUEIO_AGENDA', 'Bloqueio emergencial da agenda pelo salão'],
+  ['INDISPONIBILIDADE_PROFISSIONAL', 'Indisponibilidade do profissional'],
+  ['SOLICITACAO_CLIENTE', 'Solicitação do cliente'],
+  ['PROBLEMA_UNIDADE', 'Problema na unidade'],
+  ['ERRO_AGENDAMENTO', 'Erro no agendamento'],
+  ['OUTRO', 'Outro motivo'],
+];
 
 export default function AgendaSalao({ dados, tipoAgenda, definirTipoAgenda, requisitar, aoSalvarAgendamento, mostrarToastErro }) {
   const [criando, definirCriando] = useState(false);
   const [enviandoId, definirEnviandoId] = useState(null);
   const [reagendamento, definirReagendamento] = useState(null);
+  const [cancelamento, definirCancelamento] = useState(null);
   const [horarios, definirHorarios] = useState([]);
   const [mensagemHorarios, definirMensagemHorarios] = useState('');
 
@@ -38,6 +47,19 @@ export default function AgendaSalao({ dados, tipoAgenda, definirTipoAgenda, requ
     definirEnviandoId(agendamento.idAgendamento);
     try {
       const resultado = await requisitar(`/agendamentos/${agendamento.idAgendamento}/${caminho}`, { method: 'PATCH' });
+      await aoSalvarAgendamento(resultado.mensagem);
+    } catch (erro) { mostrarToastErro(erro.message); }
+    finally { definirEnviandoId(null); }
+  }
+
+  async function salvarCancelamento(evento) {
+    evento.preventDefault();
+    definirEnviandoId(cancelamento.agendamento.idAgendamento);
+    try {
+      const resultado = await requisitar(`/agendamentos/${cancelamento.agendamento.idAgendamento}/cancelar`, {
+        method: 'PATCH', body: JSON.stringify({ codigoMotivo: cancelamento.codigoMotivo, detalheMotivo: cancelamento.detalheMotivo.trim() }),
+      });
+      definirCancelamento(null);
       await aoSalvarAgendamento(resultado.mensagem);
     } catch (erro) { mostrarToastErro(erro.message); }
     finally { definirEnviandoId(null); }
@@ -66,9 +88,10 @@ export default function AgendaSalao({ dados, tipoAgenda, definirTipoAgenda, requ
     {criando && <FormularioAgendamentoSalao clientes={dados.clientes ?? []} filiais={dados.filiais ?? []} funcionarios={dados.funcionarios ?? []} mostrarToastErro={mostrarToastErro} requisitar={requisitar} servicos={dados.servicos ?? []} aoCancelar={() => definirCriando(false)} aoSalvar={async (mensagem) => { definirCriando(false); await aoSalvarAgendamento(mensagem); }} />}
     <div className="lista-agendamentos-salao">{dados.agendamentos?.map((agendamento) => {
       const horarioFuturo = new Date(agendamento.dataHoraInicio) > new Date();
-      return <article className="cartao-agendamento-salao" key={agendamento.idAgendamento}><div className="cartao-agendamento-salao__cabecalho"><div><strong>{agendamento.cliente}</strong><span>{formatarDataHora(agendamento.dataHoraInicio)} · {agendamento.filial}</span>{(agendamento.emailCliente || agendamento.telefoneCliente) && <small>{[agendamento.telefoneCliente, agendamento.emailCliente].filter(Boolean).join(' · ')}</small>}</div><div className="cartao-agendamento-salao__acoes"><span className={`selo-status selo-status--${String(agendamento.status).toLowerCase()}`}>{nomesStatus[agendamento.status] ?? agendamento.status}</span>{agendamento.status === 'AGENDADO' && <div className="acoes-resultado-agendamento"><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => registrarResultado(agendamento, 'confirmar-atendimento')} type="button">Realizado</button><button disabled={horarioFuturo || enviandoId === agendamento.idAgendamento} onClick={() => registrarResultado(agendamento, 'nao-compareceu')} title={horarioFuturo ? 'Disponível após o horário agendado.' : undefined} type="button">Não presente</button><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => definirReagendamento({ idAgendamento: agendamento.idAgendamento, idUnidade: agendamento.idUnidade, data: dataLocal(), idFuncionario: 'qualquer', horario: '' })} type="button">Reagendar</button></div>}</div></div><dl><div><dt>Serviço</dt><dd>{agendamento.servico} · R$ {Number(agendamento.valor).toFixed(2).replace('.', ',')}</dd></div><div><dt>Profissional</dt><dd>{agendamento.funcionario}</dd></div><div><dt>Pagamento</dt><dd>{agendamento.pago ? 'Pago' : `Não pago (${agendamento.statusPagamento})`}</dd></div><div><dt>Observação</dt><dd>{agendamento.observacao || 'Nenhuma observação.'}</dd></div></dl></article>;
+      return <article className="cartao-agendamento-salao" key={agendamento.idAgendamento}><div className="cartao-agendamento-salao__cabecalho"><div><strong>{agendamento.cliente}</strong><span>{formatarDataHora(agendamento.dataHoraInicio)} · {agendamento.filial}</span>{(agendamento.emailCliente || agendamento.telefoneCliente) && <small>{[agendamento.telefoneCliente, agendamento.emailCliente].filter(Boolean).join(' · ')}</small>}</div><div className="cartao-agendamento-salao__acoes"><span className={`selo-status selo-status--${String(agendamento.status).toLowerCase()}`}>{nomesStatus[agendamento.status] ?? agendamento.status}</span>{agendamento.status === 'AGENDADO' && <div className="acoes-resultado-agendamento"><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => registrarResultado(agendamento, 'confirmar-atendimento')} type="button">Realizado</button><button disabled={horarioFuturo || enviandoId === agendamento.idAgendamento} onClick={() => registrarResultado(agendamento, 'nao-compareceu')} title={horarioFuturo ? 'Disponível após o horário agendado.' : undefined} type="button">Não presente</button><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => definirReagendamento({ idAgendamento: agendamento.idAgendamento, idUnidade: agendamento.idUnidade, data: dataLocal(), idFuncionario: 'qualquer', horario: '' })} type="button">Reagendar</button><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => definirCancelamento({ agendamento, codigoMotivo: '', detalheMotivo: '' })} type="button">Cancelar</button></div>}</div></div><dl><div><dt>Serviço</dt><dd>{agendamento.servico} · R$ {Number(agendamento.valor).toFixed(2).replace('.', ',')}</dd></div><div><dt>Profissional</dt><dd>{agendamento.funcionario}</dd></div><div><dt>Pagamento</dt><dd>{agendamento.pago ? 'Pago' : `Não pago (${agendamento.statusPagamento})`}</dd></div><div><dt>Observação</dt><dd>{agendamento.observacao || 'Nenhuma observação.'}</dd></div></dl></article>;
     })}</div>
     {!dados.agendamentos?.length && <p className="estado-lista">Nenhum agendamento encontrado.</p>}
+    {cancelamento && <div className="modal-agendamento" role="presentation"><form className="formulario-agendamento modal-agendamento__conteudo modal-cancelamento__conteudo" onSubmit={salvarCancelamento} role="dialog" aria-modal="true" aria-labelledby="titulo-cancelar"><button aria-label="Fechar" className="modal-agendamento__fechar" disabled={enviandoId === cancelamento.agendamento.idAgendamento} onClick={() => definirCancelamento(null)} type="button">×</button><h2 id="titulo-cancelar">Cancelar agendamento</h2><p>O cliente {cancelamento.agendamento.cliente} será avisado. Selecione o motivo do cancelamento.</p><label className="campo-formulario modal-cancelamento__campo"><span>Motivo</span><select onChange={(evento) => definirCancelamento({ ...cancelamento, codigoMotivo: evento.target.value, detalheMotivo: '' })} required value={cancelamento.codigoMotivo}><option value="">Selecione um motivo</option>{opcoesMotivoCancelamento.map(([codigo, rotulo]) => <option key={codigo} value={codigo}>{rotulo}</option>)}</select></label>{cancelamento.codigoMotivo === 'OUTRO' && <label className="campo-formulario modal-cancelamento__campo"><span>Descreva o motivo</span><textarea maxLength="200" onChange={(evento) => definirCancelamento({ ...cancelamento, detalheMotivo: evento.target.value })} required value={cancelamento.detalheMotivo} /></label>}<div className="acoes-formulario modal-cancelamento__acoes"><button className="botao-secundario" disabled={enviandoId === cancelamento.agendamento.idAgendamento} onClick={() => definirCancelamento(null)} type="button">Voltar</button><button className="botao-enviar" disabled={enviandoId === cancelamento.agendamento.idAgendamento} type="submit">{enviandoId === cancelamento.agendamento.idAgendamento ? 'Cancelando...' : 'Confirmar cancelamento'}</button></div></form></div>}
     {reagendamento && <div className="modal-agendamento" role="dialog" aria-modal="true" aria-labelledby="titulo-reagendar"><form className="formulario-agendamento modal-agendamento__conteudo" onSubmit={salvarReagendamento}><button aria-label="Fechar" className="modal-agendamento__fechar" onClick={() => definirReagendamento(null)} type="button">×</button><h2 id="titulo-reagendar">Reagendar atendimento</h2><label className="campo-formulario"><span>Data</span><input max={dataLocal(60)} min={dataLocal()} onChange={(evento) => definirReagendamento({ ...reagendamento, data: evento.target.value, horario: '' })} required type="date" value={reagendamento.data} /></label><label className="campo-formulario"><span>Profissional</span><select onChange={(evento) => definirReagendamento({ ...reagendamento, idFuncionario: evento.target.value, horario: '' })} value={reagendamento.idFuncionario}><option value="qualquer">Qualquer profissional disponível</option>{profissionais.map((item) => <option key={item.idFuncionario} value={item.idFuncionario}>{item.nome}</option>)}</select></label><div className="grade-horarios">{horarios.map((item) => <button className={reagendamento.horario === item.inicio ? 'horario-disponivel horario-disponivel--ativo' : 'horario-disponivel'} key={item.inicio} onClick={() => definirReagendamento({ ...reagendamento, horario: item.inicio })} type="button">{item.inicio}</button>)}</div>{mensagemHorarios && <p className="estado-lista">{mensagemHorarios}</p>}<button className="botao-enviar" disabled={!reagendamento.horario || enviandoId === reagendamento.idAgendamento} type="submit">Salvar novo horário →</button></form></div>}
   </>;
 }
