@@ -20,7 +20,7 @@ export function obterClienteAdministrativoSupabase() {
   const chaveServicoSupabase = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!urlSupabase || !chaveServicoSupabase) {
-    throw new Error('Configure SUPABASE_SECRET_KEY para excluir contas.');
+    throw new Error('Configure SUPABASE_SECRET_KEY para operações administrativas de autenticação.');
   }
 
   return createClient(urlSupabase, chaveServicoSupabase, {

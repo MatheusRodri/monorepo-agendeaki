@@ -5,15 +5,15 @@ import { useRouter } from 'next/navigation';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import AlternadorTema from '../AlternadorTema/AlternadorTema';
 import CampoSenha from '../CampoSenha/CampoSenha';
-import FormularioDadosSalao from '../FormularioDadosSalao/FormularioDadosSalao';
 import FormularioFilial from '../FormularioFilial/FormularioFilial';
 import DisponibilidadeSalao from '../DisponibilidadeSalao/DisponibilidadeSalao';
 import AgendaSalao from '../AgendaSalao/AgendaSalao';
-import { dataParaExibicao, dataParaIso, formatarCnpj, formatarCpf, formatarData } from '../../utils/formatadores';
+import { dataParaExibicao, dataParaIso, formatarCnpj, formatarCpf, formatarData, formatarTelefone } from '../../utils/formatadores';
 import { requisitarApi } from '../../utils/api';
 import { limparSessao, obterTokenAcesso } from '../../utils/respostaApi';
+import { toastAviso, toastErro, toastInfo, toastSucesso } from '../../utils/toast';
 
-const navegacao = [['dashboard', 'Visão geral', '/salao/dashboard'], ['salao', 'Meu salão', '/salao/meu-salao'], ['filiais', 'Filiais', '/salao/filiais'], ['servicos', 'Serviços', '/salao/servicos'], ['funcionarios', 'Profissionais', '/salao/funcionarios'], ['disponibilidade', 'Disponibilidade', '/salao/disponibilidade'], ['clientes', 'Clientes', '/salao/clientes'], ['agendamentos', 'Agenda', '/salao/agendamentos'], ['avaliacoes', 'Avaliações', '/salao/avaliacoes'], ['configuracoes', 'Configurações', '/salao/configuracoes']];
+const navegacao = [['dashboard', 'Visão geral', '/salao/dashboard'], ['filiais', 'Filiais', '/salao/filiais'], ['servicos', 'Serviços', '/salao/servicos'], ['funcionarios', 'Profissionais', '/salao/funcionarios'], ['disponibilidade', 'Disponibilidade', '/salao/disponibilidade'], ['clientes', 'Clientes', '/salao/clientes'], ['agendamentos', 'Agenda', '/salao/agendamentos'], ['avaliacoes', 'Avaliações', '/salao/avaliacoes'], ['configuracoes', 'Configurações', '/salao/configuracoes']];
 const filtrosIniciais = { dataInicio: '', dataFim: '', idUnidade: '', idServico: '', idFuncionario: '' };
 
 export default function AreaSalao({ secao }) {
@@ -22,6 +22,7 @@ export default function AreaSalao({ secao }) {
   const [mensagem, definirMensagem] = useState('');
   const [tipoMensagem, definirTipoMensagem] = useState('sucesso');
   const [carregando, definirCarregando] = useState(true);
+  const [saindo, definirSaindo] = useState(false);
   const [filialEdicao, definirFilialEdicao] = useState(null);
   const [servicoEdicao, definirServicoEdicao] = useState(null);
   const [funcionarioEdicao, definirFuncionarioEdicao] = useState(null);
@@ -31,9 +32,13 @@ export default function AreaSalao({ secao }) {
   const [assinante, definirAssinante] = useState(false);
   const [notificacoes, definirNotificacoes] = useState([]);
   const [notificacoesNaoLidas, definirNotificacoesNaoLidas] = useState(0);
-  const [toastsNotificacao, definirToastsNotificacao] = useState([]);
   const carregouNotificacoes = useRef(false);
   const idsNotificacoesConhecidos = useRef(new Set());
+  const marcarNotificacaoLidaRef = useRef(null);
+
+  const mostrarToastErro = useCallback((texto) => toastErro(texto), []);
+
+  const mostrarAvisoPremium = useCallback(() => toastAviso('Recurso disponível apenas para usuários Premium.'), []);
 
   const requisitar = useCallback(async (caminho, opcoes = {}) => {
     const { silenciosa = false } = opcoes;
@@ -58,7 +63,7 @@ export default function AreaSalao({ secao }) {
       const resultado = await requisitar('/notificacoes', { silenciosa: true });
       const novasNotificacoes = (resultado.notificacoes ?? []).filter((notificacao) => !idsNotificacoesConhecidos.current.has(Number(notificacao.id)));
       if (carregouNotificacoes.current && novasNotificacoes.length) {
-        definirToastsNotificacao((atuais) => [...novasNotificacoes.slice().reverse(), ...atuais].slice(0, 3));
+        novasNotificacoes.slice().reverse().forEach((notificacao) => toastInfo(<LinkToastNotificacao aoAbrir={() => marcarNotificacaoLidaRef.current?.(notificacao.id).catch((erro) => toastErro(erro.message))} notificacao={notificacao} />));
       }
       novasNotificacoes.forEach((notificacao) => idsNotificacoesConhecidos.current.add(Number(notificacao.id)));
       try {
@@ -104,21 +109,19 @@ export default function AreaSalao({ secao }) {
         } catch {}
       }
       carregouNotificacoes.current = true;
-      definirToastsNotificacao((atuais) => [{
-        id: Number.isSafeInteger(idNotificacao) && idNotificacao > 0 ? idNotificacao : `push-${Date.now()}`,
-        titulo: notificacaoRecebida.titulo,
-        mensagem: notificacaoRecebida.mensagem,
-      }, ...atuais].slice(0, 3));
+      toastInfo(<LinkToastNotificacao aoAbrir={() => marcarNotificacaoLidaRef.current?.(notificacaoRecebida.id).catch((erro) => toastErro(erro.message))} notificacao={notificacaoRecebida} />);
     };
     navigator.serviceWorker.addEventListener('message', aoReceberPush);
     return () => navigator.serviceWorker.removeEventListener('message', aoReceberPush);
   }, []);
 
+
+
   useEffect(() => {
-    if (!toastsNotificacao.length) return undefined;
-    const temporizador = window.setTimeout(() => definirToastsNotificacao((atuais) => atuais.slice(0, -1)), 6500);
-    return () => window.clearTimeout(temporizador);
-  }, [toastsNotificacao]);
+    if (!mensagem || tipoMensagem !== 'erro') return;
+    mostrarToastErro(mensagem);
+    definirMensagem('');
+  }, [mensagem, mostrarToastErro, tipoMensagem]);
 
   async function marcarNotificacaoLida(id) {
     const notificacao = notificacoes.find((item) => Number(item.id) === Number(id));
@@ -127,6 +130,7 @@ export default function AreaSalao({ secao }) {
     definirNotificacoes((atuais) => atuais.map((item) => Number(item.id) === Number(id) ? { ...item, lida: true } : item));
     definirNotificacoesNaoLidas((quantidade) => Math.max(0, quantidade - 1));
   }
+  marcarNotificacaoLidaRef.current = marcarNotificacaoLida;
 
   async function marcarTodasNotificacoesLidas() {
     await requisitar('/notificacoes/lidas', { method: 'POST' });
@@ -149,16 +153,6 @@ export default function AreaSalao({ secao }) {
         definirDados({ ...indicadores, premiumAtivo });
       }
       if (secao === 'assinatura') definirDados(await requisitar('/assinatura'));
-      if (secao === 'salao') {
-        const dadosPerfil = await requisitar('/perfil');
-        try {
-          const dadosSalao = await requisitar('/saloes/atual');
-          definirDados(dadosSalao);
-        } catch (erro) {
-          if (erro.status !== 404) throw erro;
-          definirDados({ emailConta: dadosPerfil.perfil.email, salao: null });
-        }
-      }
       if (secao === 'configuracoes') {
         const [dadosSalao, dadosPerfil, resultadoAssinatura] = await Promise.all([requisitar('/saloes/atual'), requisitar('/perfil'), requisitar('/assinatura')]);
         const premiumAtivo = Boolean(resultadoAssinatura.assinatura?.temAcessoPremium);
@@ -171,7 +165,7 @@ export default function AreaSalao({ secao }) {
         definirAssinante(premiumAtivo);
         definirDados({ premiumAtivo });
       }
-      if (secao === 'filiais') definirDados(await requisitar('/filiais'));
+      if (secao === 'filiais') { const [filiais, perfil] = await Promise.all([requisitar('/filiais'), requisitar('/perfil')]); definirDados({ ...filiais, perfilResponsavel: perfil.perfil }); }
       if (secao === 'servicos') { const [filiais, servicos] = await Promise.all([requisitar('/filiais'), requisitar('/servicos')]); definirDados({ filiais: filiais.filiais, servicos: servicos.servicos }); }
       if (secao === 'funcionarios') { const [filiais, servicos, funcionarios] = await Promise.all([requisitar('/filiais'), requisitar('/servicos'), requisitar('/funcionarios')]); definirDados({ filiais: filiais.filiais, servicos: servicos.servicos, funcionarios: funcionarios.funcionarios }); }
       if (secao === 'disponibilidade') definirDados(await requisitar('/filiais'));
@@ -185,7 +179,7 @@ export default function AreaSalao({ secao }) {
         definirDados({ ...agenda, clientes: clientes.clientes, filiais: filiais.filiais, servicos: servicos.servicos, funcionarios: funcionarios.funcionarios });
       }
     } catch (erro) {
-      if (secao === 'dashboard' && erro.status === 404) { roteador.replace('/salao/meu-salao'); return; }
+      if (secao === 'dashboard' && erro.status === 404) { roteador.replace('/salao/configuracoes'); return; }
       definirMensagem(erro.message); definirTipoMensagem('erro'); definirDados({});
     } finally { definirCarregando(false); }
   }, [filtrosDashboard, requisitar, roteador, secao, tipoAgenda]);
@@ -208,15 +202,20 @@ export default function AreaSalao({ secao }) {
     if (caminho.includes('/funcionarios')) dadosEnvio.idsServicos = formulario.getAll('idsServicos').map(Number);
     try {
       const resultado = await requisitar(caminho, { method: metodo, body: JSON.stringify(dadosEnvio) });
-      definirMensagem(resultado.mensagem); definirTipoMensagem('sucesso');
+      const mensagensAdicao = {
+        '/filiais': 'Filial adicionada com sucesso.',
+        '/servicos': 'Serviço adicionado com sucesso.',
+        '/funcionarios': 'Profissional adicionado com sucesso.',
+      };
+      toastSucesso(metodo === 'POST' ? mensagensAdicao[caminho] ?? resultado.mensagem : resultado.mensagem);
       definirFilialEdicao(null); definirServicoEdicao(null); definirFuncionarioEdicao(null); definirIdFilialProfissional('');
       carregarDados(); return resultado;
-    } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); return null; }
+    } catch (erro) { toastErro(erro.message); return null; }
   }
 
   async function excluirItem(caminho, descricao) {
     if (!window.confirm(`Deseja remover ${descricao}? O histórico de agendamentos será preservado.`)) return;
-    try { const resultado = await requisitar(caminho, { method: 'DELETE' }); definirMensagem(resultado.mensagem); definirTipoMensagem('sucesso'); definirFilialEdicao(null); definirServicoEdicao(null); definirFuncionarioEdicao(null); carregarDados(); } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); }
+    try { const resultado = await requisitar(caminho, { method: 'DELETE' }); toastSucesso(resultado.mensagem); definirFilialEdicao(null); definirServicoEdicao(null); definirFuncionarioEdicao(null); carregarDados(); } catch (erro) { toastErro(erro.message); }
   }
 
   async function excluirConta() {
@@ -226,23 +225,29 @@ export default function AreaSalao({ secao }) {
       roteador.replace('/');
       return true;
     } catch (erro) {
-      definirMensagem(erro.message);
-      definirTipoMensagem('erro');
+      toastErro(erro.message);
       return false;
     }
   }
 
+  async function sairDaConta() {
+    if (saindo) return;
+    definirSaindo(true);
+    try { await requisitar('/logout', { method: 'POST' }); } catch {}
+    finally { limparSessao('salao'); roteador.replace('/salao'); }
+  }
+
   async function buscarCep(valorCep) {
     const cep = String(valorCep ?? '').replace(/\D/g, ''); if (cep.length !== 8) return null;
-    try { const endereco = await requisitar(`/enderecos/${cep}`); definirDados((dadosAtuais) => ({ ...dadosAtuais, enderecoCep: endereco })); return endereco; } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); return null; }
+    try { const endereco = await requisitar(`/enderecos/${cep}`); definirDados((dadosAtuais) => ({ ...dadosAtuais, enderecoCep: endereco })); return endereco; } catch (erro) { toastErro(erro.message); return null; }
   }
-  async function buscarCoordenadas(cep, numero) { try { return await requisitar(`/coordenadas?cep=${encodeURIComponent(cep)}&numero=${encodeURIComponent(numero)}`); } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); return null; } }
+  async function buscarCoordenadas(cep, numero) { try { return await requisitar(`/coordenadas?cep=${encodeURIComponent(cep)}&numero=${encodeURIComponent(numero)}`); } catch (erro) { toastErro(erro.message); return null; } }
   async function aoSalvarAgendamento(mensagemSucesso) {
     try {
       const [agenda, clientes] = await Promise.all([requisitar(`/agendamentos?tipo=${tipoAgenda}`), requisitar('/clientes')]);
       definirDados((atuais) => ({ ...atuais, ...agenda, clientes: clientes.clientes }));
-      definirMensagem(mensagemSucesso); definirTipoMensagem('sucesso');
-    } catch (erro) { definirMensagem(erro.message); definirTipoMensagem('erro'); }
+      toastSucesso(mensagemSucesso);
+    } catch (erro) { toastErro(erro.message); }
   }
   const enderecoCep = dados.enderecoCep ?? filialEdicao ?? {};
   return (
@@ -257,18 +262,18 @@ export default function AreaSalao({ secao }) {
               {notificacoesNaoLidas > 0 && <span className="botao-notificacoes__contador">{notificacoesNaoLidas > 99 ? '99+' : notificacoesNaoLidas}</span>}
             </Link>
           ) : (
-            <button aria-label="Notificações indisponíveis no plano atual" className="botao-notificacoes botao-notificacoes--indisponivel" disabled title="Notificações disponíveis para assinantes Premium" type="button">
+            <button aria-label="Notificações" className="botao-notificacoes botao-notificacoes--premium" onClick={mostrarAvisoPremium} title="Notificações disponíveis para assinantes Premium" type="button">
               <svg aria-hidden="true" fill="none" height="20" viewBox="0 0 24 24" width="20"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" /></svg>
             </button>
           )}
           <Link className={['botao-assinatura', secao === 'assinatura' && 'botao-assinatura--ativo', assinante && 'botao-assinatura--assinante'].filter(Boolean).join(' ')} href="/salao/assinatura">{assinante ? 'Assinante' : 'Assinatura'}</Link>
           <AlternadorTema />
+          <button className="botao-secundario botao-sair-area" disabled={saindo} onClick={sairDaConta} type="button">{saindo ? 'Saindo...' : 'Sair'}</button>
         </div>
       </header>
       <div className="estrutura-salao">
         <aside className="menu-salao">{navegacao.map(([chave, titulo, caminho]) => <Link className={secao === chave ? 'menu-salao__ativo' : ''} href={caminho} key={chave}>{titulo}</Link>)}</aside>
-        <section className={`conteudo-salao${secao === 'dashboard' ? ' conteudo-salao--dashboard' : ''}`}>
-          {mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`}>{mensagem}</p>}
+        <section className={`conteudo-salao${secao === 'dashboard' ? ' conteudo-salao--dashboard' : ''}${secao === 'filiais' ? ' conteudo-salao--filiais' : ''}`}>
           {carregando ? <p className="estado-lista">Carregando...</p> : (
             <ConteudoSalao
               dados={dados}
@@ -296,68 +301,77 @@ export default function AreaSalao({ secao }) {
               marcarTodasNotificacoesLidas={marcarTodasNotificacoesLidas}
               filtrosDashboard={filtrosDashboard}
               definirFiltrosDashboard={definirFiltrosDashboard}
+              mostrarToastErro={mostrarToastErro}
               aoAtivarPremium={() => definirAssinante(true)}
               aoSalvarAgendamento={aoSalvarAgendamento}
             />
           )}
         </section>
       </div>
-      <div aria-live="polite" className="notificacoes-toast-stack">
-        {toastsNotificacao.map((notificacao) => <article className="notificacao-toast" key={notificacao.id}><Link href="/salao/notificacoes" onClick={() => marcarNotificacaoLida(notificacao.id).catch(() => {})}><strong>{notificacao.titulo}</strong><span>{notificacao.mensagem}</span><small>Abrir central de notificações</small></Link><button aria-label="Fechar aviso" onClick={() => definirToastsNotificacao((atuais) => atuais.filter((item) => item.id !== notificacao.id))} type="button">×</button></article>)}
-      </div>
+
     </main>
   );
+}
+
+function LinkToastNotificacao({ aoAbrir, notificacao }) {
+  return <Link className="toast-notificacao-link" href="/salao/notificacoes" onClick={aoAbrir}><strong>{notificacao.titulo}</strong><span>{notificacao.mensagem}</span><small>Abrir central de notificações</small></Link>;
 }
 
 function ConteudoSalao(propriedades) {
   const { dados, secao } = propriedades;
   if (secao === 'dashboard') return <Dashboard dados={dados} {...propriedades} />;
   if (secao === 'notificacoes') return dados.premiumAtivo
-    ? <CentralNotificacoes notificacoes={propriedades.notificacoes} notificacoesNaoLidas={propriedades.notificacoesNaoLidas} marcarNotificacaoLida={propriedades.marcarNotificacaoLida} marcarTodasNotificacoesLidas={propriedades.marcarTodasNotificacoesLidas} />
+    ? <CentralNotificacoes notificacoes={propriedades.notificacoes} notificacoesNaoLidas={propriedades.notificacoesNaoLidas} marcarNotificacaoLida={propriedades.marcarNotificacaoLida} marcarTodasNotificacoesLidas={propriedades.marcarTodasNotificacoesLidas} mostrarToastErro={propriedades.mostrarToastErro} />
     : <><p className="sobretitulo">Recurso Premium</p><h1>Central de notificações.</h1><p className="descricao-assinatura">A central de notificações está disponível para assinantes Premium.</p><Link className="botao-assinatura" href="/salao/assinatura">Conhecer o Premium</Link></>;
   if (secao === 'assinatura') return <Assinatura aoAtivarPremium={propriedades.aoAtivarPremium} dados={dados} requisitar={propriedades.requisitar} />;
-  if (secao === 'salao') { const salao = dados.salao; return <><p className="sobretitulo">{salao ? 'Informações gerais' : 'Primeiro passo'}</p><h1>{salao ? 'Dados do seu salão.' : 'Vamos criar seu salão.'}</h1><FormularioDadosSalao emailConta={salao?.emailConta ?? dados.emailConta} salao={salao} salvar={propriedades.enviarFormulario} /></>; }
   if (secao === 'configuracoes') return <Configuracoes excluirConta={propriedades.excluirConta} perfil={dados.perfil} premiumAtivo={dados.premiumAtivo} requisitar={propriedades.requisitar} salao={dados.salao} />;
   if (secao === 'filiais') return <Filiais dados={dados} {...propriedades} />;
   if (secao === 'servicos') return <Servicos dados={dados} {...propriedades} />;
   if (secao === 'funcionarios') return <Funcionarios dados={dados} {...propriedades} />;
-  if (secao === 'disponibilidade') return <DisponibilidadeSalao filiais={dados.filiais} requisitar={propriedades.requisitar} />;
+  if (secao === 'disponibilidade') return <DisponibilidadeSalao filiais={dados.filiais} mostrarToastErro={propriedades.mostrarToastErro} requisitar={propriedades.requisitar} />;
   if (secao === 'clientes') return <><p className="sobretitulo">Relacionamento</p><h1>Clientes que já passaram por aqui.</h1><ListaSimples itens={dados.clientes} campo="nome" vazio="Os clientes aparecerão após os primeiros agendamentos." /></>;
   if (secao === 'avaliacoes') return <AvaliacoesSalao filiais={dados.filiais} requisitar={propriedades.requisitar} />;
   return <AgendaSalao dados={dados} {...propriedades} />;
 }
 
-function CentralNotificacoes({ notificacoes, notificacoesNaoLidas, marcarNotificacaoLida, marcarTodasNotificacoesLidas }) {
-  const [erro, definirErro] = useState('');
+function CentralNotificacoes({ notificacoes, notificacoesNaoLidas, marcarNotificacaoLida, marcarTodasNotificacoesLidas, mostrarToastErro }) {
 
   async function marcarTodas() {
     try {
       await marcarTodasNotificacoesLidas();
-      definirErro('');
-    } catch (falha) { definirErro(falha.message); }
+    } catch (falha) { mostrarToastErro(falha.message); }
   }
 
-  return <><p className="sobretitulo">Central do salão</p><h1>Notificações.</h1><div className="central-notificacoes__cabecalho"><p>{notificacoesNaoLidas ? `${notificacoesNaoLidas} não lida${notificacoesNaoLidas === 1 ? '' : 's'}` : 'Tudo em dia'}</p>{notificacoesNaoLidas > 0 && <button className="botao-secundario" onClick={marcarTodas} type="button">Marcar todas como lidas</button>}</div>{erro && <p className="mensagem-formulario mensagem-formulario--erro">{erro}</p>}{notificacoes.length ? <div className="central-notificacoes__lista">{notificacoes.map((notificacao) => <article className={`central-notificacao${notificacao.lida ? '' : ' central-notificacao--nao-lida'}`} key={notificacao.id}><span aria-hidden="true" className="central-notificacao__indicador" /><div><strong>{notificacao.titulo}</strong><p>{notificacao.mensagem}</p><small>{new Date(notificacao.criadaEm).toLocaleString('pt-BR')}</small></div><div className="central-notificacao__acoes">{!notificacao.lida && <button className="botao-secundario" onClick={() => marcarNotificacaoLida(notificacao.id).catch((falha) => definirErro(falha.message))} type="button">Marcar como lida</button>}<Link href={notificacao.link || '/salao/agendamentos'} onClick={() => marcarNotificacaoLida(notificacao.id).catch(() => {})}>Ver agenda</Link></div></article>)}</div> : <p className="estado-lista">As novas reservas, alterações e cancelamentos aparecerão aqui.</p>}</>;
+  return <><p className="sobretitulo">Central do salão</p><h1>Notificações.</h1><div className="central-notificacoes__cabecalho"><p>{notificacoesNaoLidas ? `${notificacoesNaoLidas} não lida${notificacoesNaoLidas === 1 ? '' : 's'}` : 'Tudo em dia'}</p>{notificacoesNaoLidas > 0 && <button className="botao-secundario" onClick={marcarTodas} type="button">Marcar todas como lidas</button>}</div><p className="central-notificacoes__ajuda">Não está recebendo notificações? <Link href="/salao/configuracoes">Registre seu dispositivo nas configurações.</Link></p>{notificacoes.length ? <div className="central-notificacoes__lista">{notificacoes.map((notificacao) => <article className={`central-notificacao${notificacao.lida ? '' : ' central-notificacao--nao-lida'}`} key={notificacao.id}><span aria-hidden="true" className="central-notificacao__indicador" /><div><strong>{notificacao.titulo}</strong><p>{notificacao.mensagem}</p><small>{new Date(notificacao.criadaEm).toLocaleString('pt-BR')}</small></div><div className="central-notificacao__acoes">{!notificacao.lida && <button className="botao-secundario" onClick={() => marcarNotificacaoLida(notificacao.id).catch((falha) => mostrarToastErro(falha.message))} type="button">Marcar como lida</button>}<Link href={notificacao.link || '/salao/agendamentos'} onClick={() => marcarNotificacaoLida(notificacao.id).catch((falha) => mostrarToastErro(falha.message))}>Ver agenda</Link></div></article>)}</div> : <p className="estado-lista">As novas reservas, alterações e cancelamentos aparecerão aqui.</p>}</>;
 }
 
 function Configuracoes({ excluirConta, perfil, premiumAtivo, requisitar, salao }) {
-  const [dadosPerfil, definirDadosPerfil] = useState({ nome: perfil?.nome ?? '', dataNascimento: dataParaExibicao(perfil?.dataNascimento), tipoDocumento: perfil?.tipoDocumento ?? 'CPF', documento: perfil?.tipoDocumento === 'CNPJ' ? formatarCnpj(perfil?.documento) : formatarCpf(perfil?.documento) });
+  const [dadosPerfil, definirDadosPerfil] = useState({ nome: perfil?.nome ?? '', telefone: formatarTelefone(perfil?.telefone), dataNascimento: dataParaExibicao(perfil?.dataNascimento), tipoDocumento: perfil?.tipoDocumento ?? 'CPF', documento: perfil?.tipoDocumento === 'CNPJ' ? formatarCnpj(perfil?.documento) : formatarCpf(perfil?.documento) });
+  const [nomeSalao, definirNomeSalao] = useState(salao?.nome ?? '');
   const [senhas, definirSenhas] = useState({ senha: '', confirmacaoSenha: '' });
   const [confirmacao, definirConfirmacao] = useState('');
   const [excluindo, definirExcluindo] = useState(false);
-  const [mensagem, definirMensagem] = useState('');
   const podeExcluir = confirmacao === 'EXCLUIR MINHA CONTA';
 
-  useEffect(() => { definirDadosPerfil({ nome: perfil?.nome ?? '', dataNascimento: dataParaExibicao(perfil?.dataNascimento), tipoDocumento: perfil?.tipoDocumento ?? 'CPF', documento: perfil?.tipoDocumento === 'CNPJ' ? formatarCnpj(perfil?.documento) : formatarCpf(perfil?.documento) }); }, [perfil]);
+  useEffect(() => { definirDadosPerfil({ nome: perfil?.nome ?? '', telefone: formatarTelefone(perfil?.telefone), dataNascimento: dataParaExibicao(perfil?.dataNascimento), tipoDocumento: perfil?.tipoDocumento ?? 'CPF', documento: perfil?.tipoDocumento === 'CNPJ' ? formatarCnpj(perfil?.documento) : formatarCpf(perfil?.documento) }); }, [perfil]);
+  useEffect(() => { definirNomeSalao(salao?.nome ?? ''); }, [salao]);
 
   async function salvarPerfil(evento) {
     evento.preventDefault();
-    try { const resultado = await requisitar('/perfil', { method: 'PATCH', body: JSON.stringify({ ...dadosPerfil, dataNascimento: dataParaIso(dadosPerfil.dataNascimento) }) }); definirMensagem(resultado.mensagem); } catch (erro) { definirMensagem(erro.message); }
+    try { const resultado = await requisitar('/perfil', { method: 'PATCH', body: JSON.stringify({ ...dadosPerfil, dataNascimento: dataParaIso(dadosPerfil.dataNascimento) }) }); toastSucesso(resultado.mensagem); }
+    catch (erro) { toastErro(erro.message); }
+  }
+
+  async function salvarSalao(evento) {
+    evento.preventDefault();
+    try { const resultado = await requisitar('/saloes/atual', { method: 'PATCH', body: JSON.stringify({ nome: nomeSalao }) }); toastSucesso(resultado.mensagem); }
+    catch (erro) { toastErro(erro.message); }
   }
 
   async function salvarSenha(evento) {
     evento.preventDefault();
-    try { const resultado = await requisitar('/senha', { method: 'PATCH', body: JSON.stringify(senhas) }); definirMensagem(resultado.mensagem); definirSenhas({ senha: '', confirmacaoSenha: '' }); } catch (erro) { definirMensagem(erro.message); }
+    try { const resultado = await requisitar('/senha', { method: 'PATCH', body: JSON.stringify(senhas) }); toastSucesso(resultado.mensagem); definirSenhas({ senha: '', confirmacaoSenha: '' }); }
+    catch (erro) { toastErro(erro.message); }
   }
 
   async function confirmarExclusao() {
@@ -365,19 +379,18 @@ function Configuracoes({ excluirConta, perfil, premiumAtivo, requisitar, salao }
     definirExcluindo(true); const excluida = await excluirConta(); if (!excluida) definirExcluindo(false);
   }
 
-  return <><p className="sobretitulo">Configurações</p><h1>Sua conta.</h1>{mensagem && <p className="mensagem-formulario">{mensagem}</p>}<section className="secao-configuracoes"><h2>Informações da conta</h2><form className="grade-formulario" onSubmit={salvarPerfil}><label className="campo-formulario"><span>Nome do responsável</span><input onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, nome: evento.target.value })} required value={dadosPerfil.nome} /></label><label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, dataNascimento: formatarData(evento.target.value) })} placeholder="DD/MM/AAAA" required value={dadosPerfil.dataNascimento} /></label><label className="campo-formulario"><span>Tipo de documento</span><select onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, tipoDocumento: evento.target.value, documento: '' })} value={dadosPerfil.tipoDocumento}><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option></select></label><label className="campo-formulario"><span>Número do {dadosPerfil.tipoDocumento}</span><input inputMode="numeric" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, documento: dadosPerfil.tipoDocumento === 'CNPJ' ? formatarCnpj(evento.target.value) : formatarCpf(evento.target.value) })} required value={dadosPerfil.documento} /></label><button className="botao-enviar">Salvar informações →</button></form></section>{premiumAtivo && <section className="secao-configuracoes"><h2>Notificações do dispositivo</h2><GerenciarNotificacoes requisitar={requisitar} /></section>}<section className="secao-configuracoes"><h2>Alterar senha</h2><form className="grade-formulario" onSubmit={salvarSenha}><CampoSenha aoMudar={(evento) => definirSenhas({ ...senhas, senha: evento.target.value })} id="novaSenhaSalao" nome="novaSenhaSalao" rotulo="Nova senha" valor={senhas.senha} /><CampoSenha aoMudar={(evento) => definirSenhas({ ...senhas, confirmacaoSenha: evento.target.value })} id="confirmacaoSenhaSalao" nome="confirmacaoSenhaSalao" rotulo="Confirme a nova senha" valor={senhas.confirmacaoSenha} /><button className="botao-enviar">Alterar senha →</button></form></section><section className="zona-perigo"><div><strong>Excluir conta permanentemente</strong><p>Isso remove o salão, filiais, profissionais, serviços, horários, agendamentos, pagamentos e o acesso da conta. Não é possível desfazer.</p>{salao?.email && <small>Conta: {salao.email}</small>}</div><label className="campo-formulario"><span>Digite <b>EXCLUIR MINHA CONTA</b> para confirmar</span><input disabled={excluindo} onChange={(evento) => definirConfirmacao(evento.target.value)} value={confirmacao} /></label><button className="botao-perigo" disabled={!podeExcluir || excluindo} onClick={confirmarExclusao} type="button">{excluindo ? 'Excluindo conta...' : 'Excluir minha conta'}</button></section></>;
+  return <><p className="sobretitulo">Configurações</p><h1>Sua conta.</h1><section className="secao-configuracoes"><h2>Informações da conta</h2><form className="grade-formulario" onSubmit={salvarPerfil}><label className="campo-formulario"><span>Nome do responsável</span><input onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, nome: evento.target.value })} required value={dadosPerfil.nome} /></label><label className="campo-formulario"><span>Telefone do responsável</span><input autoComplete="tel" inputMode="numeric" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, telefone: formatarTelefone(evento.target.value) })} required value={dadosPerfil.telefone} /></label><label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, dataNascimento: formatarData(evento.target.value) })} placeholder="DD/MM/AAAA" required value={dadosPerfil.dataNascimento} /></label><label className="campo-formulario"><span>Tipo de documento</span><select onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, tipoDocumento: evento.target.value, documento: '' })} value={dadosPerfil.tipoDocumento}><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option></select></label><label className="campo-formulario"><span>Número do {dadosPerfil.tipoDocumento}</span><input inputMode="numeric" onChange={(evento) => definirDadosPerfil({ ...dadosPerfil, documento: dadosPerfil.tipoDocumento === 'CNPJ' ? formatarCnpj(evento.target.value) : formatarCpf(evento.target.value) })} required value={dadosPerfil.documento} /></label><button className="botao-enviar">Salvar informações →</button></form></section><section className="secao-configuracoes"><h2>Dados do salão</h2><form className="grade-formulario" onSubmit={salvarSalao}><label className="campo-formulario"><span>Nome do salão</span><input onChange={(evento) => definirNomeSalao(evento.target.value)} required value={nomeSalao} /></label><button className="botao-enviar">Salvar nome do salão →</button></form></section>{premiumAtivo && <section className="secao-configuracoes"><h2>Notificações do dispositivo</h2><GerenciarNotificacoes requisitar={requisitar} /></section>}<section className="secao-configuracoes"><h2>Alterar senha</h2><form className="grade-formulario" onSubmit={salvarSenha}><CampoSenha aoMudar={(evento) => definirSenhas({ ...senhas, senha: evento.target.value })} id="novaSenhaSalao" nome="novaSenhaSalao" rotulo="Nova senha" valor={senhas.senha} /><CampoSenha aoMudar={(evento) => definirSenhas({ ...senhas, confirmacaoSenha: evento.target.value })} id="confirmacaoSenhaSalao" nome="confirmacaoSenhaSalao" rotulo="Confirme a nova senha" valor={senhas.confirmacaoSenha} /><button className="botao-enviar">Alterar senha →</button></form></section><section className="zona-perigo"><div><strong>Excluir conta permanentemente</strong><p>Isso remove o salão, filiais, profissionais, serviços, horários, agendamentos, pagamentos e o acesso da conta. Não é possível desfazer.</p>{perfil?.email && <small>Conta: {perfil.email}</small>}</div><label className="campo-formulario"><span>Digite <b>EXCLUIR MINHA CONTA</b> para confirmar</span><input disabled={excluindo} onChange={(evento) => definirConfirmacao(evento.target.value)} value={confirmacao} /></label><button className="botao-perigo" disabled={!podeExcluir || excluindo} onClick={confirmarExclusao} type="button">{excluindo ? 'Excluindo conta...' : 'Excluir minha conta'}</button></section></>;
 }
 
 function GerenciarNotificacoes({ requisitar }) {
   const [ativa, definirAtiva] = useState(false);
   const [processando, definirProcessando] = useState(true);
-  const [mensagem, definirMensagem] = useState('');
   const [permissao, definirPermissao] = useState('default');
 
   useEffect(() => {
     let ativo = true;
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-      definirMensagem('Este navegador não oferece suporte a notificações push.');
+      toastAviso('Este navegador não oferece suporte a notificações push.');
       definirProcessando(false);
       return () => { ativo = false; };
     }
@@ -388,17 +401,16 @@ function GerenciarNotificacoes({ requisitar }) {
       .then((resultado) => {
         if (!ativo) return;
         definirAtiva(Boolean(resultado.ativa));
-        if (!resultado.ativa && Notification.permission === 'granted') definirMensagem('A permissão já está liberada. Clique para registrar este dispositivo novamente.');
-        if (Notification.permission === 'denied') definirMensagem('O navegador bloqueou as notificações. Libere a permissão nas configurações deste site.');
+        if (!resultado.ativa && Notification.permission === 'granted') toastInfo('A permissão está liberada, mas este dispositivo ainda não está registrado. Use o botão abaixo para concluir.');
+        if (Notification.permission === 'denied') toastAviso('O navegador bloqueou as notificações. Libere a permissão nas configurações deste site.');
       })
-      .catch((erro) => { if (ativo) definirMensagem(erro.message); })
+      .catch((erro) => { if (ativo) toastErro(erro.message); })
       .finally(() => { if (ativo) definirProcessando(false); });
     return () => { ativo = false; };
   }, [requisitar]);
 
   async function alternarNotificacoes() {
     definirProcessando(true);
-    definirMensagem('');
     try {
       const registro = await navigator.serviceWorker.ready;
       let inscricao = await registro.pushManager.getSubscription();
@@ -408,7 +420,7 @@ function GerenciarNotificacoes({ requisitar }) {
           await inscricao.unsubscribe();
         }
         definirAtiva(false);
-        definirMensagem('Notificações desativadas neste dispositivo.');
+        toastSucesso('Notificações desativadas neste dispositivo.');
         return;
       }
       if (!('Notification' in window) || !('PushManager' in window)) throw new Error('Este navegador não oferece suporte a notificações push.');
@@ -421,35 +433,34 @@ function GerenciarNotificacoes({ requisitar }) {
       inscricao ??= await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: chave });
       await requisitar('/notificacoes/inscricao', { method: 'POST', body: JSON.stringify(inscricao.toJSON()) });
       definirAtiva(true);
-      definirMensagem('Notificações ativadas neste dispositivo.');
+      toastSucesso('Notificações ativadas neste dispositivo.');
     } catch (erro) {
-      definirMensagem(erro.message || 'Não foi possível alterar as notificações.');
+      toastErro(erro.message || 'Não foi possível alterar as notificações.');
     } finally {
       definirProcessando(false);
     }
   }
 
-  return <section className="notificacoes-dispositivo"><div><strong>Notificações neste dispositivo</strong><p>Receba um aviso quando um cliente agendar, cancelar ou alterar um horário.</p>{mensagem && <small role="status">{mensagem}</small>}</div><button className="botao-secundario" disabled={processando} onClick={alternarNotificacoes} type="button">{processando ? 'Verificando...' : ativa ? 'Desativar notificações' : permissao === 'granted' ? 'Registrar este dispositivo' : 'Ativar notificações'}</button></section>;
+  return <section className="notificacoes-dispositivo"><div><strong>Notificações neste dispositivo</strong><p>Receba um aviso quando um cliente agendar, cancelar ou alterar um horário.</p></div><button className="botao-secundario" disabled={processando} onClick={alternarNotificacoes} type="button">{processando ? 'Verificando...' : ativa ? 'Desativar notificações' : permissao === 'granted' ? 'Registrar este dispositivo' : 'Ativar notificações'}</button></section>;
 }
 
 function DashboardPremium({ dados, filtrosDashboard, definirFiltrosDashboard, requisitar }) {
   const resumo = dados.resumo ?? {};
   const dinheiro = (valor) => Number(valor ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const anterior = dados.comparacaoAnterior ?? {};
-  const ticketMedio = Number(resumo.atendimentosPagos) ? Number(resumo.receitaRealizada) / Number(resumo.atendimentosPagos) : 0;
-  const ticketMedioAnterior = Number(anterior.atendimentosPagos) ? Number(anterior.receitaRealizada) / Number(anterior.atendimentosPagos) : 0;
+  const ticketMedio = Number(resumo.atendimentosRealizados) ? Number(resumo.receitaRealizada) / Number(resumo.atendimentosRealizados) : 0;
+  const ticketMedioAnterior = Number(anterior.atendimentosRealizados) ? Number(anterior.receitaRealizada) / Number(anterior.atendimentosRealizados) : 0;
   const taxaCancelamento = Number(resumo.quantidadeAgendamentosElegiveis) ? (Number(resumo.quantidadeAgendamentosCancelados) / Number(resumo.quantidadeAgendamentosElegiveis)) * 100 : 0;
   const taxaCancelamentoAnterior = Number(anterior.quantidadeAgendamentosElegiveis) ? (Number(anterior.quantidadeAgendamentosCancelados) / Number(anterior.quantidadeAgendamentosElegiveis)) * 100 : 0;
   const periodoAnterior = dados.periodoComparacao ?? {};
   const formatarVariacao = (valor, base) => base ? `${valor > base ? '+' : ''}${(((valor - base) / base) * 100).toFixed(1).replace('.', ',')}%` : (valor ? 'Sem base anterior' : '0%');
   return <div className="dashboard-premium">
     <div className="dashboard-premium__cabecalho"><div><p className="sobretitulo">Agende Aki Pro</p><h1>Seu salão, em números.</h1><p>Visão operacional de {filtrosDashboard.dataInicio} a {filtrosDashboard.dataFim}, comparada com {periodoAnterior.dataInicioAnterior} a {periodoAnterior.dataFimAnterior}.</p></div><div className="dashboard-premium__acoes"><span>PRO</span><button className="botao-secundario" onClick={() => exportarDashboardCsv(dados, filtrosDashboard)} type="button">Exportar CSV</button><button className="botao-secundario" onClick={() => window.print()} type="button">Exportar PDF</button></div></div>
-    <GerenciarNotificacoes requisitar={requisitar} />
     <div className="filtros-dashboard"><Campo nome="dataInicio" rotulo="De" tipo="date" valor={filtrosDashboard.dataInicio} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataInicio: evento.target.value })} obrigatorio={false} /><Campo nome="dataFim" rotulo="Até" tipo="date" valor={filtrosDashboard.dataFim} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, dataFim: evento.target.value })} obrigatorio={false} /><SelectCampo rotulo="Filial" valor={filtrosDashboard.idUnidade} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idUnidade: evento.target.value })} opcoes={dados.opcoesFiltros?.filiais} chave="idUnidade" /><SelectCampo rotulo="Serviço" valor={filtrosDashboard.idServico} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idServico: evento.target.value })} opcoes={dados.opcoesFiltros?.servicos} chave="idServico" /><SelectCampo rotulo="Profissional" valor={filtrosDashboard.idFuncionario} aoMudar={(evento) => definirFiltrosDashboard({ ...filtrosDashboard, idFuncionario: evento.target.value })} opcoes={dados.opcoesFiltros?.funcionarios} chave="idFuncionario" /><button className="botao-secundario" onClick={() => definirFiltrosDashboard(filtrosIniciais)} type="button">Limpar filtros</button></div>
     <div className="grade-indicadores dashboard-premium__indicadores">
       <IndicadorComparado titulo="Receita realizada" valor={dinheiro(resumo.receitaRealizada)} variacao={formatarVariacao(Number(resumo.receitaRealizada), Number(anterior.receitaRealizada))} />
       <Indicador titulo="Receita prevista · próximos 30 dias" valor={dinheiro(resumo.receitaPrevista)} />
-      <IndicadorComparado titulo="Ticket médio confirmado" valor={dinheiro(ticketMedio)} variacao={formatarVariacao(ticketMedio, ticketMedioAnterior)} />
+      <IndicadorComparado titulo="Ticket médio realizado" valor={dinheiro(ticketMedio)} variacao={formatarVariacao(ticketMedio, ticketMedioAnterior)} />
       <IndicadorComparado titulo="Agendamentos no período" valor={resumo.quantidadeAgendamentosTotal ?? 0} variacao={formatarVariacao(Number(resumo.quantidadeAgendamentosTotal), Number(anterior.quantidadeAgendamentosTotal))} />
       <IndicadorComparado titulo="Taxa de cancelamento" valor={`${taxaCancelamento.toFixed(1).replace('.', ',')}%`} variacao={`${(taxaCancelamento - taxaCancelamentoAnterior > 0 ? '+' : '')}${(taxaCancelamento - taxaCancelamentoAnterior).toFixed(1).replace('.', ',')} p.p.`} inverso />
       <Indicador titulo="Atendimentos realizados" valor={resumo.quantidadeAgendamentosRealizados ?? 0} />
@@ -458,16 +469,16 @@ function DashboardPremium({ dados, filtrosDashboard, definirFiltrosDashboard, re
       <Indicador titulo="Atendimentos aguardando confirmação" valor={resumo.quantidadeAtendimentosAConfirmar ?? 0} />
     </div>
     <div className="dashboard-premium__graficos">
-      <section className="secao-painel"><h2>Evolução da receita</h2><p>Pagamentos aprovados, agrupados pela data em que foram registrados.</p><GraficoLinha dados={dados.receitaPorDia ?? []} campo="valor" cor="var(--ameixa)" vazio="Nenhum pagamento aprovado neste período." /></section>
-      <section className="secao-painel"><h2>Receita por serviço</h2><p>Serviços com maior valor recebido no período.</p><GraficoBarras dados={dados.receitaPorServico ?? []} campo="servico" valor="valor" formatar={dinheiro} vazio="Nenhuma receita confirmada para estes filtros." /></section>
+      <section className="secao-painel"><h2>Evolução da receita</h2><p>Valor dos serviços concluídos, pela data em que foram marcados como realizados.</p><GraficoLinha dados={dados.receitaPorDia ?? []} campo="valor" cor="var(--ameixa)" vazio="Nenhum serviço realizado neste período." /></section>
+      <section className="secao-painel"><h2>Receita por serviço</h2><p>Valor dos serviços realizados no período.</p><GraficoBarras dados={dados.receitaPorServico ?? []} campo="servico" valor="valor" formatar={dinheiro} vazio="Nenhum serviço realizado para estes filtros." /></section>
       <section className="secao-painel dashboard-premium__grafico-largo"><h2>Evolução dos agendamentos</h2><p>Todos os agendamentos pela data de início.</p><GraficoLinha dados={dados.agendamentosPorDia ?? []} campo="quantidade" cor="var(--verde-escuro, #397b61)" vazio="Nenhum agendamento para estes filtros." /><DistribuicaoStatus resumo={resumo} /></section>
       <section className="secao-painel dashboard-premium__grafico-largo"><h2>Demanda por dia e horário</h2><p>Agendamentos concluídos ou marcados; cancelamentos aparecem no detalhe de cada célula.</p><MapaCalor dados={dados.mapaCalor ?? []} /></section>
       <section className="secao-painel"><h2>Clientes atendidos</h2><p>Novos e recorrentes pela primeira visita concluída registrada no salão.</p><div className="dashboard-premium__cliente-metricas"><Indicador titulo="Clientes atendidos" valor={dados.clientes?.clientesAtendidos ?? 0} /><Indicador titulo="Novos clientes" valor={dados.clientes?.clientesNovos ?? 0} /><Indicador titulo="Clientes recorrentes" valor={dados.clientes?.clientesRecorrentes ?? 0} /></div></section>
-      <section className="secao-painel"><h2>Desempenho dos profissionais</h2><p>Atendimentos e pagamentos confirmados; ocupação comparada à disponibilidade semanal cadastrada.</p><TabelaProfissionais profissionais={dados.profissionais ?? []} dinheiro={dinheiro} /></section>
+      <section className="secao-painel"><h2>Desempenho dos profissionais</h2><p>Atendimentos e valores dos serviços realizados; ocupação comparada à disponibilidade semanal cadastrada.</p><TabelaProfissionais profissionais={dados.profissionais ?? []} dinheiro={dinheiro} /></section>
       <section className="secao-painel dashboard-premium__grafico-largo"><h2>Insights do negócio</h2><p>Sugestões geradas por regras aplicadas aos dados deste período.</p><ListaInsights insights={dados.insights ?? []} /></section>
       <section className="secao-painel dashboard-premium__grafico-largo"><h2>Clientes sem retorno há 90 dias</h2><p>Clientes com atendimento realizado, sem novo atendimento concluído nos últimos 90 dias.</p><TabelaClientesInativos clientes={dados.clientesInativos ?? []} /></section>
     </div>
-    <small className="dashboard-premium__nota">Receita realizada inclui somente o último pagamento aprovado de cada agendamento. Agendamentos sem pagamento confirmado não entram nesse valor. A receita prevista considera os agendamentos futuros ativos.</small>
+    <small className="dashboard-premium__nota">Receita realizada soma o valor dos serviços marcados como realizados, pela data da confirmação. O pagamento continua sendo controlado separadamente. A receita prevista considera os agendamentos futuros ativos.</small>
     <small className="dashboard-premium__nota">Clientes novos são os que tiveram seu primeiro atendimento marcado como realizado no período. Recorrentes são os que já tinham ao menos um atendimento realizado antes do período. Clientes inativos são os que estão há 90 dias sem atendimento realizado. A disponibilidade profissional é uma estimativa baseada na grade semanal e não desconta feriados nem bloqueios pontuais.</small>
   </div>;
 }
@@ -574,8 +585,8 @@ function Dashboard({ dados, filtrosDashboard, definirFiltrosDashboard, requisita
 
 function Assinatura({ aoAtivarPremium, dados, requisitar }) {
   const [assinatura, definirAssinatura] = useState(dados.assinatura);
-  const [mensagem, definirMensagem] = useState('');
   const [enviando, definirEnviando] = useState('');
+  const avisouRetornoCheckout = useRef(false);
   useEffect(() => { definirAssinatura(dados.assinatura); }, [dados.assinatura]);
   const oferta = dados.oferta ?? {};
   const premium = oferta.premium ?? { opcoes: [], recursos: [] };
@@ -590,56 +601,64 @@ function Assinatura({ aoAtivarPremium, dados, requisitar }) {
   const premiumAtivo = assinatura?.temAcessoPremium;
   const modoTeste = Boolean(dados.modoTeste);
 
+  useEffect(() => {
+    if (!premiumAtivo || avisouRetornoCheckout.current || typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).get('checkout') !== 'retorno') return;
+    avisouRetornoCheckout.current = true;
+    toastInfo('Assinatura ativada. Acesse Configurações para registrar este dispositivo e receber notificações.');
+  }, [premiumAtivo]);
+
   async function assinar(periodicidade) {
-    definirEnviando(periodicidade); definirMensagem('');
+    definirEnviando(periodicidade);
     try {
       if (modoTeste) {
         const resultado = await requisitar('/assinatura/ativar', { method: 'POST', body: JSON.stringify({ periodicidade }) });
         definirAssinatura(resultado.assinatura);
         aoAtivarPremium?.();
-        definirMensagem(resultado.mensagem);
+        toastSucesso(resultado.mensagem);
+        toastInfo('Acesse Configurações para registrar este dispositivo e receber notificações.');
         return;
       }
       const resultado = await requisitar('/assinatura/checkout', { method: 'POST', body: JSON.stringify({ periodicidade }) });
       window.location.assign(resultado.checkoutUrl);
-    } catch (erro) { definirMensagem(erro.message); } finally { definirEnviando(''); }
+    } catch (erro) { toastErro(erro.message); } finally { definirEnviando(''); }
   }
 
   async function cancelar() {
     if (!window.confirm('Deseja cancelar a renovação do Premium? O acesso permanece até o fim do período já pago.')) return;
-    definirEnviando('cancelar'); definirMensagem('');
+    definirEnviando('cancelar');
     try {
       const resultado = await requisitar('/assinatura/cancelar', { method: 'PATCH' });
-      definirMensagem(resultado.mensagem); definirAssinatura(resultado.assinatura ?? { ...assinatura, status: 'CANCELAMENTO_AGENDADO' });
-    } catch (erro) { definirMensagem(erro.message); } finally { definirEnviando(''); }
+      toastSucesso(resultado.mensagem); definirAssinatura(resultado.assinatura ?? { ...assinatura, status: 'CANCELAMENTO_AGENDADO' });
+    } catch (erro) { toastErro(erro.message); } finally { definirEnviando(''); }
   }
 
   async function alterarPeriodicidade(periodicidade) {
-    definirEnviando(periodicidade); definirMensagem('');
+    definirEnviando(periodicidade);
     try {
       const resultado = await requisitar('/assinatura/periodicidade', { method: 'PATCH', body: JSON.stringify({ periodicidade }) });
-      definirMensagem(resultado.mensagem); definirAssinatura({ ...assinatura, periodicidadePendente: periodicidade });
-    } catch (erro) { definirMensagem(erro.message); } finally { definirEnviando(''); }
+      toastSucesso(resultado.mensagem); definirAssinatura({ ...assinatura, periodicidadePendente: periodicidade });
+    } catch (erro) { toastErro(erro.message); } finally { definirEnviando(''); }
   }
 
   async function atualizarStatus() {
-    definirEnviando('atualizar'); definirMensagem('');
+    definirEnviando('atualizar');
     try {
       const resultado = await requisitar('/assinatura');
       definirAssinatura(resultado.assinatura);
       if (resultado.assinatura?.temAcessoPremium) aoAtivarPremium?.();
-      definirMensagem('Status da assinatura atualizado.');
-    } catch (erro) { definirMensagem(erro.message); } finally { definirEnviando(''); }
+      toastSucesso('Status da assinatura atualizado.');
+    } catch (erro) { toastErro(erro.message); } finally { definirEnviando(''); }
   }
 
   async function cancelarCheckoutPendente() {
     if (!window.confirm('Deseja cancelar este checkout pendente? Depois você poderá iniciar outra contratação.')) return;
-    definirEnviando('cancelar-pendente'); definirMensagem('');
+    definirEnviando('cancelar-pendente');
     try {
       const resultado = await requisitar('/assinatura/cancelar', { method: 'PATCH' });
       definirAssinatura({ ...assinatura, status: 'CANCELADA', temAcessoPremium: false });
-      definirMensagem(resultado.mensagem);
-    } catch (erro) { definirMensagem(erro.message); } finally { definirEnviando(''); }
+      toastSucesso(resultado.mensagem);
+    } catch (erro) { toastErro(erro.message); } finally { definirEnviando(''); }
   }
 
   const assinaturaPendente = assinatura?.status === 'PENDENTE';
@@ -649,7 +668,7 @@ function Assinatura({ aoAtivarPremium, dados, requisitar }) {
     <p className="sobretitulo">Plano do salão</p>
     <h1>Escolha como crescer.</h1>
     <p className="descricao-assinatura">O Básico mantém sua operação organizada. Com o Premium, você terá recursos avançados assim que forem lançados.</p>
-    {mensagem && <p className="mensagem-formulario">{mensagem}</p>}
+
     {assinaturaPendente && <section className="status-assinatura"><div><strong>Checkout em andamento</strong><p>Se você já concluiu o checkout, aguarde a confirmação do Stripe e atualize o status.</p></div><button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button><button className="botao-secundario" disabled={Boolean(enviando)} onClick={cancelarCheckoutPendente} type="button">{enviando === 'cancelar-pendente' ? 'Cancelando...' : 'Cancelar checkout'}</button></section>}
     {assinaturaComProblema && <section className="status-assinatura"><div><strong>{assinatura.status === 'PAUSADA' ? 'Assinatura pausada' : 'Pagamento pendente'}</strong><p>Verifique a forma de pagamento da assinatura Stripe antes de tentar novamente.</p></div><button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button></section>}
     {premiumAtivo && <section className="status-assinatura"><div><strong>Premium {assinatura.periodicidade === 'ANUAL' ? 'anual' : 'mensal'}{assinatura.status === 'EM_TESTE' ? ' em teste' : ' ativo'}</strong><p>{assinatura.status === 'CANCELAMENTO_AGENDADO' ? 'A renovação foi cancelada. Você mantém o Premium até o fim do ciclo vigente.' : assinatura.status === 'EM_TESTE' ? 'Seu teste grátis está ativo. A cobrança começa ao final do período de teste.' : assinatura.periodicidadePendente ? `A troca para o plano ${assinatura.periodicidadePendente.toLowerCase()} será feita na próxima renovação.` : 'Sua assinatura está em dia.'}</p>{assinatura.dataProximaCobranca && <small>{assinatura.status === 'CANCELAMENTO_AGENDADO' ? 'Acesso Premium até: ' : assinatura.status === 'EM_TESTE' ? 'Primeira cobrança prevista: ' : 'Próxima renovação: '}{formatarDataAssinatura(assinatura.dataProximaCobranca)}</small>}</div>{assinatura.status !== 'CANCELAMENTO_AGENDADO' && <button className="botao-secundario" disabled={enviando === 'cancelar'} onClick={cancelar} type="button">{enviando === 'cancelar' ? 'Cancelando...' : 'Cancelar renovação'}</button>}</section>}
@@ -669,7 +688,7 @@ function Filiais({ dados, enderecoCep, enviarFormulario, excluirItem, buscarCep,
     const link = `${window.location.origin}/${filial.slugSalao}/${filial.slugFilial}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(`Agende seu horário em ${filial.nome}: ${link}`)}`, '_blank', 'noopener,noreferrer');
   }
-  return <><p className="sobretitulo">Presença local</p><h1>{filialEdicao ? 'Atualize a filial.' : 'Cadastre uma nova filial.'}</h1><FormularioFilial buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} endereco={enderecoCep} filial={filialEdicao} key={filialEdicao?.idUnidade ?? 'nova'} salvarFilial={enviarFormulario} /><CabecalhoLista titulo="Suas filiais" descricao="Selecione uma unidade para alterar os dados, copiar o link de agendamento ou removê-la da descoberta." /><div className="grade-gestao">{dados.filiais?.map((filial) => { const paginaAtiva = Number(filial.quantidadeOpcoesAgendamento) > 0; return <article className="cartao-gestao" key={filial.idUnidade}><div><strong>{filial.nome}</strong><span>{filial.categoria} · {filial.municipio}/{filial.estado}</span><small>{filial.rua}, {filial.numero} · {filial.telefone || 'Sem telefone'}</small><small>{paginaAtiva ? 'Página de agendamento disponível' : 'Página temporariamente indisponível'}</small></div><div className="acoes-gestao"><button disabled={!paginaAtiva} onClick={() => copiarLink(filial)} type="button">Copiar link</button><button disabled={!paginaAtiva} onClick={() => compartilharWhatsApp(filial)} type="button">WhatsApp</button><AcoesGestao aoEditar={() => definirFilialEdicao(filial)} aoExcluir={() => excluirItem(`/filiais/${filial.idUnidade}`, `a filial “${filial.nome}”`)} /></div></article>; })}</div>{!dados.filiais?.length && <p className="estado-lista">Nenhuma filial cadastrada.</p>}</>;
+  return <><p className="sobretitulo">Presença local</p><h1>{filialEdicao ? 'Atualize a filial.' : 'Cadastre uma nova filial.'}</h1><FormularioFilial buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} endereco={enderecoCep} filial={filialEdicao} key={filialEdicao?.idUnidade ?? 'nova'} responsavel={dados.perfilResponsavel} salvarFilial={enviarFormulario} /><CabecalhoLista titulo="Suas filiais" descricao="Selecione uma unidade para alterar os dados, copiar o link de agendamento ou removê-la da descoberta." /><div className="grade-gestao">{dados.filiais?.map((filial) => { const paginaAtiva = Number(filial.quantidadeOpcoesAgendamento) > 0; return <article className="cartao-gestao" key={filial.idUnidade}><div><strong>{filial.nome}</strong><span>{filial.categoria} · {filial.municipio}/{filial.estado}</span><small>{filial.rua}, {filial.numero} · {filial.telefone || 'Sem telefone'}</small><small>{filial.email}</small><small>{paginaAtiva ? 'Página de agendamento disponível' : 'Página temporariamente indisponível'}</small></div><div className="acoes-gestao"><button disabled={!paginaAtiva} onClick={() => copiarLink(filial)} type="button">Copiar link</button><button disabled={!paginaAtiva} onClick={() => compartilharWhatsApp(filial)} type="button">WhatsApp</button><AcoesGestao aoEditar={() => definirFilialEdicao(filial)} aoExcluir={() => excluirItem(`/filiais/${filial.idUnidade}`, `a filial “${filial.nome}”`)} /></div></article>; })}</div>{!dados.filiais?.length && <p className="estado-lista">Nenhuma filial cadastrada.</p>}</>;
 }
 
 function Servicos({ dados, enviarFormulario, excluirItem, servicoEdicao, definirServicoEdicao }) { const editando = Boolean(servicoEdicao); return <><p className="sobretitulo">Seu catálogo</p><h1>{editando ? 'Atualize o serviço.' : 'Serviços que encantam.'}</h1><form className="formulario-salao grade-formulario" key={servicoEdicao?.idServico ?? 'novo'} onSubmit={(evento) => enviarFormulario(evento, editando ? `/servicos/${servicoEdicao.idServico}` : '/servicos', editando ? 'PATCH' : 'POST')}><SelectFilial filiais={dados.filiais} valor={servicoEdicao?.idUnidade} /><Campo nome="nome" rotulo="Nome do serviço" valor={servicoEdicao?.nome} /><Campo nome="valor" rotulo="Valor" tipo="number" passo="0.01" valor={servicoEdicao?.valor} /><SelectDuracao valor={servicoEdicao?.duracaoMinutos} /><Campo nome="descricao" rotulo="Descrição" valor={servicoEdicao?.descricao} obrigatorio={false} /><div className="acoes-formulario"><button className="botao-enviar">{editando ? 'Salvar serviço' : 'Adicionar serviço'} <span>→</span></button>{editando && <button className="botao-secundario" onClick={() => definirServicoEdicao(null)} type="button">Cancelar edição</button>}</div></form><CabecalhoLista titulo="Serviços cadastrados" descricao="Seu catálogo organizado por filial." /><div className="grade-gestao">{dados.servicos?.map((servico) => <article className="cartao-gestao" key={servico.idServico}><div><strong>{servico.nome}</strong><span>{servico.filial} · {servico.duracaoMinutos} min · R$ {Number(servico.valor).toFixed(2).replace('.', ',')}</span>{servico.descricao && <small>{servico.descricao}</small>}</div><AcoesGestao aoEditar={() => definirServicoEdicao(servico)} aoExcluir={() => excluirItem(`/servicos/${servico.idServico}`, `o serviço “${servico.nome}”`)} /></article>)}</div>{!dados.servicos?.length && <p className="estado-lista">Nenhum serviço cadastrado.</p>}</>; }
@@ -686,7 +705,7 @@ function AvaliacoesSalao({ filiais = [], requisitar }) {
     definirMensagem('Carregando avaliações...');
     requisitar(`/avaliacoes?pagina=${pagina}${idUnidade ? `&idUnidade=${idUnidade}` : ''}`)
       .then((resultado) => { if (ativo) { definirDados(resultado); definirMensagem(''); } })
-      .catch((erro) => { if (ativo) definirMensagem(erro.message); });
+      .catch((erro) => { if (ativo) { definirMensagem(''); toastErro(erro.message); } });
     return () => { ativo = false; };
   }, [idUnidade, pagina, requisitar]);
   return <><p className="sobretitulo">Opiniões dos clientes</p><h1>Avaliações recebidas.</h1>

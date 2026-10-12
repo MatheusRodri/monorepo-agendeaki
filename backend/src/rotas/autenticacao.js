@@ -1,7 +1,11 @@
 import { Router } from 'express';
-import { obterClienteSupabase } from '../configuracoes/supabase.js';
+import { QueryTypes } from 'sequelize';
+import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
+import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { cnpjValido, cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
+import { prepararDocumento } from '../servicos/documentosProtegidos.js';
 import { obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { criarSlugSalaoUnico } from '../servicos/slugs.js';
 
 const roteadorAutenticacao = Router();
 
@@ -9,6 +13,28 @@ const perfis = {
   cliente: 'CLIENTE',
   salao: 'ADMIN_SALAO',
 };
+
+async function removerCadastroLocal(idUsuario, perfil) {
+  await bancoDeDados.transaction(async (transacao) => {
+    if (perfil === perfis.salao) {
+      await bancoDeDados.query('DELETE FROM tb_salao WHERE fk_usuario_administrador = :idUsuario', {
+        replacements: { idUsuario }, transaction: transacao,
+      });
+    }
+    await bancoDeDados.query('DELETE FROM tb_usuario WHERE id_usuario = :idUsuario', {
+      replacements: { idUsuario }, transaction: transacao,
+    });
+  });
+}
+
+async function removerIdentidadeSupabase(clienteAdministrativo, idAutenticacaoExterna) {
+  try {
+    const { error } = await clienteAdministrativo.auth.admin.deleteUser(idAutenticacaoExterna);
+    if (error) console.error('[Cadastro] Não foi possível remover a identidade de autenticação.', error.message);
+  } catch (erro) {
+    console.error('[Cadastro] Não foi possível remover a identidade de autenticação.', erro.message);
+  }
+}
 
 function obterNomeCadastro(dadosCadastro, perfil) {
   return perfil === perfis.salao ? dadosCadastro.nomeResponsavel : dadosCadastro.nome;
@@ -45,6 +71,8 @@ function validarDadosCadastro(dadosCadastro, perfil) {
   }
 
   if (perfil === perfis.salao) {
+    if (!dadosCadastro.nomeSalao?.trim()) return 'Informe o nome do salão.';
+    if (somenteNumeros(dadosCadastro.telefoneResponsavel).length < 10 || somenteNumeros(dadosCadastro.telefoneResponsavel).length > 11) return 'Informe um telefone válido para o responsável.';
     const tipoDocumento = dadosCadastro.tipoDocumento;
     const documentoValido = tipoDocumento === 'CPF' ? cpfValido(dadosCadastro.documento) : tipoDocumento === 'CNPJ' && cnpjValido(dadosCadastro.documento);
     if (!documentoValido) return `Informe um ${tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido.`;
@@ -82,46 +110,124 @@ async function criarConta(requisicao, resposta, perfil) {
   const cpf = perfil === perfis.cliente ? somenteNumeros(dadosCadastro.cpf) : null;
   const tipoDocumento = perfil === perfis.salao ? dadosCadastro.tipoDocumento : 'CPF';
   const documento = perfil === perfis.salao ? somenteNumeros(dadosCadastro.documento) : cpf;
+  const telefone = perfil === perfis.salao ? somenteNumeros(dadosCadastro.telefoneResponsavel) : null;
+  const nomeSalao = perfil === perfis.salao ? dadosCadastro.nomeSalao.trim() : null;
+
+  let clienteAdministrativo;
+  let idAutenticacaoExterna;
+  let cadastroLocal;
 
   try {
-    const clienteSupabase = obterClienteSupabase();
-    const { data: dadosAutenticacao, error: erroAutenticacao } = await clienteSupabase.auth.signUp({
+    clienteAdministrativo = obterClienteAdministrativoSupabase();
+
+    // Primeiro cria a identidade sem enviar e-mail. O link só é solicitado depois
+    // que todos os registros locais forem gravados com sucesso.
+    const { data: dadosAutenticacao, error: erroAutenticacao } = await clienteAdministrativo.auth.admin.createUser({
       email,
       password: dadosCadastro.senha,
-      options: {
-        data: {
-          nome,
-          perfil,
-        },
+      email_confirm: false,
+      user_metadata: {
+        nome,
+        perfil,
+        ...(perfil === perfis.salao ? { telefone, nomeSalao } : {}),
       },
     });
 
     if (erroAutenticacao) {
       return resposta.status(400).json({ mensagem: erroAutenticacao.message });
     }
+    idAutenticacaoExterna = dadosAutenticacao.user?.id;
+    if (!idAutenticacaoExterna) throw new Error('O provedor de autenticação não retornou o identificador da conta.');
 
-    await sincronizarUsuario({
-      cpf,
-      dataNascimento: dadosCadastro.dataNascimento,
-      documento,
-      email: dadosAutenticacao.user.email,
-      idAutenticacaoExterna: dadosAutenticacao.user.id,
-      nome,
-      perfil,
-      tipoDocumento,
+    const tipoEfetivo = tipoDocumento ?? (cpf ? 'CPF' : null);
+    const protegido = prepararDocumento(tipoEfetivo, documento);
+    cadastroLocal = await bancoDeDados.transaction(async (transacao) => {
+      const emailExistente = await bancoDeDados.query(
+        'SELECT id_usuario FROM tb_usuario WHERE ds_email = :email LIMIT 1',
+        { replacements: { email }, transaction: transacao, type: QueryTypes.SELECT },
+      );
+      if (emailExistente.length) {
+        const erro = new Error('Este e-mail já está cadastrado.');
+        erro.status = 409;
+        throw erro;
+      }
+
+      if (protegido.documentoIndice) {
+        const documentoExistente = await bancoDeDados.query(
+          'SELECT id_usuario FROM tb_usuario WHERE ds_documento_indice = :documentoIndice LIMIT 1',
+          { replacements: { documentoIndice: protegido.documentoIndice }, transaction: transacao, type: QueryTypes.SELECT },
+        );
+        if (documentoExistente.length) {
+          const erro = new Error(`Este ${tipoEfetivo} já está cadastrado.`);
+          erro.status = 409;
+          throw erro;
+        }
+      }
+
+      await bancoDeDados.query(
+        `INSERT INTO tb_usuario (nm_usuario, ds_email, nu_telefone, dt_nascimento, tp_documento, ds_documento_cifrado, ds_documento_indice, tp_usuario, id_autenticacao_externa)
+         VALUES (:nome, :email, :telefone, :dataNascimento, :tipoDocumento, :documentoCifrado, :documentoIndice, :perfil, :idAutenticacaoExterna)`,
+        {
+          replacements: {
+            ...protegido,
+            dataNascimento: dadosCadastro.dataNascimento,
+            email,
+            idAutenticacaoExterna,
+            nome,
+            perfil,
+            telefone,
+            tipoDocumento: tipoEfetivo,
+          },
+          transaction: transacao,
+        },
+      );
+
+      const usuariosInseridos = await bancoDeDados.query(
+        'SELECT id_usuario AS idUsuario FROM tb_usuario WHERE id_autenticacao_externa = :idAutenticacaoExterna LIMIT 1',
+        { replacements: { idAutenticacaoExterna }, transaction: transacao, type: QueryTypes.SELECT },
+      );
+      if (!usuariosInseridos[0]) throw new Error('Não foi possível salvar o cadastro do responsável.');
+
+      if (perfil === perfis.salao) {
+        const slug = await criarSlugSalaoUnico(nomeSalao, { transaction: transacao });
+        await bancoDeDados.query(
+          'INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_slug) VALUES (:idUsuario, :nomeSalao, :slug)',
+          { replacements: { idUsuario: usuariosInseridos[0].idUsuario, nomeSalao, slug }, transaction: transacao },
+        );
+      }
+
+      return usuariosInseridos[0];
     });
 
+    const clienteSupabase = obterClienteSupabase();
+    const { error: erroEnvioConfirmacao } = await clienteSupabase.auth.resend({ type: 'signup', email });
+    if (erroEnvioConfirmacao) {
+      await removerCadastroLocal(cadastroLocal.idUsuario, perfil);
+      cadastroLocal = null;
+      await removerIdentidadeSupabase(clienteAdministrativo, idAutenticacaoExterna);
+      idAutenticacaoExterna = null;
+      return resposta.status(502).json({ mensagem: 'Não foi possível enviar o e-mail de confirmação. Nenhum cadastro foi concluído; tente novamente.' });
+    }
+
     return resposta.status(201).json({
-      mensagem: 'Conta criada com sucesso. Faça login para continuar.',
+      mensagem: 'Conta criada. Enviamos um link para confirmar seu e-mail.',
       usuario: {
-        id: dadosAutenticacao.user?.id,
-        email: dadosAutenticacao.user?.email,
+        id: idAutenticacaoExterna,
+        email,
         nome,
         perfil,
       },
     });
   } catch (erro) {
-    return resposta.status(500).json({ mensagem: erro.message });
+    if (cadastroLocal) {
+      try {
+        await removerCadastroLocal(cadastroLocal.idUsuario, perfil);
+      } catch (erroRemocaoLocal) {
+        console.error('[Cadastro] Não foi possível remover os registros locais após falha no cadastro.', erroRemocaoLocal.message);
+      }
+    }
+    if (idAutenticacaoExterna && clienteAdministrativo) await removerIdentidadeSupabase(clienteAdministrativo, idAutenticacaoExterna);
+    return resposta.status(erro.status ?? 500).json({ mensagem: erro.message });
   }
 }
 
@@ -156,11 +262,20 @@ async function realizarLogin(requisicao, resposta, perfil) {
       idAutenticacaoExterna: dadosAutenticacao.user.id,
       nome: dadosAutenticacao.user.user_metadata.nome ?? dadosAutenticacao.user.email,
       perfil,
+      telefone: dadosAutenticacao.user.user_metadata.telefone ?? null,
     });
     const dadosCadastrais = await obterDadosCadastraisUsuario(usuarioLocal.idUsuario);
     const cadastroIncompleto = perfil === perfis.cliente
       ? !dadosCadastrais?.cpf || !dadosCadastrais?.dataNascimento
-      : !dadosCadastrais?.dataNascimento || !dadosCadastrais?.tipoDocumento || !dadosCadastrais?.documento;
+      : !dadosCadastrais?.dataNascimento || !dadosCadastrais?.tipoDocumento || !dadosCadastrais?.documento || !dadosCadastrais?.telefone;
+    let salaoIncompleto = false;
+    if (perfil === perfis.salao) {
+      const saloesLocais = await bancoDeDados.query(
+        'SELECT id_salao FROM tb_salao WHERE fk_usuario_administrador=:idUsuario LIMIT 1',
+        { replacements: { idUsuario: usuarioLocal.idUsuario }, type: QueryTypes.SELECT },
+      );
+      salaoIncompleto = saloesLocais.length === 0;
+    }
 
     return resposta.status(200).json({
       mensagem: 'Login realizado com sucesso.',
@@ -173,6 +288,9 @@ async function realizarLogin(requisicao, resposta, perfil) {
       tokenAcesso: dadosAutenticacao.session.access_token,
       tokenAtualizacao: dadosAutenticacao.session.refresh_token,
       cadastroIncompleto,
+      salaoIncompleto,
+      nomeSalao: perfil === perfis.salao ? dadosAutenticacao.user.user_metadata?.nomeSalao ?? '' : null,
+      dadosCadastrais,
     });
   } catch (erro) {
     return resposta.status(500).json({ mensagem: erro.message });

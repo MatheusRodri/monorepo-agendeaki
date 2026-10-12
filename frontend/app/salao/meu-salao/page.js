@@ -1,5 +1,5 @@
-import AreaSalao from '../../../components/AreaSalao/AreaSalao';
+import { redirect } from 'next/navigation';
 
 export default function PaginaMeuSalao() {
-  return <AreaSalao secao="salao" />;
+  redirect('/salao/configuracoes');
 }

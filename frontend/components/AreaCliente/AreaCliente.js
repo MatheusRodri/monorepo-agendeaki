@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
 import MapaSaloes from '../MapaSaloes/MapaSaloes';
 import { requisitarApi } from '../../utils/api';
+import { toastErro } from '../../utils/toast';
 
 export default function AreaCliente() {
   const [coordenadas, definirCoordenadas] = useState(null);
@@ -23,6 +24,7 @@ export default function AreaCliente() {
   const [salaoSelecionado, definirSalaoSelecionado] = useState(null);
   const [mensagem, definirMensagem] = useState('Localizando salões próximos...');
   const [carregando, definirCarregando] = useState(false);
+  const [falhaBusca, definirFalhaBusca] = useState(false);
   const idBuscaAtual = useRef(0);
 
   const buscarSaloes = useCallback(async () => {
@@ -30,6 +32,7 @@ export default function AreaCliente() {
 
     const idBusca = ++idBuscaAtual.current;
     definirCarregando(true);
+    definirFalhaBusca(false);
     definirMensagem('');
     try {
       const parametros = new URLSearchParams({
@@ -45,11 +48,15 @@ export default function AreaCliente() {
 
       definirSaloes(dadosResposta.saloes);
       definirCoordenadasMapa(dadosResposta.centroBusca);
-      definirMensagem(dadosResposta.saloes.length ? '' : `Nenhum salão foi encontrado em até ${raioKm} km da sua localização. Verifique o filtro de tipo ou aumente o raio.`);
+      definirMensagem(dadosResposta.saloes.length ? '' : (raioKm === 0
+        ? 'Nenhum salão foi encontrado com esses filtros.'
+        : `Nenhum salão foi encontrado em até ${raioKm} km da sua localização. Verifique o filtro de tipo ou aumente o raio.`));
     } catch (erro) {
       if (idBusca !== idBuscaAtual.current) return;
       definirSaloes([]);
-      definirMensagem(erro.message);
+      definirMensagem('');
+      definirFalhaBusca(true);
+      toastErro(erro.message);
     } finally {
       if (idBusca === idBuscaAtual.current) definirCarregando(false);
     }
@@ -57,7 +64,9 @@ export default function AreaCliente() {
 
   const localizarCliente = useCallback((centralizar = false) => {
     if (!navigator.geolocation) {
-      definirMensagem('Seu navegador não disponibiliza localização.');
+      definirMensagem('');
+      definirFalhaBusca(true);
+      toastErro('Seu navegador não disponibiliza localização.');
       return;
     }
 
@@ -73,7 +82,7 @@ export default function AreaCliente() {
         definirCoordenadas(novaCoordenada); definirCoordenadasMapa(novaCoordenada);
         definirCarregando(false);
       },
-      () => { definirCarregando(false); definirMensagem('Permita o acesso à localização para encontrar salões próximos.'); },
+      () => { definirCarregando(false); definirMensagem(''); definirFalhaBusca(true); toastErro('Permita o acesso à localização para encontrar salões próximos.'); },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
   }, []);
@@ -146,7 +155,7 @@ export default function AreaCliente() {
           <div className="filtros-exploracao">
             <div className="filtro-raio" role="group" aria-label="Raio de busca">
               <span>Distância</span>
-              {[1, 5, 10].map((raio) => <button className={raioKm === raio ? 'filtro-raio__ativo' : ''} key={raio} onClick={() => definirRaioKm(raio)} type="button">{raio} km</button>)}
+              {[[1, '1 km'], [5, '5 km'], [10, '10 km'], [0, 'Sem distância']].map(([raio, rotulo]) => <button className={raioKm === raio ? 'filtro-raio__ativo' : ''} key={raio} onClick={() => { definirRaioKm(raio); definirCentralizarNoCliente(false); }} type="button">{rotulo}</button>)}
             </div>
             <div className="filtro-tipo" role="group" aria-label="Tipo de salão">
               <span>Tipo</span>
@@ -157,7 +166,7 @@ export default function AreaCliente() {
           <div className="lista-saloes">
             {carregando && <p className="estado-lista">Buscando salões...</p>}
             {mensagem && <p className="estado-lista">{mensagem}</p>}
-            {!carregando && !mensagem && !saloesFiltrados.length && <p className="estado-lista">Nenhum salão desse tipo foi encontrado neste raio.</p>}
+            {!carregando && !mensagem && !falhaBusca && !saloesFiltrados.length && <p className="estado-lista">Nenhum salão desse tipo foi encontrado neste raio.</p>}
             {saloesFiltrados.map((salao) => (
               <Link className={`cartao-salao${salao.proAtivo ? ' cartao-salao--pro' : ''}`} href={`/${salao.slugSalao}/${salao.slugFilial}`} key={salao.idUnidade}>
                 <span className="cartao-salao__icone">✦</span><span><strong>{salao.nomeUnidade} {Boolean(salao.proAtivo) && <b className="selo-pro">PRO</b>}</strong><small>{salao.nomeSalao} · {Number(salao.distanciaKm).toFixed(1)} km</small><small>{salao.quantidadeAvaliacoes ? `★ ${Number(salao.mediaAvaliacao).toFixed(1)} · ${salao.quantidadeAvaliacoes} avaliações` : 'Sem avaliações'}</small><em>{salao.categoria.toLowerCase()}</em></span>

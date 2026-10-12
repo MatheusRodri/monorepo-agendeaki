@@ -11,8 +11,12 @@ import { validarChavesDocumentos } from './servicos/documentosProtegidos.js';
 
 const aplicacao = express();
 const porta = Number(process.env.PORT ?? 3001);
+const urlFrontend = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+const origemFrontend = new URL(urlFrontend).origin;
 
-aplicacao.use(cors());
+aplicacao.use(cors({
+  origin: (origem, callback) => callback(null, origem === origemFrontend),
+}));
 aplicacao.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 aplicacao.use(express.json());
 aplicacao.use((requisicao, resposta, proximo) => {

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { requisitarApi } from '../../utils/api';
+import { toastErro, toastSucesso } from '../../utils/toast';
 
 const configuracoes = {
   cliente: { caminho: 'cliente', rotaApi: 'clientes', titulo: 'Recupere sua senha.' },
@@ -12,22 +13,20 @@ const configuracoes = {
 export default function FormularioRecuperacaoSenha({ perfil }) {
   const configuracao = configuracoes[perfil];
   const [email, definirEmail] = useState('');
-  const [mensagem, definirMensagem] = useState('');
-  const [tipoMensagem, definirTipoMensagem] = useState('');
   const [enviando, definirEnviando] = useState(false);
 
   async function enviarFormulario(evento) {
     evento.preventDefault();
-    definirEnviando(true); definirMensagem('');
+    definirEnviando(true);
     try {
       const dados = await requisitarApi(`/api/${configuracao.rotaApi}/recuperar-senha`, { dados: { email }, metodo: 'POST' });
-      definirTipoMensagem('sucesso'); definirMensagem(dados.mensagem);
+      toastSucesso(dados.mensagem);
     } catch (erro) {
-      definirTipoMensagem('erro'); definirMensagem(erro.message);
+      toastErro(erro.message);
     } finally { definirEnviando(false); }
   }
 
-  return <PaginaAcesso caminho={configuracao.caminho} descricao="Informe seu e-mail e enviaremos um link seguro para definir uma nova senha." titulo={configuracao.titulo}><form onSubmit={enviarFormulario}><label className="campo-formulario" htmlFor="email"><span>E-mail</span><input autoComplete="email" id="email" name="email" onChange={(evento) => definirEmail(evento.target.value)} placeholder="voce@exemplo.com" required type="email" value={email} /></label>{mensagem && <p className={`mensagem-formulario mensagem-formulario--${tipoMensagem}`} role="alert">{mensagem}</p>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Enviando...' : 'Enviar link de recuperação'} <span aria-hidden="true">→</span></button></form></PaginaAcesso>;
+  return <PaginaAcesso caminho={configuracao.caminho} descricao="Informe seu e-mail e enviaremos um link seguro para definir uma nova senha." titulo={configuracao.titulo}><form onSubmit={enviarFormulario}><label className="campo-formulario" htmlFor="email"><span>E-mail</span><input autoComplete="email" id="email" name="email" onChange={(evento) => definirEmail(evento.target.value)} placeholder="voce@exemplo.com" required type="email" value={email} /></label><button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Enviando...' : 'Enviar link de recuperação'} <span aria-hidden="true">→</span></button></form></PaginaAcesso>;
 }
 
 export function PaginaAcesso({ caminho, children, descricao, titulo }) {

@@ -7,7 +7,7 @@ function dataLocal(data = new Date()) {
   return new Date(data.getTime() - deslocamento).toISOString().slice(0, 10);
 }
 
-export default function FormularioAgendamentoSalao({ clientes, filiais, funcionarios, requisitar, servicos, aoCancelar, aoSalvar }) {
+export default function FormularioAgendamentoSalao({ clientes, filiais, funcionarios, mostrarToastErro, requisitar, servicos, aoCancelar, aoSalvar }) {
   const [idUnidade, definirIdUnidade] = useState('');
   const [idServico, definirIdServico] = useState('');
   const [idFuncionario, definirIdFuncionario] = useState('');
@@ -45,10 +45,10 @@ export default function FormularioAgendamentoSalao({ clientes, filiais, funciona
     if (idFuncionario) parametros.set('idFuncionario', idFuncionario);
     requisitar(`/agendamentos/horarios?${parametros}`)
       .then((resultado) => { if (ativo) { definirHorarios(resultado.horarios); if (!resultado.horarios.length) definirMensagem('Não há horários disponíveis nesta data.'); } })
-      .catch((erro) => { if (ativo) { definirHorarios([]); definirMensagem(erro.message); } })
+      .catch((erro) => { if (ativo) { definirHorarios([]); definirMensagem(''); mostrarToastErro(erro.message); } })
       .finally(() => { if (ativo) definirCarregandoHorarios(false); });
     return () => { ativo = false; };
-  }, [data, idFuncionario, idServico, idUnidade, requisitar]);
+  }, [data, idFuncionario, idServico, idUnidade, mostrarToastErro, requisitar]);
 
   async function confirmar(evento) {
     evento.preventDefault();
@@ -65,7 +65,7 @@ export default function FormularioAgendamentoSalao({ clientes, filiais, funciona
       };
       const resultado = await requisitar('/agendamentos', { method: 'POST', body: JSON.stringify(dados) });
       await aoSalvar(resultado.mensagem);
-    } catch (erro) { definirMensagem(erro.message); }
+    } catch (erro) { definirMensagem(''); mostrarToastErro(erro.message); }
     finally { definirEnviando(false); }
   }
 
@@ -86,7 +86,7 @@ export default function FormularioAgendamentoSalao({ clientes, filiais, funciona
       {modoCliente === 'novo' ? <div className="grade-formulario"><label className="campo-formulario"><span>Nome</span><input maxLength="120" onChange={(evento) => definirNome(evento.target.value)} required value={nome} /></label><label className="campo-formulario"><span>Telefone <small>Opcional</small></span><input maxLength="20" onChange={(evento) => definirTelefone(evento.target.value)} value={telefone} /></label><label className="campo-formulario"><span>Email <small>Opcional</small></span><input maxLength="254" onChange={(evento) => definirEmail(evento.target.value)} type="email" value={email} /></label></div> : <div className="grade-formulario"><label className="campo-formulario"><span>Buscar cliente</span><input onChange={(evento) => { definirBuscaCliente(evento.target.value); definirIdClienteSalao(''); }} placeholder="Nome, telefone ou email" value={buscaCliente} /></label><label className="campo-formulario"><span>Selecionar ficha</span><select onChange={(evento) => definirIdClienteSalao(evento.target.value)} required value={idClienteSalao}><option value="">{clientesFiltrados.length ? 'Selecione' : 'Nenhuma ficha encontrada'}</option>{clientesFiltrados.map((cliente) => <option key={cliente.idClienteSalao} value={cliente.idClienteSalao}>{cliente.nome}{cliente.telefone ? ` · ${cliente.telefone}` : ''}</option>)}</select></label></div>}
     </fieldset>
     <label className="campo-formulario"><span>Observação <small>Opcional</small></span><textarea maxLength="500" onChange={(evento) => definirObservacao(evento.target.value)} value={observacao} /></label>
-    {mensagem && <p className="mensagem-formulario mensagem-formulario--erro">{mensagem}</p>}
+    {mensagem && <p className="estado-lista">{mensagem}</p>}
     <div className="acoes-formulario"><button className="botao-enviar" disabled={enviando || carregandoHorarios || !horario} type="submit">{enviando ? 'Salvando...' : 'Confirmar agendamento'} <span>→</span></button><button className="botao-secundario" onClick={aoCancelar} type="button">Cancelar</button></div>
   </form>;
 }
