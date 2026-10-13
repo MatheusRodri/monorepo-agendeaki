@@ -2,10 +2,10 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { dataNascimentoMaiorDeIdade, dataParaIso, formatarCnpj, formatarCpf, formatarData, formatarTelefone } from '../../utils/formatadores';
 import { requisitarApi } from '../../utils/api';
-import { armazenarSessao } from '../../utils/respostaApi';
+import { armazenarSessao, limparSessao, obterTokenAcesso, obterTokenAtualizacao } from '../../utils/respostaApi';
 import { toastErro } from '../../utils/toast';
 import CampoSenha from '../CampoSenha/CampoSenha';
 import ModalCompletarPerfil from '../ModalCompletarPerfil/ModalCompletarPerfil';
@@ -22,6 +22,8 @@ export default function FormularioAutenticacao({ modo, perfil }) {
   const estaNoCadastro = modo === 'cadastro';
   const [dadosFormulario, definirDadosFormulario] = useState({ nome: '', nomeSalao: '', telefoneResponsavel: '', email: '', senha: '', confirmacaoSenha: '', cpf: '', dataNascimento: '', tipoDocumento: 'CPF', documento: '' });
   const [enviando, definirEnviando] = useState(false);
+  const [manterConectado, definirManterConectado] = useState(true);
+  const [verificandoSessao, definirVerificandoSessao] = useState(!estaNoCadastro);
   const [confirmarEmail, definirConfirmarEmail] = useState('');
   const [completarPerfil, definirCompletarPerfil] = useState(null);
 
@@ -48,6 +50,50 @@ export default function FormularioAutenticacao({ modo, perfil }) {
 
   function irParaArea() { const retorno = obterRetorno(); if (retorno) localStorage.removeItem('retornoAgendamento'); roteador.push(retorno ?? (perfil === 'cliente' ? '/cliente/inicio' : '/salao/dashboard')); }
 
+  useEffect(() => {
+    if (estaNoCadastro) return undefined;
+    let ativo = true;
+    async function restaurarSessao() {
+      if (!obterTokenAcesso(perfil) && !obterTokenAtualizacao(perfil)) {
+        definirVerificandoSessao(false);
+        return;
+      }
+      definirVerificandoSessao(true);
+      try {
+        const rotaPerfil = perfil === 'cliente' ? '/api/clientes/perfil' : '/api/salao/perfil';
+        const dadosPerfil = await requisitarApi(rotaPerfil, { perfilUsuario: perfil });
+        let salaoIncompleto = false;
+        if (perfil === 'salao') {
+          try {
+            await requisitarApi('/api/salao/saloes/atual', { perfilUsuario: perfil });
+          } catch (erro) {
+            if (erro.status === 404) salaoIncompleto = true;
+            else throw erro;
+          }
+        }
+        if (!ativo) return;
+        if (dadosPerfil.cadastroIncompleto || salaoIncompleto) {
+          definirCompletarPerfil({
+            cadastroIncompleto: Boolean(dadosPerfil.cadastroIncompleto),
+            dadosCadastrais: dadosPerfil.perfil,
+            nomeSalao: '',
+            perfil: { nome: dadosPerfil.perfil?.nome, perfil: perfil === 'cliente' ? 'CLIENTE' : 'ADMIN_SALAO' },
+            salaoIncompleto,
+            tokenAcesso: obterTokenAcesso(perfil),
+          });
+          return;
+        }
+        roteador.replace(perfil === 'cliente' ? '/cliente/inicio' : '/salao/dashboard');
+      } catch (erro) {
+        if (erro.status === 403) limparSessao(perfil);
+      } finally {
+        if (ativo) definirVerificandoSessao(false);
+      }
+    }
+    restaurarSessao();
+    return () => { ativo = false; };
+  }, [estaNoCadastro, perfil, roteador]);
+
   async function enviarFormulario(evento) {
     evento.preventDefault();
     if (estaNoCadastro && dadosFormulario.senha !== dadosFormulario.confirmacaoSenha) { toastErro('As senhas precisam ser iguais.'); return; }
@@ -61,7 +107,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
       const dadosResposta = await requisitarApi(`/api/${configuracao.rotaApi}/${estaNoCadastro ? 'cadastro' : 'login'}`, { dados: dadosEnvio, metodo: 'POST' });
       if (estaNoCadastro) { definirConfirmarEmail(dadosFormulario.email); return; }
       if (!dadosResposta.tokenAcesso || !dadosResposta.tokenAtualizacao) throw new Error('O login não retornou uma sessão válida.');
-      armazenarSessao(dadosResposta.tokenAcesso, dadosResposta.tokenAtualizacao, perfil);
+      armazenarSessao(dadosResposta.tokenAcesso, dadosResposta.tokenAtualizacao, perfil, manterConectado);
       if (dadosResposta.cadastroIncompleto || dadosResposta.salaoIncompleto) {
         definirCompletarPerfil({
           cadastroIncompleto: dadosResposta.cadastroIncompleto,
@@ -77,7 +123,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
     } catch (erro) { toastErro(erro.message); } finally { definirEnviando(false); }
   }
 
-  return <main className="pagina-autenticacao"><div className="pagina-autenticacao__painel"><Link aria-label="Voltar para a página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><div className="pagina-autenticacao__texto"><span aria-hidden="true" className="pagina-autenticacao__icone">{configuracao.icone}</span><p className="sobretitulo">Área do {configuracao.nome}</p><h1>{estaNoCadastro ? configuracao.tituloCadastro : configuracao.tituloLogin}</h1><p>{configuracao.descricao}</p></div></div><section className="pagina-autenticacao__formulario" aria-labelledby="titulo-formulario"><div className="formulario-cartao"><Link className="voltar-home" href="/">← Página inicial</Link><div className="formulario-cartao__cabecalho"><p className="sobretitulo">{estaNoCadastro ? 'Novo começo' : 'Acesse sua conta'}</p><h2 id="titulo-formulario">{estaNoCadastro ? `Cadastro de ${configuracao.nome}` : `Entrar como ${configuracao.nome}`}</h2><p>{estaNoCadastro ? 'Preencha seus dados para começar.' : 'Informe seus dados para continuar.'}</p></div><form onSubmit={enviarFormulario}>{estaNoCadastro && <DadosCadastrais aoMudar={alterarCampo} dados={dadosFormulario} perfil={perfil} />}<label className="campo-formulario"><span>E-mail</span><input autoComplete="email" name="email" onChange={alterarCampo} placeholder="voce@exemplo.com" required type="email" value={dadosFormulario.email} /></label><CampoSenha aoMudar={alterarCampo} autoComplete={estaNoCadastro ? 'new-password' : 'current-password'} id="senha" nome="senha" placeholder="No mínimo 6 caracteres" rotulo="Senha" valor={dadosFormulario.senha} />{estaNoCadastro && <CampoSenha aoMudar={alterarCampo} autoComplete="new-password" id="confirmacaoSenha" nome="confirmacaoSenha" placeholder="Repita sua senha" rotulo="Confirme sua senha" valor={dadosFormulario.confirmacaoSenha} />}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Aguarde...' : estaNoCadastro ? 'Criar minha conta' : 'Entrar na minha conta'} <span aria-hidden="true">→</span></button></form><p className="alternativa-autenticacao">{estaNoCadastro ? 'Já tem uma conta?' : 'Ainda não tem uma conta?'} <Link href={caminhoAutenticacao(estaNoCadastro ? `/${configuracao.caminho}` : `/${configuracao.caminho}/cadastro`)}>{estaNoCadastro ? 'Fazer login' : 'Criar conta'}</Link></p>{!estaNoCadastro && <p className="alternativa-autenticacao"><Link href={`/${configuracao.caminho}/recuperar-senha`}>Esqueci minha senha</Link></p>}</div></section>{confirmarEmail && <ModalConfirmacaoEmail aoFechar={() => roteador.push(caminhoAutenticacao(`/${configuracao.caminho}`))} email={confirmarEmail} />}{completarPerfil && <ModalCompletarPerfil aoConcluir={irParaArea} cadastroIncompleto={completarPerfil.cadastroIncompleto} dadosCadastrais={completarPerfil.dadosCadastrais} nomeSalao={completarPerfil.nomeSalao} perfil={completarPerfil.perfil} salaoIncompleto={completarPerfil.salaoIncompleto} rotaApi={perfil === 'cliente' ? 'clientes' : 'salao'} tokenAcesso={completarPerfil.tokenAcesso} />}</main>;
+  return <main className="pagina-autenticacao"><div className="pagina-autenticacao__painel"><Link aria-label="Voltar para a página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><div className="pagina-autenticacao__texto"><span aria-hidden="true" className="pagina-autenticacao__icone">{configuracao.icone}</span><p className="sobretitulo">Área do {configuracao.nome}</p><h1>{estaNoCadastro ? configuracao.tituloCadastro : configuracao.tituloLogin}</h1><p>{configuracao.descricao}</p></div></div><section className="pagina-autenticacao__formulario" aria-labelledby="titulo-formulario"><div className="formulario-cartao"><Link className="voltar-home" href="/">← Página inicial</Link><div className="formulario-cartao__cabecalho"><p className="sobretitulo">{estaNoCadastro ? 'Novo começo' : 'Acesse sua conta'}</p><h2 id="titulo-formulario">{estaNoCadastro ? `Cadastro de ${configuracao.nome}` : `Entrar como ${configuracao.nome}`}</h2><p>{estaNoCadastro ? 'Preencha seus dados para começar.' : verificandoSessao ? 'Verificando sua sessão salva...' : 'Informe seus dados para continuar.'}</p></div>{!verificandoSessao && <form onSubmit={enviarFormulario}>{estaNoCadastro && <DadosCadastrais aoMudar={alterarCampo} dados={dadosFormulario} perfil={perfil} />}<label className="campo-formulario"><span>E-mail</span><input autoComplete="email" name="email" onChange={alterarCampo} placeholder="voce@exemplo.com" required type="email" value={dadosFormulario.email} /></label><CampoSenha aoMudar={alterarCampo} autoComplete={estaNoCadastro ? 'new-password' : 'current-password'} id="senha" nome="senha" placeholder="No mínimo 6 caracteres" rotulo="Senha" valor={dadosFormulario.senha} />{estaNoCadastro && <CampoSenha aoMudar={alterarCampo} autoComplete="new-password" id="confirmacaoSenha" nome="confirmacaoSenha" placeholder="Repita sua senha" rotulo="Confirme sua senha" valor={dadosFormulario.confirmacaoSenha} />}{!estaNoCadastro && <label className="manter-conectado"><input checked={manterConectado} onChange={(evento) => definirManterConectado(evento.target.checked)} type="checkbox" /><span>Manter conectado neste dispositivo</span></label>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Aguarde...' : estaNoCadastro ? 'Criar minha conta' : 'Entrar na minha conta'} <span aria-hidden="true">→</span></button></form>}<p className="alternativa-autenticacao">{estaNoCadastro ? 'Já tem uma conta?' : 'Ainda não tem uma conta?'} <Link href={caminhoAutenticacao(estaNoCadastro ? `/${configuracao.caminho}` : `/${configuracao.caminho}/cadastro`)}>{estaNoCadastro ? 'Fazer login' : 'Criar conta'}</Link></p>{!estaNoCadastro && <p className="alternativa-autenticacao"><Link href={`/${configuracao.caminho}/recuperar-senha`}>Esqueci minha senha</Link></p>}</div></section>{confirmarEmail && <ModalConfirmacaoEmail aoFechar={() => roteador.push(caminhoAutenticacao(`/${configuracao.caminho}`))} email={confirmarEmail} />}{completarPerfil && <ModalCompletarPerfil aoConcluir={irParaArea} cadastroIncompleto={completarPerfil.cadastroIncompleto} dadosCadastrais={completarPerfil.dadosCadastrais} nomeSalao={completarPerfil.nomeSalao} perfil={completarPerfil.perfil} salaoIncompleto={completarPerfil.salaoIncompleto} rotaApi={perfil === 'cliente' ? 'clientes' : 'salao'} tokenAcesso={completarPerfil.tokenAcesso} />}</main>;
 }
 
 function DadosCadastrais({ aoMudar, dados, perfil }) {

@@ -5,6 +5,7 @@ import {
   obterTokenAcesso,
   obterTokenAtualizacao,
   obterUrlApi,
+  sessaoPersistente,
 } from './respostaApi';
 
 const clienteApi = axios.create({
@@ -76,7 +77,7 @@ async function renovarSessao(perfilUsuario) {
       if (obterTokenAtualizacao(perfilUsuario) !== tokenAtualizacao) {
         return obterTokenAcesso(perfilUsuario);
       }
-      armazenarSessao(dados.tokenAcesso, dados.tokenAtualizacao, perfilUsuario);
+      armazenarSessao(dados.tokenAcesso, dados.tokenAtualizacao, perfilUsuario, sessaoPersistente(perfilUsuario));
       return dados.tokenAcesso;
     })
     .catch((erro) => {
