@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export default function AlternadorTema() {
   const [temaEscuro, definirTemaEscuro] = useState(false);
+  const [destino, definirDestino] = useState(null);
 
   useEffect(() => {
     const temaSalvo = localStorage.getItem('tema-agendeaki');
@@ -14,6 +16,19 @@ export default function AlternadorTema() {
     document.documentElement.dataset.tema = deveUsarTemaEscuro ? 'escuro' : 'claro';
   }, []);
 
+  useEffect(() => {
+    function atualizarDestino() {
+      const proximoDestino = document.querySelector('[data-alternador-tema-destino]');
+      definirDestino((destinoAtual) => destinoAtual === proximoDestino ? destinoAtual : proximoDestino);
+    }
+
+    const observador = new MutationObserver(atualizarDestino);
+    observador.observe(document.body, { childList: true, subtree: true });
+    atualizarDestino();
+
+    return () => observador.disconnect();
+  }, []);
+
   function alternarTema() {
     const proximoTemaEscuro = !temaEscuro;
 
@@ -22,11 +37,11 @@ export default function AlternadorTema() {
     localStorage.setItem('tema-agendeaki', proximoTemaEscuro ? 'escuro' : 'claro');
   }
 
-  return (
+  const botao = (
     <button
       aria-label={temaEscuro ? 'Ativar tema claro' : 'Ativar tema escuro'}
       aria-pressed={temaEscuro}
-      className="alternador-tema alternador-tema--global"
+      className={`alternador-tema ${destino ? 'alternador-tema--cabecalho' : 'alternador-tema--global'}`}
       onClick={alternarTema}
       type="button"
     >
@@ -36,4 +51,6 @@ export default function AlternadorTema() {
       <span className="alternador-tema__texto">{temaEscuro ? 'Claro' : 'Escuro'}</span>
     </button>
   );
+
+  return destino ? createPortal(botao, destino) : botao;
 }

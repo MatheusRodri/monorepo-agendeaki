@@ -96,6 +96,21 @@
   box-shadow: 0 4px 16px rgb(0 0 0 / 14%);
 }
 
+.alternador-tema--cabecalho {
+  height: 42px;
+  justify-content: center;
+  padding: .35rem;
+  width: 42px;
+}
+
+.alternador-tema--cabecalho .alternador-tema__icone {
+  background: transparent;
+}
+
+.alternador-tema--cabecalho .alternador-tema__texto {
+  display: none;
+}
+
 .alternador-tema:hover {
   background: var(--fundo-secundario);
   transform: translateY(-1px);
