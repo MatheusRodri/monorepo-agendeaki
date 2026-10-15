@@ -140,7 +140,7 @@
 
 .modal-documento-legal__fundo {
   align-items: center;
-  background: rgb(23 18 26 / 68%);
+  background: var(--fundo-secundario);
   display: flex;
   inset: 0;
   justify-content: center;

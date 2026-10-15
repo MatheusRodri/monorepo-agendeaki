@@ -15,9 +15,7 @@ export default function AreaCliente() {
   const [ordenacao, definirOrdenacao] = useState('DISTANCIA_ASC');
   const [centralizarNoCliente, definirCentralizarNoCliente] = useState(false);
   const [busca, definirBusca] = useState('');
-  const [cidade, definirCidade] = useState('');
   const [buscaAplicada, definirBuscaAplicada] = useState('');
-  const [cidadeAplicada, definirCidadeAplicada] = useState('');
   const [idUnidadeSelecionada, definirIdUnidadeSelecionada] = useState('');
   const [sugestoes, definirSugestoes] = useState([]);
   const [saloes, definirSaloes] = useState([]);
@@ -34,8 +32,6 @@ export default function AreaCliente() {
     busca,
     buscaAplicada,
     centralizarNoCliente,
-    cidade,
-    cidadeAplicada,
     coordenadas,
     coordenadasMapa,
     idSalaoSelecionado: salaoSelecionado?.idUnidade ?? null,
@@ -43,7 +39,7 @@ export default function AreaCliente() {
     ordenacao,
     raioKm,
     tipoSalao,
-  }), [busca, buscaAplicada, centralizarNoCliente, cidade, cidadeAplicada, coordenadas, coordenadasMapa, idUnidadeSelecionada, ordenacao, raioKm, salaoSelecionado, tipoSalao]);
+  }), [busca, buscaAplicada, centralizarNoCliente, coordenadas, coordenadasMapa, idUnidadeSelecionada, ordenacao, raioKm, salaoSelecionado, tipoSalao]);
   const urlMapa = useMemo(() => `/cliente/inicio?mapa=${encodeURIComponent(JSON.stringify(estadoMapa))}`, [estadoMapa]);
   const urlMapaAtual = useRef(urlMapa);
   urlMapaAtual.current = urlMapa;
@@ -68,9 +64,7 @@ export default function AreaCliente() {
         definirTipoSalao(['TODOS', 'FEMININO', 'MASCULINO', 'UNISSEX'].includes(estado.tipoSalao) ? estado.tipoSalao : 'TODOS');
         definirOrdenacao(['DISTANCIA_ASC', 'DISTANCIA_DESC', 'AVALIACOES_DESC', 'AVALIACOES_ASC'].includes(estado.ordenacao) ? estado.ordenacao : 'DISTANCIA_ASC');
         definirBusca(String(estado.busca ?? ''));
-        definirCidade(String(estado.cidade ?? ''));
         definirBuscaAplicada(String(estado.buscaAplicada ?? ''));
-        definirCidadeAplicada(String(estado.cidadeAplicada ?? ''));
         definirIdUnidadeSelecionada(String(estado.idUnidadeSelecionada ?? ''));
         definirCentralizarNoCliente(Boolean(estado.centralizarNoCliente));
         const idSalaoSelecionado = Number(estado.idSalaoSelecionado);
@@ -96,7 +90,6 @@ export default function AreaCliente() {
         longitude: coordenadas.longitude,
         raioKm,
         busca: buscaAplicada,
-        cidade: cidadeAplicada,
       });
       if (idUnidadeSelecionada) parametros.set('idUnidade', idUnidadeSelecionada);
       const dadosResposta = await requisitarApi('/api/clientes/saloes-proximos', { parametros });
@@ -116,7 +109,7 @@ export default function AreaCliente() {
     } finally {
       if (idBusca === idBuscaAtual.current) definirCarregando(false);
     }
-  }, [buscaAplicada, cidadeAplicada, coordenadas, idUnidadeSelecionada, raioKm]);
+  }, [buscaAplicada, coordenadas, idUnidadeSelecionada, raioKm]);
 
   const localizarCliente = useCallback((centralizar = false) => {
     if (!navigator.geolocation) {
@@ -131,7 +124,7 @@ export default function AreaCliente() {
       (posicao) => {
         const novaCoordenada = { latitude: posicao.coords.latitude, longitude: posicao.coords.longitude };
         if (centralizar) {
-          definirCidade(''); definirCidadeAplicada(''); definirIdUnidadeSelecionada('');
+          definirIdUnidadeSelecionada('');
           definirBusca(''); definirBuscaAplicada(''); definirSalaoSelecionado(null);
           definirCentralizarNoCliente(true);
         }
@@ -165,13 +158,13 @@ export default function AreaCliente() {
     if (termo.length < 2) { definirSugestoes([]); return undefined; }
     const atraso = window.setTimeout(async () => {
       try {
-        const parametros = new URLSearchParams({ termo, cidade: cidade.trim() });
+        const parametros = new URLSearchParams({ termo });
         const dados = await requisitarApi('/api/clientes/sugestoes-saloes', { parametros });
         definirSugestoes(dados.sugestoes ?? []);
       } catch { definirSugestoes([]); }
     }, 250);
     return () => window.clearTimeout(atraso);
-  }, [busca, cidade, idUnidadeSelecionada]);
+  }, [busca, idUnidadeSelecionada]);
 
   const saloesFiltrados = useMemo(() => (tipoSalao === 'TODOS'
     ? saloes
@@ -188,14 +181,13 @@ export default function AreaCliente() {
   function aplicarBusca(evento) {
     evento.preventDefault();
     definirBuscaAplicada(busca.trim());
-    definirCidadeAplicada(cidade.trim());
     definirIdUnidadeSelecionada('');
     definirSalaoSelecionado(null);
     definirCentralizarNoCliente(false);
   }
 
   function limparBusca() {
-    definirBusca(''); definirCidade(''); definirBuscaAplicada(''); definirCidadeAplicada(''); definirIdUnidadeSelecionada(''); definirSugestoes([]); definirSalaoSelecionado(null);
+    definirBusca(''); definirBuscaAplicada(''); definirIdUnidadeSelecionada(''); definirSugestoes([]); definirSalaoSelecionado(null);
   }
 
   function escolherSugestao(sugestao) {
@@ -216,9 +208,8 @@ export default function AreaCliente() {
           <p className="sobretitulo">Descubra perto de você</p>
           <h1>O seu próximo <em>momento</em> está por aqui.</h1>
           <form className="busca-exploracao" onSubmit={aplicarBusca}>
-            <label><span>Para onde você vai?</span><input onChange={(evento) => definirCidade(evento.target.value)} placeholder="Cidade de destino" value={cidade} /></label>
             <label className="campo-busca-sugestoes"><span>Busque um salão</span><input onChange={(evento) => { definirBusca(evento.target.value); definirIdUnidadeSelecionada(''); }} placeholder="Nome do salão ou unidade" value={busca} />{sugestoes.length > 0 && <ul>{sugestoes.map((sugestao) => <li key={sugestao.idUnidade}><button onClick={() => escolherSugestao(sugestao)} type="button"><strong>{sugestao.nomeSalao}</strong><small>{sugestao.nomeUnidade} · {sugestao.municipio}</small></button></li>)}</ul>}</label>
-            <div><button type="submit">Buscar</button>{(cidadeAplicada || buscaAplicada) && <button onClick={limparBusca} type="button">Limpar</button>}</div>
+            <div><button type="submit">Buscar</button>{(buscaAplicada || idUnidadeSelecionada) && <button onClick={limparBusca} type="button">Limpar</button>}</div>
           </form>
           <div className="filtros-exploracao">
             <div className="filtro-raio" role="group" aria-label="Raio de busca">

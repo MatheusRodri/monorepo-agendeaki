@@ -100,7 +100,7 @@
 
 .modal-conta {
   align-items: center;
-  background: rgba(47, 25, 44, .58);
+  background: var(--fundo-secundario);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -486,18 +486,25 @@
   gap: .5rem;
 }
 
-.busca-exploracao button {
-  background: var(--ameixa);
-  border: 0;
+.busca-exploracao > div > button {
   border-radius: 999px;
-  color: #fff;
   cursor: pointer;
   font-size: .72rem;
   font-weight: 700;
   padding: .5rem .85rem;
 }
 
-.busca-exploracao button+button {
+.busca-exploracao > div > button[type='submit'] {
+  background: var(--coral);
+  border: 0;
+  color: #241a25;
+}
+
+.busca-exploracao > div > button[type='submit']:hover {
+  background: color-mix(in srgb, var(--coral) 85%, white);
+}
+
+.busca-exploracao > div > button[type='button'] {
   background: var(--cartao);
   border: 1px solid var(--borda);
   color: var(--ameixa);

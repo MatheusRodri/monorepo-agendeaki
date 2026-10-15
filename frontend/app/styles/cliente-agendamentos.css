@@ -116,10 +116,12 @@
 
 .modal-agendamento {
   align-items: center;
-  background: rgba(26, 15, 27, .6);
+  background: var(--fundo-secundario);
   display: flex;
   inset: 0;
   justify-content: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 1.25rem;
   position: fixed;
   z-index: 1000;
@@ -128,7 +130,12 @@
 .modal-agendamento__conteudo {
   background: var(--fundo);
   box-shadow: var(--sombra);
+  margin-block: auto;
+  max-height: calc(100vh - 2.5rem);
+  max-height: calc(100dvh - 2.5rem);
   max-width: 520px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: relative;
   width: 100%;
 }
