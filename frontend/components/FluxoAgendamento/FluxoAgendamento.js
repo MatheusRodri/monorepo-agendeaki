@@ -41,6 +41,7 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   const [selecao, definirSelecao] = useState({ data: '', horario: '', idFuncionario: '', idServico: '' });
   const [selecaoInicializada, definirSelecaoInicializada] = useState(false);
   const [horarios, definirHorarios] = useState([]);
+  const [verificacaoData, definirVerificacaoData] = useState({ data: '', estado: 'livre' });
   const [observacao, definirObservacao] = useState('');
   const [mensagem, definirMensagem] = useState('Carregando página de agendamento...');
   const [enviando, definirEnviando] = useState(false);
@@ -96,17 +97,43 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   const horarioSelecionado = horarios.find((item) => item.inicio === selecao.horario);
 
   useEffect(() => {
+    if (!selecao.data || !obterTokenAcesso('cliente')) return undefined;
+    let ativo = true;
+    definirVerificacaoData({ data: selecao.data, estado: 'verificando' });
+    requisitarApi('/api/clientes/agendamentos/verificar-data', { parametros: { data: selecao.data } })
+      .then(() => { if (ativo) definirVerificacaoData({ data: selecao.data, estado: 'livre' }); })
+      .catch((erro) => {
+        if (!ativo) return;
+        if (erro.codigo === 'LIMITE_AGENDAMENTO_DIARIO') {
+          definirVerificacaoData({ data: selecao.data, estado: 'bloqueada' });
+          definirSelecao((atual) => atual.data === selecao.data ? { ...atual, horario: '' } : atual);
+          toastErro(erro.message);
+        } else definirVerificacaoData({ data: selecao.data, estado: 'erro' });
+      });
+    return () => { ativo = false; };
+  }, [selecao.data]);
+
+  useEffect(() => {
     const idFuncionarioValido = selecao.idFuncionario === 'qualquer'
       || servico?.profissionais.some((item) => String(item.idFuncionario) === String(selecao.idFuncionario));
     if (!servico || !selecao.data || !idFuncionarioValido) { definirHorarios([]); return; }
+    const estadoData = verificacaoData.data === selecao.data ? verificacaoData.estado : 'verificando';
+    if (obterTokenAcesso('cliente') && ['verificando', 'bloqueada'].includes(estadoData)) {
+      definirHorarios([]);
+      definirMensagem(estadoData === 'bloqueada' ? 'Você já tem um agendamento ativo para este dia. Cancele-o ou escolha outra data.' : 'Verificando seus agendamentos nesta data...');
+      return;
+    }
+    let ativo = true;
     definirMensagem('Consultando horários disponíveis...');
     requisitarApi(`/api/publico/agendamento/${slugSalao}/${slugFilial}/horarios`, {
       parametros: { data: selecao.data, idFuncionario: selecao.idFuncionario, idServico: selecao.idServico },
     }).then((dados) => {
+      if (!ativo) return;
       definirHorarios(dados.horarios);
       definirMensagem(dados.horarios.length ? '' : 'Não há horários disponíveis nesta data. Escolha outro dia.');
-    }).catch((erro) => { definirHorarios([]); definirMensagem(''); toastErro(erro.message); });
-  }, [selecao.data, selecao.idFuncionario, selecao.idServico, servico, slugFilial, slugSalao]);
+    }).catch((erro) => { if (ativo) { definirHorarios([]); definirMensagem(''); toastErro(erro.message); } });
+    return () => { ativo = false; };
+  }, [selecao.data, selecao.idFuncionario, selecao.idServico, servico, slugFilial, slugSalao, verificacaoData]);
 
   function atualizarSelecao(alteracoes) {
     definirSelecao((atual) => ({ ...atual, ...alteracoes }));
@@ -182,6 +209,7 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
         roteador.push(`/cliente?retorno=${encodeURIComponent(retorno)}`);
       } else if (erro.codigo === 'LIMITE_AGENDAMENTO_DIARIO') {
         definirMensagemModal(erro.message);
+        toastErro(erro.message);
       } else if (erro.status === 409) {
         try {
           const horarioAtualizado = await recarregarHorarioSelecionado();
