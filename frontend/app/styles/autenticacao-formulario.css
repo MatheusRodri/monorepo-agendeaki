@@ -11,6 +11,26 @@
   margin-bottom: .45rem;
 }
 
+.validacao-cnpj {
+  display: block;
+  font-size: .78rem;
+  margin-top: .4rem;
+}
+
+.validacao-cnpj--verificando,
+.validacao-cnpj--erro {
+  color: var(--texto-suave);
+}
+
+.validacao-cnpj--disponivel {
+  color: #23834b;
+}
+
+.validacao-cnpj--duplicado,
+.validacao-cnpj--invalido {
+  color: #c43d45;
+}
+
 .campo-formulario input {
   background: var(--cartao);
   border: 1px solid var(--borda);

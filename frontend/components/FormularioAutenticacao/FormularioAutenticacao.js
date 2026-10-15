@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { dataNascimentoMaiorDeIdade, dataParaIso, formatarCnpj, formatarCpf, formatarData, formatarTelefone } from '../../utils/formatadores';
+import { dataNascimentoMaiorDeIdade, dataParaIso, formatarCnpj, formatarData, formatarTelefone } from '../../utils/formatadores';
 import { requisitarApi } from '../../utils/api';
 import { armazenarSessao, limparSessao, obterTokenAcesso, obterTokenAtualizacao } from '../../utils/respostaApi';
 import { toastErro } from '../../utils/toast';
@@ -20,7 +20,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
   const roteador = useRouter();
   const configuracao = configuracoesPerfil[perfil];
   const estaNoCadastro = modo === 'cadastro';
-  const [dadosFormulario, definirDadosFormulario] = useState({ nome: '', nomeSalao: '', telefoneResponsavel: '', email: '', senha: '', confirmacaoSenha: '', cpf: '', dataNascimento: '', tipoDocumento: 'CNPJ', documento: '' });
+  const [dadosFormulario, definirDadosFormulario] = useState({ nome: '', nomeSalao: '', telefone: '', telefoneResponsavel: '', email: '', senha: '', confirmacaoSenha: '', dataNascimento: '', documento: '' });
   const [enviando, definirEnviando] = useState(false);
   const [manterConectado, definirManterConectado] = useState(true);
   const [verificandoSessao, definirVerificandoSessao] = useState(!estaNoCadastro);
@@ -31,14 +31,31 @@ export default function FormularioAutenticacao({ modo, perfil }) {
   const [documentosLegais, definirDocumentosLegais] = useState(null);
   const [carregandoDocumentos, definirCarregandoDocumentos] = useState(false);
   const [erroDocumentos, definirErroDocumentos] = useState('');
+  const [statusCnpj, definirStatusCnpj] = useState(null);
+  const validacaoCnpjAtual = useRef(0);
 
   function alterarCampo(evento) {
     const { name, value } = evento.target;
-    if (name === 'cpf') definirDadosFormulario((atual) => ({ ...atual, cpf: formatarCpf(value) }));
-    else if (name === 'dataNascimento') definirDadosFormulario((atual) => ({ ...atual, dataNascimento: formatarData(value) }));
-    else if (name === 'tipoDocumento') definirDadosFormulario((atual) => ({ ...atual, tipoDocumento: value, documento: '' }));
-    else if (name === 'documento') definirDadosFormulario((atual) => ({ ...atual, documento: formatarCnpj(value) }));
-    else if (name === 'telefoneResponsavel') definirDadosFormulario((atual) => ({ ...atual, telefoneResponsavel: formatarTelefone(value) }));
+    if (name === 'dataNascimento') definirDadosFormulario((atual) => ({ ...atual, dataNascimento: formatarData(value) }));
+    else if (name === 'documento') {
+      const documento = formatarCnpj(value);
+      definirDadosFormulario((atual) => ({ ...atual, documento }));
+      const idValidacao = ++validacaoCnpjAtual.current;
+      definirStatusCnpj(null);
+      if (perfil === 'salao' && estaNoCadastro && documento.replace(/[^0-9A-Z]/g, '').length === 14) {
+        definirStatusCnpj({ documento, estado: 'verificando' });
+        requisitarApi('/api/saloes/verificar-cnpj', { dados: { documento }, metodo: 'POST' })
+          .then((resultado) => {
+            if (validacaoCnpjAtual.current === idValidacao) {
+              definirStatusCnpj({ documento, estado: !resultado.valido ? 'invalido' : resultado.disponivel ? 'disponivel' : 'duplicado', mensagem: resultado.mensagem });
+            }
+          })
+          .catch(() => {
+            if (validacaoCnpjAtual.current === idValidacao) definirStatusCnpj({ documento, estado: 'erro' });
+          });
+      }
+    }
+    else if (name === 'telefone' || name === 'telefoneResponsavel') definirDadosFormulario((atual) => ({ ...atual, [name]: formatarTelefone(value) }));
     else definirDadosFormulario((atual) => ({ ...atual, [name]: value }));
   }
 
@@ -117,12 +134,13 @@ export default function FormularioAutenticacao({ modo, perfil }) {
 
   async function enviarFormulario(evento) {
     evento.preventDefault();
+    if (perfil === 'salao' && ['duplicado', 'invalido'].includes(statusCnpj?.estado) && statusCnpj.documento === dadosFormulario.documento) return;
     if (estaNoCadastro && dadosFormulario.senha !== dadosFormulario.confirmacaoSenha) { toastErro('As senhas precisam ser iguais.'); return; }
     const dataNascimento = dataParaIso(dadosFormulario.dataNascimento);
     if (estaNoCadastro && !dataNascimentoMaiorDeIdade(dataNascimento)) { toastErro('Você precisa ter pelo menos 18 anos para criar uma conta.'); return; }
     definirEnviando(true);
     const dadosEnvio = estaNoCadastro
-      ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento, aceitouDocumentos, ...(perfil === 'cliente' ? { cpf: dadosFormulario.cpf } : { nomeSalao: dadosFormulario.nomeSalao, telefoneResponsavel: dadosFormulario.telefoneResponsavel, tipoDocumento: 'CNPJ', documento: dadosFormulario.documento }) }
+      ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento, aceitouDocumentos, ...(perfil === 'salao' ? { nomeSalao: dadosFormulario.nomeSalao, telefoneResponsavel: dadosFormulario.telefoneResponsavel, tipoDocumento: 'CNPJ', documento: dadosFormulario.documento } : { telefone: dadosFormulario.telefone }) }
       : { email: dadosFormulario.email, senha: dadosFormulario.senha };
     try {
       const dadosResposta = await requisitarApi(`/api/${configuracao.rotaApi}/${estaNoCadastro ? 'cadastro' : 'login'}`, { dados: dadosEnvio, metodo: 'POST' });
@@ -144,7 +162,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
     } catch (erro) { toastErro(erro.message); } finally { definirEnviando(false); }
   }
 
-  return <main className="pagina-autenticacao"><div className="pagina-autenticacao__painel"><Link aria-label="Voltar para a página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><div className="pagina-autenticacao__texto"><span aria-hidden="true" className="pagina-autenticacao__icone">{configuracao.icone}</span><p className="sobretitulo">Área do {configuracao.nome}</p><h1>{estaNoCadastro ? configuracao.tituloCadastro : configuracao.tituloLogin}</h1><p>{configuracao.descricao}</p></div></div><section className="pagina-autenticacao__formulario" aria-labelledby="titulo-formulario"><div className="formulario-cartao"><Link className="voltar-home" href="/">← Página inicial</Link><div className="formulario-cartao__cabecalho"><p className="sobretitulo">{estaNoCadastro ? 'Novo começo' : 'Acesse sua conta'}</p><h2 id="titulo-formulario">{estaNoCadastro ? `Cadastro de ${configuracao.nome}` : `Entrar como ${configuracao.nome}`}</h2><p>{estaNoCadastro ? 'Preencha seus dados para começar.' : verificandoSessao ? 'Verificando sua sessão salva...' : 'Informe seus dados para continuar.'}</p></div>{!verificandoSessao && <form onSubmit={enviarFormulario}>{estaNoCadastro && <DadosCadastrais aoMudar={alterarCampo} dados={dadosFormulario} perfil={perfil} />}<label className="campo-formulario"><span>E-mail</span><input autoComplete="email" name="email" onChange={alterarCampo} placeholder="voce@exemplo.com" required type="email" value={dadosFormulario.email} /></label><CampoSenha aoMudar={alterarCampo} autoComplete={estaNoCadastro ? 'new-password' : 'current-password'} id="senha" nome="senha" placeholder="No mínimo 6 caracteres" rotulo="Senha" valor={dadosFormulario.senha} />{estaNoCadastro && <CampoSenha aoMudar={alterarCampo} autoComplete="new-password" id="confirmacaoSenha" nome="confirmacaoSenha" placeholder="Repita sua senha" rotulo="Confirme sua senha" valor={dadosFormulario.confirmacaoSenha} />} {estaNoCadastro && <label className="aceite-documentos"><input checked={aceitouDocumentos} onChange={(evento) => definirAceitouDocumentos(evento.target.checked)} required type="checkbox" /><span>Li e aceito os <button onClick={() => abrirDocumento('termosDeUso')} type="button">Termos de Uso</button> e a <button onClick={() => abrirDocumento('politicaPrivacidade')} type="button">Política de Privacidade</button>.</span></label>}{!estaNoCadastro && <label className="manter-conectado"><input checked={manterConectado} onChange={(evento) => definirManterConectado(evento.target.checked)} type="checkbox" /><span>Manter conectado neste dispositivo</span></label>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Aguarde...' : estaNoCadastro ? 'Criar minha conta' : 'Entrar na minha conta'} <span aria-hidden="true">→</span></button></form>}<p className="alternativa-autenticacao">{estaNoCadastro ? 'Já tem uma conta?' : 'Ainda não tem uma conta?'} <Link href={caminhoAutenticacao(estaNoCadastro ? `/${configuracao.caminho}` : `/${configuracao.caminho}/cadastro`)}>{estaNoCadastro ? 'Fazer login' : 'Criar conta'}</Link></p>{!estaNoCadastro && <p className="alternativa-autenticacao"><Link href={`/${configuracao.caminho}/recuperar-senha`}>Esqueci minha senha</Link></p>}</div></section>{documentoAberto && <ModalDocumentoLegal aoFechar={fecharDocumento} carregando={carregandoDocumentos} documento={documentosLegais?.[documentoAberto]} erro={erroDocumentos} onRetry={() => abrirDocumento(documentoAberto)} tipo={documentoAberto} />}{confirmarEmail && <ModalConfirmacaoEmail aoFechar={() => roteador.push(caminhoAutenticacao(`/${configuracao.caminho}`))} email={confirmarEmail} />}{completarPerfil && <ModalCompletarPerfil aoConcluir={irParaArea} cadastroIncompleto={completarPerfil.cadastroIncompleto} dadosCadastrais={completarPerfil.dadosCadastrais} nomeSalao={completarPerfil.nomeSalao} perfil={completarPerfil.perfil} salaoIncompleto={completarPerfil.salaoIncompleto} rotaApi={perfil === 'cliente' ? 'clientes' : 'salao'} tokenAcesso={completarPerfil.tokenAcesso} />}</main>;
+  return <main className="pagina-autenticacao"><div className="pagina-autenticacao__painel"><Link aria-label="Voltar para a página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><div className="pagina-autenticacao__texto"><span aria-hidden="true" className="pagina-autenticacao__icone">{configuracao.icone}</span><p className="sobretitulo">Área do {configuracao.nome}</p><h1>{estaNoCadastro ? configuracao.tituloCadastro : configuracao.tituloLogin}</h1><p>{configuracao.descricao}</p></div></div><section className="pagina-autenticacao__formulario" aria-labelledby="titulo-formulario"><div className="formulario-cartao"><Link className="voltar-home" href="/">← Página inicial</Link><div className="formulario-cartao__cabecalho"><p className="sobretitulo">{estaNoCadastro ? 'Novo começo' : 'Acesse sua conta'}</p><h2 id="titulo-formulario">{estaNoCadastro ? `Cadastro de ${configuracao.nome}` : `Entrar como ${configuracao.nome}`}</h2><p>{estaNoCadastro ? 'Preencha seus dados para começar.' : verificandoSessao ? 'Verificando sua sessão salva...' : 'Informe seus dados para continuar.'}</p></div>{!verificandoSessao && <form onSubmit={enviarFormulario}>{estaNoCadastro && <DadosCadastrais aoMudar={alterarCampo} dados={dadosFormulario} perfil={perfil} statusCnpj={statusCnpj} />}<label className="campo-formulario"><span>E-mail</span><input autoComplete="email" name="email" onChange={alterarCampo} placeholder="voce@exemplo.com" required type="email" value={dadosFormulario.email} /></label><CampoSenha aoMudar={alterarCampo} autoComplete={estaNoCadastro ? 'new-password' : 'current-password'} id="senha" nome="senha" placeholder="No mínimo 6 caracteres" rotulo="Senha" valor={dadosFormulario.senha} />{estaNoCadastro && <CampoSenha aoMudar={alterarCampo} autoComplete="new-password" id="confirmacaoSenha" nome="confirmacaoSenha" placeholder="Repita sua senha" rotulo="Confirme sua senha" valor={dadosFormulario.confirmacaoSenha} />} {estaNoCadastro && <label className="aceite-documentos"><input checked={aceitouDocumentos} onChange={(evento) => definirAceitouDocumentos(evento.target.checked)} required type="checkbox" /><span>Li e aceito os <button onClick={() => abrirDocumento('termosDeUso')} type="button">Termos de Uso</button> e a <button onClick={() => abrirDocumento('politicaPrivacidade')} type="button">Política de Privacidade</button>.</span></label>}{!estaNoCadastro && <label className="manter-conectado"><input checked={manterConectado} onChange={(evento) => definirManterConectado(evento.target.checked)} type="checkbox" /><span>Manter conectado neste dispositivo</span></label>}<button className="botao-enviar" disabled={enviando || ['verificando', 'duplicado', 'invalido'].includes(statusCnpj?.estado)} type="submit">{enviando ? 'Aguarde...' : estaNoCadastro ? 'Criar minha conta' : 'Entrar na minha conta'} <span aria-hidden="true">→</span></button></form>}<p className="alternativa-autenticacao">{estaNoCadastro ? 'Já tem uma conta?' : 'Ainda não tem uma conta?'} <Link href={caminhoAutenticacao(estaNoCadastro ? `/${configuracao.caminho}` : `/${configuracao.caminho}/cadastro`)}>{estaNoCadastro ? 'Fazer login' : 'Criar conta'}</Link></p>{!estaNoCadastro && <p className="alternativa-autenticacao"><Link href={`/${configuracao.caminho}/recuperar-senha`}>Esqueci minha senha</Link></p>}</div></section>{documentoAberto && <ModalDocumentoLegal aoFechar={fecharDocumento} carregando={carregandoDocumentos} documento={documentosLegais?.[documentoAberto]} erro={erroDocumentos} onRetry={() => abrirDocumento(documentoAberto)} tipo={documentoAberto} />}{confirmarEmail && <ModalConfirmacaoEmail aoFechar={() => roteador.push(caminhoAutenticacao(`/${configuracao.caminho}`))} email={confirmarEmail} />}{completarPerfil && <ModalCompletarPerfil aoConcluir={irParaArea} cadastroIncompleto={completarPerfil.cadastroIncompleto} dadosCadastrais={completarPerfil.dadosCadastrais} nomeSalao={completarPerfil.nomeSalao} perfil={completarPerfil.perfil} salaoIncompleto={completarPerfil.salaoIncompleto} rotaApi={perfil === 'cliente' ? 'clientes' : 'salao'} tokenAcesso={completarPerfil.tokenAcesso} />}</main>;
 }
 
 function ModalDocumentoLegal({ aoFechar, carregando, documento, erro, onRetry, tipo }) {
@@ -181,6 +199,16 @@ function ModalDocumentoLegal({ aoFechar, carregando, documento, erro, onRetry, t
   return <div className="modal-documento-legal__fundo" onMouseDown={(evento) => { if (evento.target === evento.currentTarget) aoFechar(); }}><section aria-labelledby="titulo-documento-legal" aria-modal="true" className="modal-documento-legal" ref={dialogo} role="dialog"><header className="modal-documento-legal__cabecalho"><div><h2 id="titulo-documento-legal">{titulo}</h2>{documento && <p>Versão {documento.versao}</p>}</div><button aria-label="Fechar documento" className="modal-documento-legal__fechar" onClick={aoFechar} ref={botaoFechar} type="button">×</button></header><div className="modal-documento-legal__conteudo" tabIndex="0">{carregando ? <p>Carregando documento…</p> : erro ? <div><p>{erro}</p><button onClick={onRetry} type="button">Tentar novamente</button></div> : <div className="modal-documento-legal__texto">{documento?.texto}</div>}</div><footer className="modal-documento-legal__rodape"><button className="botao-enviar" onClick={aoFechar} type="button">Fechar</button></footer></section></div>;
 }
 
-function DadosCadastrais({ aoMudar, dados, perfil }) {
-  return <><label className="campo-formulario"><span>{perfil === 'salao' ? 'Nome do responsável' : 'Seu nome'}</span><input autoComplete="name" name="nome" onChange={aoMudar} placeholder={perfil === 'salao' ? 'Ex.: Maria da Silva' : 'Ex.: João da Silva'} required value={dados.nome} /></label>{perfil === 'salao' && <><label className="campo-formulario"><span>Nome do salão</span><input name="nomeSalao" onChange={aoMudar} placeholder="Ex.: Studio Bella" required value={dados.nomeSalao} /></label><label className="campo-formulario"><span>Telefone do responsável</span><input autoComplete="tel" inputMode="numeric" name="telefoneResponsavel" onChange={aoMudar} placeholder="(00) 00000-0000" required value={dados.telefoneResponsavel} /></label></>}<label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" name="dataNascimento" onChange={aoMudar} placeholder="DD/MM/AAAA" required value={dados.dataNascimento} /></label>{perfil === 'cliente' ? <label className="campo-formulario"><span>CPF</span><input inputMode="numeric" name="cpf" onChange={aoMudar} placeholder="000.000.000-00" required value={dados.cpf} /></label> : <label className="campo-formulario"><span>CNPJ da empresa</span><input autoComplete="organization" name="documento" onChange={aoMudar} placeholder="AA.AAA.AAA/AAAA-00" required value={dados.documento} /></label>}</>;
+function DadosCadastrais({ aoMudar, dados, perfil, statusCnpj }) {
+  const documentoValidado = statusCnpj?.documento === dados.documento ? statusCnpj : null;
+  return <>
+    <label className="campo-formulario"><span>{perfil === 'salao' ? 'Nome do responsável' : 'Seu nome'}</span><input autoComplete="name" name="nome" onChange={aoMudar} placeholder={perfil === 'salao' ? 'Ex.: Maria da Silva' : 'Ex.: João da Silva'} required value={dados.nome} /></label>
+    {perfil === 'salao' && <>
+      <label className="campo-formulario"><span>Nome do salão</span><input name="nomeSalao" onChange={aoMudar} placeholder="Ex.: Studio Bella" required value={dados.nomeSalao} /></label>
+      <label className="campo-formulario"><span>Telefone do responsável</span><input autoComplete="tel" inputMode="numeric" name="telefoneResponsavel" onChange={aoMudar} placeholder="(00) 00000-0000" required value={dados.telefoneResponsavel} /></label>
+    </>}
+    {perfil === 'cliente' && <label className="campo-formulario"><span>Telefone</span><input autoComplete="tel" inputMode="numeric" name="telefone" onChange={aoMudar} placeholder="(00) 00000-0000" required value={dados.telefone} /></label>}
+    <label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" name="dataNascimento" onChange={aoMudar} placeholder="DD/MM/AAAA" required value={dados.dataNascimento} /></label>
+    {perfil === 'salao' && <label className="campo-formulario"><span>CNPJ da empresa</span><input aria-invalid={['duplicado', 'invalido'].includes(documentoValidado?.estado)} autoComplete="organization" maxLength="18" minLength="18" name="documento" onChange={aoMudar} placeholder="AA.AAA.AAA/AAAA-00" required value={dados.documento} />{documentoValidado?.estado && <small aria-live="polite" className={`validacao-cnpj validacao-cnpj--${documentoValidado.estado}`}>{documentoValidado.estado === 'verificando' ? 'Verificando CNPJ…' : documentoValidado.estado === 'disponivel' ? 'CNPJ disponível.' : documentoValidado.estado === 'duplicado' ? documentoValidado.mensagem ?? 'Este CNPJ já está cadastrado.' : documentoValidado.estado === 'invalido' ? 'Informe um CNPJ válido.' : 'Não foi possível verificar o CNPJ agora. Ele será validado ao enviar o cadastro.'}</small>}</label>}
+  </>;
 }

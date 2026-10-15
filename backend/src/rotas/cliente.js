@@ -2,7 +2,7 @@ import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
-import { cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
+import { dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
 import { listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 import {
@@ -21,6 +21,7 @@ import {
 const roteadorCliente = Router();
 const raiosPermitidos = [0, 1, 5, 10];
 const codigoLimiteAgendamentoDiario = 'LIMITE_AGENDAMENTO_DIARIO';
+const mensagemLimiteAgendamentoDiario = 'Você já tem um agendamento ativo para este dia. Cancele-o ou escolha outra data.';
 
 function extrairTokenAcesso(requisicao) {
   const cabecalhoAutorizacao = requisicao.headers.authorization;
@@ -62,7 +63,7 @@ async function obterClienteAutenticado(requisicao, resposta) {
   }
 }
 
-async function bloquearAgendamentoDiario({ idUsuario, dataInicioBanco, idAgendamentoIgnorado = null, transaction }) {
+async function existeAgendamentoDiario({ idUsuario, dataInicioBanco, idAgendamentoIgnorado = null, transaction = null }) {
   const dataLocal = String(dataInicioBanco).slice(0, 10);
   const [ano, mes, dia] = dataLocal.split('-').map(Number);
   const dataSeguinte = new Date(Date.UTC(ano, mes - 1, dia + 1)).toISOString().slice(0, 10);
@@ -71,7 +72,7 @@ async function bloquearAgendamentoDiario({ idUsuario, dataInicioBanco, idAgendam
      WHERE fk_usuario=:idUsuario AND cd_status='AGENDADO'
        AND dt_inicio >= :inicioDia AND dt_inicio < :fimDia
        AND (:idAgendamentoIgnorado IS NULL OR id_agendamento<>:idAgendamentoIgnorado)
-     LIMIT 1 FOR UPDATE`,
+     LIMIT 1 ${transaction ? 'FOR UPDATE' : ''}`,
     {
       replacements: {
         idUsuario,
@@ -83,12 +84,48 @@ async function bloquearAgendamentoDiario({ idUsuario, dataInicioBanco, idAgendam
       type: QueryTypes.SELECT,
     },
   );
-  if (agendamentosNoDia.length) {
-    throw Object.assign(new Error('Você já tem um agendamento ativo para este dia. Cancele-o ou escolha outra data.'), {
+  return agendamentosNoDia.length > 0;
+}
+
+async function bloquearAgendamentoDiario(opcoes) {
+  if (await existeAgendamentoDiario(opcoes)) {
+    throw Object.assign(new Error(mensagemLimiteAgendamentoDiario), {
       codigo: codigoLimiteAgendamentoDiario,
       status: 409,
     });
   }
+}
+
+async function verificarAgendamentoDiario(requisicao, resposta) {
+  const cliente = await obterClienteAutenticado(requisicao, resposta);
+  if (!cliente) return;
+  const data = String(requisicao.query.data ?? '');
+  const dataUtc = /^\d{4}-\d{2}-\d{2}$/.test(data) ? new Date(`${data}T00:00:00Z`) : null;
+  if (!dataUtc || Number.isNaN(dataUtc.getTime()) || dataUtc.toISOString().slice(0, 10) !== data) {
+    resposta.status(400).json({ mensagem: 'Informe uma data válida.' });
+    return;
+  }
+  let idAgendamentoIgnorado = null;
+  if (requisicao.query.ignorarIdAgendamento != null) {
+    idAgendamentoIgnorado = Number(requisicao.query.ignorarIdAgendamento);
+    if (!Number.isSafeInteger(idAgendamentoIgnorado) || idAgendamentoIgnorado <= 0) {
+      resposta.status(400).json({ mensagem: 'Informe um agendamento válido.' });
+      return;
+    }
+    const agendamentos = await bancoDeDados.query(
+      "SELECT id_agendamento FROM tb_agendamento WHERE id_agendamento=:idAgendamento AND fk_usuario=:idUsuario AND cd_status='AGENDADO' LIMIT 1",
+      { replacements: { idAgendamento: idAgendamentoIgnorado, idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
+    );
+    if (!agendamentos.length) {
+      resposta.status(404).json({ mensagem: 'Agendamento não encontrado.' });
+      return;
+    }
+  }
+  if (await existeAgendamentoDiario({ idUsuario: cliente.idUsuario, dataInicioBanco: data, idAgendamentoIgnorado })) {
+    resposta.status(409).json({ mensagem: mensagemLimiteAgendamentoDiario, codigo: codigoLimiteAgendamentoDiario });
+    return;
+  }
+  resposta.status(200).json({ disponivel: true });
 }
 
 async function localizarCidade(cidade) {
@@ -140,23 +177,23 @@ async function consultarPerfil(requisicao, resposta) {
   const perfil = await obterDadosCadastraisUsuario(cliente.idUsuario);
   resposta.status(200).json({
     perfil,
-    cadastroIncompleto: !perfil?.cpf || !perfil?.dataNascimento,
+    cadastroIncompleto: !perfil?.dataNascimento || !perfil?.telefone,
   });
 }
 
 async function atualizarPerfil(requisicao, resposta) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
-  const { dataNascimento, nome } = requisicao.body ?? {};
-  const cpf = somenteNumeros(requisicao.body?.cpf);
+  const { dataNascimento, nome, telefone } = requisicao.body ?? {};
+  const telefoneNormalizado = somenteNumeros(telefone);
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe seu nome.' }); return; }
-  if (!cpfValido(cpf)) { resposta.status(400).json({ mensagem: 'Informe um CPF válido.' }); return; }
+  if (![10, 11].includes(telefoneNormalizado.length)) { resposta.status(400).json({ mensagem: 'Informe um telefone válido.' }); return; }
   if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Você precisa ter pelo menos 18 anos.' }); return; }
   try {
-    const perfil = await atualizarDadosCadastraisUsuario(cliente.idUsuario, { cpf, dataNascimento, documento: cpf, nome, tipoDocumento: 'CPF' });
+    const perfil = await atualizarDadosCadastraisUsuario(cliente.idUsuario, { dataNascimento, nome, telefone: telefoneNormalizado });
     resposta.status(200).json({ mensagem: 'Informações da conta atualizadas.', perfil, cadastroIncompleto: false });
   } catch (erro) {
-    resposta.status(400).json({ mensagem: erro.name === 'SequelizeUniqueConstraintError' ? 'Este CPF já está em uso.' : 'Não foi possível atualizar suas informações.' });
+    resposta.status(400).json({ mensagem: 'Não foi possível atualizar suas informações.' });
   }
 }
 
@@ -776,6 +813,7 @@ roteadorCliente.patch('/senha', alterarSenha);
 roteadorCliente.get('/sugestoes-saloes', sugerirSaloes);
 roteadorCliente.get('/saloes/:idUnidade/servicos', listarServicosSalao);
 roteadorCliente.post('/agendamentos', criarAgendamento);
+roteadorCliente.get('/agendamentos/verificar-data', verificarAgendamentoDiario);
 roteadorCliente.post('/agendamentos/:idAgendamento/avaliacao', avaliarAgendamento);
 roteadorCliente.get('/agendamentos/:idAgendamento/horarios', listarHorariosReagendamento);
 roteadorCliente.patch('/agendamentos/:idAgendamento', atualizarAgendamento);

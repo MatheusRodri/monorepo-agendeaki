@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
-import { cnpjValido, cpfValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
+import { cnpjValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
 import { prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
 import { obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 import { criarSlugSalaoUnico } from '../servicos/slugs.js';
@@ -71,8 +71,8 @@ function validarDadosCadastro(dadosCadastro, perfil) {
     return 'Você precisa ter pelo menos 18 anos para criar uma conta.';
   }
 
-  if (perfil === perfis.cliente && !cpfValido(dadosCadastro.cpf)) {
-    return 'Informe um CPF válido.';
+  if (perfil === perfis.cliente && ![10, 11].includes(somenteNumeros(dadosCadastro.telefone).length)) {
+    return 'Informe um telefone válido.';
   }
 
   if (perfil === perfis.salao) {
@@ -82,6 +82,19 @@ function validarDadosCadastro(dadosCadastro, perfil) {
     if (!cnpjValido(dadosCadastro.documento)) return 'Informe um CNPJ válido para a empresa.';
   }
 
+  return null;
+}
+
+async function encontrarCadastroCnpj(documento) {
+  const documentoIndice = prepararDocumento('CNPJ', documento).documentoIndice;
+  const indiceRaizCnpj = prepararIndiceRaizCnpj(documento);
+  const [usuarios, unidades, saloes] = await Promise.all([
+    bancoDeDados.query('SELECT id_usuario FROM tb_usuario WHERE ds_documento_indice = :documentoIndice LIMIT 1', { replacements: { documentoIndice }, type: QueryTypes.SELECT }),
+    bancoDeDados.query('SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice = :documentoIndice LIMIT 1', { replacements: { documentoIndice }, type: QueryTypes.SELECT }),
+    bancoDeDados.query('SELECT id_salao FROM tb_salao WHERE ds_cnpj_raiz_indice = :indiceRaizCnpj LIMIT 1', { replacements: { indiceRaizCnpj }, type: QueryTypes.SELECT }),
+  ]);
+  if (usuarios.length || unidades.length) return 'Este CNPJ já está cadastrado.';
+  if (saloes.length) return 'Esta empresa já possui um salão cadastrado.';
   return null;
 }
 
@@ -114,10 +127,9 @@ async function criarConta(requisicao, resposta, perfil) {
 
   const nome = obterNomeCadastro(dadosCadastro, perfil).trim();
   const email = dadosCadastro.email.trim();
-  const cpf = perfil === perfis.cliente ? somenteNumeros(dadosCadastro.cpf) : null;
-  const tipoDocumento = perfil === perfis.salao ? 'CNPJ' : 'CPF';
-  const documento = perfil === perfis.salao ? normalizarCnpj(dadosCadastro.documento) : cpf;
-  const telefone = perfil === perfis.salao ? somenteNumeros(dadosCadastro.telefoneResponsavel) : null;
+  const tipoDocumento = perfil === perfis.salao ? 'CNPJ' : null;
+  const documento = perfil === perfis.salao ? normalizarCnpj(dadosCadastro.documento) : null;
+  const telefone = somenteNumeros(perfil === perfis.salao ? dadosCadastro.telefoneResponsavel : dadosCadastro.telefone);
   const nomeSalao = perfil === perfis.salao ? dadosCadastro.nomeSalao.trim() : null;
 
   let clienteAdministrativo;
@@ -125,6 +137,10 @@ async function criarConta(requisicao, resposta, perfil) {
   let cadastroLocal;
 
   try {
+    if (perfil === perfis.salao) {
+      const mensagemCnpj = await encontrarCadastroCnpj(documento);
+      if (mensagemCnpj) return resposta.status(409).json({ mensagem: mensagemCnpj });
+    }
     clienteAdministrativo = obterClienteAdministrativoSupabase();
 
     // Primeiro cria a identidade sem enviar e-mail. O link só é solicitado depois
@@ -136,7 +152,8 @@ async function criarConta(requisicao, resposta, perfil) {
       user_metadata: {
         nome,
         perfil,
-        ...(perfil === perfis.salao ? { telefone, nomeSalao } : {}),
+        telefone,
+        ...(perfil === perfis.salao ? { nomeSalao } : {}),
       },
     });
 
@@ -146,7 +163,7 @@ async function criarConta(requisicao, resposta, perfil) {
     idAutenticacaoExterna = dadosAutenticacao.user?.id;
     if (!idAutenticacaoExterna) throw new Error('O provedor de autenticação não retornou o identificador da conta.');
 
-    const tipoEfetivo = tipoDocumento ?? (cpf ? 'CPF' : null);
+    const tipoEfetivo = tipoDocumento;
     const protegido = prepararDocumento(tipoEfetivo, documento);
     const indiceRaizCnpj = perfil === perfis.salao ? prepararIndiceRaizCnpj(documento) : null;
     cadastroLocal = await bancoDeDados.transaction(async (transacao) => {
@@ -276,6 +293,13 @@ roteadorAutenticacao.get('/documentos-legais', async (_requisicao, resposta) => 
   }
 });
 
+async function verificarCnpjDisponivel(requisicao, resposta) {
+  const documento = normalizarCnpj(requisicao.body?.documento);
+  if (!cnpjValido(documento)) return resposta.status(200).json({ valido: false, disponivel: false });
+  const mensagem = await encontrarCadastroCnpj(documento);
+  resposta.status(200).json({ valido: true, disponivel: !mensagem, ...(mensagem ? { mensagem } : {}) });
+}
+
 async function realizarLogin(requisicao, resposta, perfil) {
   const { email, senha } = requisicao.body ?? {};
 
@@ -311,7 +335,7 @@ async function realizarLogin(requisicao, resposta, perfil) {
     });
     const dadosCadastrais = await obterDadosCadastraisUsuario(usuarioLocal.idUsuario);
     const cadastroIncompleto = perfil === perfis.cliente
-      ? !dadosCadastrais?.cpf || !dadosCadastrais?.dataNascimento
+      ? !dadosCadastrais?.dataNascimento || !dadosCadastrais?.telefone
       : !dadosCadastrais?.dataNascimento || !dadosCadastrais?.tipoDocumento || !dadosCadastrais?.documento || !dadosCadastrais?.telefone;
     let salaoIncompleto = false;
     if (perfil === perfis.salao) {
@@ -448,6 +472,7 @@ roteadorAutenticacao.post('/clientes/recuperar-senha', (requisicao, resposta) =>
 roteadorAutenticacao.post('/clientes/redefinir-senha', (requisicao, resposta) => redefinirSenha(requisicao, resposta, perfis.cliente));
 
 roteadorAutenticacao.post('/saloes/cadastro', (requisicao, resposta) => criarConta(requisicao, resposta, perfis.salao));
+roteadorAutenticacao.post('/saloes/verificar-cnpj', verificarCnpjDisponivel);
 roteadorAutenticacao.post('/saloes/login', (requisicao, resposta) => realizarLogin(requisicao, resposta, perfis.salao));
 roteadorAutenticacao.post('/saloes/refresh', (requisicao, resposta) => renovarSessao(requisicao, resposta, perfis.salao));
 roteadorAutenticacao.post('/saloes/logout', realizarLogout);
