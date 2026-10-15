@@ -182,7 +182,7 @@
 
 .modal-revisao-agendamento {
   align-items: center;
-  background: rgba(26, 15, 27, .68);
+  background: var(--fundo-secundario);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -193,7 +193,7 @@
 }
 
 .modal-revisao-agendamento__conteudo {
-  background: var(--cartao);
+  background: var(--fundo);
   border: 1px solid var(--borda);
   border-radius: 20px;
   box-shadow: var(--sombra);

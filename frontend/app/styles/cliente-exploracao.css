@@ -100,7 +100,7 @@
 
 .modal-conta {
   align-items: center;
-  background: rgba(47, 25, 44, .58);
+  background: var(--fundo-secundario);
   display: flex;
   inset: 0;
   justify-content: center;
