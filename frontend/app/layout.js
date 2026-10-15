@@ -1,5 +1,6 @@
 import './globals.css';
 import RegistrarPwa from '../components/RegistrarPwa/RegistrarPwa';
+import AlternadorTema from '../components/AlternadorTema/AlternadorTema';
 import TelaManutencao from '../components/TelaManutencao/TelaManutencao';
 import ToastProvider from '../components/ToastProvider/ToastProvider';
 
@@ -22,6 +23,7 @@ export default function LayoutPrincipal({ children }) {
     <html lang="pt-BR">
       <body>
         <ToastProvider />
+        <AlternadorTema />
         {emManutencao ? <TelaManutencao /> : <><RegistrarPwa />{children}</>}
       </body>
     </html>

@@ -26,7 +26,7 @@ export default function AlternadorTema() {
     <button
       aria-label={temaEscuro ? 'Ativar tema claro' : 'Ativar tema escuro'}
       aria-pressed={temaEscuro}
-      className="alternador-tema"
+      className="alternador-tema alternador-tema--global"
       onClick={alternarTema}
       type="button"
     >

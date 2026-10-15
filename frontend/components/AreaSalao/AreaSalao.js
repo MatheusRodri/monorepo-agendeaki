@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import AlternadorTema from '../AlternadorTema/AlternadorTema';
 import CampoSenha from '../CampoSenha/CampoSenha';
 import FormularioFilial from '../FormularioFilial/FormularioFilial';
 import DisponibilidadeSalao from '../DisponibilidadeSalao/DisponibilidadeSalao';
@@ -274,7 +273,6 @@ export default function AreaSalao({ secao }) {
             </button>
           )}
           <Link className={['botao-assinatura', secao === 'assinatura' && 'botao-assinatura--ativo', assinante && 'botao-assinatura--assinante'].filter(Boolean).join(' ')} href="/salao/assinatura">{assinante ? 'Assinante' : 'Assinatura'}</Link>
-          <AlternadorTema />
           <button className="botao-secundario botao-sair-area" disabled={saindo} onClick={sairDaConta} type="button">{saindo ? 'Saindo...' : 'Sair'}</button>
         </div>
       </header>
