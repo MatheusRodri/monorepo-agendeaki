@@ -273,6 +273,7 @@ export default function AreaSalao({ secao }) {
             </button>
           )}
           <Link className={['botao-assinatura', secao === 'assinatura' && 'botao-assinatura--ativo', assinante && 'botao-assinatura--assinante'].filter(Boolean).join(' ')} href="/salao/assinatura">{assinante ? 'Assinante' : 'Assinatura'}</Link>
+          <span data-alternador-tema-destino />
           <button className="botao-secundario botao-sair-area" disabled={saindo} onClick={sairDaConta} type="button">{saindo ? 'Saindo...' : 'Sair'}</button>
         </div>
       </header>
@@ -714,7 +715,7 @@ function Filiais({ dados, enderecoCep, enviarFormulario, excluirItem, buscarCep,
     <h1>{filialEdicao ? 'Atualize a filial.' : 'Cadastre uma nova filial.'}</h1>
     {limiteAtingido
       ? <section className="secao-painel"><h2>Limite do plano Básico atingido</h2><p>O plano Básico inclui uma unidade. Com o Premium, você pode cadastrar unidades ilimitadas.</p><Link className="botao-assinatura" href="/salao/assinatura">Conhecer o Premium</Link></section>
-      : <FormularioFilial buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} endereco={enderecoCep} filial={filialEdicao} key={filialEdicao?.idUnidade ?? 'nova'} responsavel={dados.perfilResponsavel} salvarFilial={enviarFormulario} />}
+      : <FormularioFilial buscarCep={buscarCep} buscarCoordenadas={buscarCoordenadas} endereco={enderecoCep} filial={filialEdicao} primeiraFilial={!filialEdicao && !dados.filiais?.length} key={filialEdicao?.idUnidade ?? 'nova'} responsavel={dados.perfilResponsavel} salvarFilial={enviarFormulario} />}
     <CabecalhoLista titulo="Suas filiais" descricao="Selecione uma unidade para alterar os dados, copiar o link de agendamento ou removê-la da descoberta." />
     <div className="grade-gestao">{dados.filiais?.map((filial) => { const paginaAtiva = Number(filial.quantidadeOpcoesAgendamento) > 0; return <article className="cartao-gestao" key={filial.idUnidade}><div><strong>{filial.nome}</strong><span>{filial.categoria} · {filial.municipio}/{filial.estado}</span><small>{filial.rua}, {filial.numero} · {filial.telefone || 'Sem telefone'}</small><small>{filial.email}</small><small>{paginaAtiva ? 'Página de agendamento disponível' : 'Página temporariamente indisponível'}</small></div><div className="acoes-gestao"><button disabled={!paginaAtiva} onClick={() => copiarLink(filial)} type="button">Copiar link</button><button disabled={!paginaAtiva} onClick={() => compartilharWhatsApp(filial)} type="button">WhatsApp</button><AcoesGestao aoEditar={() => definirFilialEdicao(filial)} aoExcluir={() => excluirItem(`/filiais/${filial.idUnidade}`, `a filial “${filial.nome}”`)} /></div></article>; })}</div>
     {!dados.filiais?.length && <p className="estado-lista">Nenhuma filial cadastrada.</p>}

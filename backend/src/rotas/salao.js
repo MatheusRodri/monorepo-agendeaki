@@ -337,39 +337,52 @@ async function atualizarPerfil(requisicao, resposta) {
   const protegido = prepararDocumento('CNPJ', documento);
   const indiceRaizCnpj = prepararIndiceRaizCnpj(documento);
   const salao = await obterSalaoAdministrador(administrador.idUsuario);
-  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const transacao = await bancoDeDados.transaction();
   try {
-    const saloes = await bancoDeDados.query(
-      'SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao FOR UPDATE',
-      { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
-    );
-    const raizAlterada = saloes[0]?.indiceRaizCnpj !== indiceRaizCnpj;
-    if (raizAlterada) {
-      const unidades = await bancoDeDados.query(
-        'SELECT id_unidade FROM tb_unidade WHERE fk_salao=:idSalao LIMIT 1',
+    if (salao) {
+      const saloes = await bancoDeDados.query(
+        'SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao FOR UPDATE',
         { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
       );
-      if (unidades.length) {
+      const raizAlterada = saloes[0]?.indiceRaizCnpj !== indiceRaizCnpj;
+      if (raizAlterada) {
+        const unidades = await bancoDeDados.query(
+          'SELECT id_unidade FROM tb_unidade WHERE fk_salao=:idSalao LIMIT 1',
+          { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+        );
+        if (unidades.length) {
+          await transacao.rollback();
+          resposta.status(409).json({ mensagem: 'Não é possível alterar a raiz do CNPJ enquanto o salão possui unidades cadastradas.' });
+          return;
+        }
+      }
+      const unidadeComMesmoCnpj = await bancoDeDados.query(
+        'SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice=:documentoIndice AND fk_salao<>:idSalao LIMIT 1',
+        { replacements: { documentoIndice: protegido.documentoIndice, idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+      );
+      if (unidadeComMesmoCnpj.length) {
         await transacao.rollback();
-        resposta.status(409).json({ mensagem: 'Não é possível alterar a raiz do CNPJ enquanto o salão possui unidades cadastradas.' });
+        resposta.status(409).json({ mensagem: 'Este CNPJ já está cadastrado em outra unidade da plataforma.' });
+        return;
+      }
+    } else {
+      const unidadeComMesmoCnpj = await bancoDeDados.query(
+        'SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice=:documentoIndice LIMIT 1',
+        { replacements: { documentoIndice: protegido.documentoIndice }, transaction: transacao, type: QueryTypes.SELECT },
+      );
+      if (unidadeComMesmoCnpj.length) {
+        await transacao.rollback();
+        resposta.status(409).json({ mensagem: 'Este CNPJ já está cadastrado em uma unidade da plataforma.' });
         return;
       }
     }
-    const unidadeComMesmoCnpj = await bancoDeDados.query(
-      'SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice=:documentoIndice AND fk_salao<>:idSalao LIMIT 1',
-      { replacements: { documentoIndice: protegido.documentoIndice, idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
-    );
-    if (unidadeComMesmoCnpj.length) {
-      await transacao.rollback();
-      resposta.status(409).json({ mensagem: 'Este CNPJ já está cadastrado em outra unidade da plataforma.' });
-      return;
-    }
     await atualizarDadosCadastraisUsuario(administrador.idUsuario, { dataNascimento, documento, nome, telefone: telefoneNormalizado, tipoDocumento: 'CNPJ', transaction: transacao });
-    await bancoDeDados.query(
-      'UPDATE tb_salao SET ds_cnpj_raiz_indice=:indiceRaizCnpj WHERE id_salao=:idSalao',
-      { replacements: { idSalao: salao.idSalao, indiceRaizCnpj }, transaction: transacao },
-    );
+    if (salao) {
+      await bancoDeDados.query(
+        'UPDATE tb_salao SET ds_cnpj_raiz_indice=:indiceRaizCnpj WHERE id_salao=:idSalao',
+        { replacements: { idSalao: salao.idSalao, indiceRaizCnpj }, transaction: transacao },
+      );
+    }
     await transacao.commit();
     const perfil = await obterDadosCadastraisUsuario(administrador.idUsuario);
     resposta.status(200).json({ mensagem: 'Informações da conta atualizadas.', perfil, cadastroIncompleto: false });
