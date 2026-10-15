@@ -3,8 +3,8 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
-import { cnpjValido, cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
-import { decifrarDocumento, prepararDocumento } from '../servicos/documentosProtegidos.js';
+import { cnpjValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
+import { decifrarDocumento, prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
 import { ativarAssinaturaPremium } from '../servicos/assinaturas.js';
 import { atualizarPeriodicidadeStripe, cancelarAssinaturaStripe, cancelarCheckoutStripe, criarCheckoutAssinatura, obterDadosPlanoPremium, obterOfertaPremium, obterPrecoStripe, consultarCheckoutStripe } from '../servicos/stripe.js';
 import { sincronizarAssinaturaStripe } from '../servicos/sincronizarAssinaturaStripe.js';
@@ -24,6 +24,10 @@ const motivosCancelamento = {
   ERRO_AGENDAMENTO: 'Erro no agendamento',
   OUTRO: 'Outro motivo',
 };
+
+function codigoErroBanco(erro) {
+  return erro?.original?.code ?? erro?.parent?.code ?? erro?.code;
+}
 
 function extrairTokenAcesso(requisicao) {
   const cabecalhoAutorizacao = requisicao.headers.authorization;
@@ -285,8 +289,15 @@ async function criarSalao(requisicao, resposta) {
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do salão.' }); return; }
   const salaoExistente = await obterSalaoAdministrador(administrador.idUsuario);
   if (salaoExistente) { resposta.status(409).json({ mensagem: 'Já existe um salão cadastrado para este responsável.' }); return; }
+  const perfil = await obterDadosCadastraisUsuario(administrador.idUsuario);
+  if (!cnpjValido(perfil?.documento)) { resposta.status(400).json({ mensagem: 'Informe um CNPJ válido para a empresa antes de cadastrar o salão.' }); return; }
   const slug = await criarSlugSalaoUnico(nome);
-  await bancoDeDados.query('INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_slug) VALUES (:idUsuario, :nome, :slug)', { replacements: { idUsuario: administrador.idUsuario, nome: nome.trim(), slug } });
+  try {
+    await bancoDeDados.query('INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_slug, ds_cnpj_raiz_indice) VALUES (:idUsuario, :nome, :slug, :indiceRaizCnpj)', { replacements: { idUsuario: administrador.idUsuario, nome: nome.trim(), slug, indiceRaizCnpj: prepararIndiceRaizCnpj(perfil.documento) } });
+  } catch (erro) {
+    if (codigoErroBanco(erro) === 'ER_DUP_ENTRY') { resposta.status(409).json({ mensagem: 'A raiz deste CNPJ já está vinculada a uma empresa na plataforma.' }); return; }
+    throw erro;
+  }
   resposta.status(201).json({ mensagem: 'Salão criado com sucesso.' });
 }
 
@@ -317,17 +328,56 @@ async function consultarPerfil(requisicao, resposta) {
 async function atualizarPerfil(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const { dataNascimento, nome, telefone, tipoDocumento } = requisicao.body ?? {};
-  const documento = somenteNumeros(requisicao.body?.documento);
-  const documentoValido = tipoDocumento === 'CPF' ? cpfValido(documento) : tipoDocumento === 'CNPJ' && cnpjValido(documento);
+  const documento = normalizarCnpj(requisicao.body?.documento);
   if (!nome?.trim()) { resposta.status(400).json({ mensagem: 'Informe o nome do responsável.' }); return; }
   const telefoneNormalizado = somenteNumeros(telefone);
   if (telefoneNormalizado.length < 10 || telefoneNormalizado.length > 11) { resposta.status(400).json({ mensagem: 'Informe um telefone válido para o responsável.' }); return; }
   if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Você precisa ter pelo menos 18 anos.' }); return; }
-  if (!documentoValido) { resposta.status(400).json({ mensagem: `Informe um ${tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido.` }); return; }
+  if (tipoDocumento !== 'CNPJ' || !cnpjValido(documento)) { resposta.status(400).json({ mensagem: 'Informe um CNPJ válido para a empresa.' }); return; }
+  const protegido = prepararDocumento('CNPJ', documento);
+  const indiceRaizCnpj = prepararIndiceRaizCnpj(documento);
+  const salao = await obterSalaoAdministrador(administrador.idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  const transacao = await bancoDeDados.transaction();
   try {
-    const perfil = await atualizarDadosCadastraisUsuario(administrador.idUsuario, { cpf: tipoDocumento === 'CPF' ? documento : null, dataNascimento, documento, nome, telefone: telefoneNormalizado, tipoDocumento });
+    const saloes = await bancoDeDados.query(
+      'SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao FOR UPDATE',
+      { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    const raizAlterada = saloes[0]?.indiceRaizCnpj !== indiceRaizCnpj;
+    if (raizAlterada) {
+      const unidades = await bancoDeDados.query(
+        'SELECT id_unidade FROM tb_unidade WHERE fk_salao=:idSalao LIMIT 1',
+        { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+      );
+      if (unidades.length) {
+        await transacao.rollback();
+        resposta.status(409).json({ mensagem: 'Não é possível alterar a raiz do CNPJ enquanto o salão possui unidades cadastradas.' });
+        return;
+      }
+    }
+    const unidadeComMesmoCnpj = await bancoDeDados.query(
+      'SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice=:documentoIndice AND fk_salao<>:idSalao LIMIT 1',
+      { replacements: { documentoIndice: protegido.documentoIndice, idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    if (unidadeComMesmoCnpj.length) {
+      await transacao.rollback();
+      resposta.status(409).json({ mensagem: 'Este CNPJ já está cadastrado em outra unidade da plataforma.' });
+      return;
+    }
+    await atualizarDadosCadastraisUsuario(administrador.idUsuario, { dataNascimento, documento, nome, telefone: telefoneNormalizado, tipoDocumento: 'CNPJ', transaction: transacao });
+    await bancoDeDados.query(
+      'UPDATE tb_salao SET ds_cnpj_raiz_indice=:indiceRaizCnpj WHERE id_salao=:idSalao',
+      { replacements: { idSalao: salao.idSalao, indiceRaizCnpj }, transaction: transacao },
+    );
+    await transacao.commit();
+    const perfil = await obterDadosCadastraisUsuario(administrador.idUsuario);
     resposta.status(200).json({ mensagem: 'Informações da conta atualizadas.', perfil, cadastroIncompleto: false });
-  } catch (erro) { resposta.status(400).json({ mensagem: erro.name === 'SequelizeUniqueConstraintError' ? 'Este documento já está em uso.' : 'Não foi possível atualizar suas informações.' }); }
+  } catch (erro) {
+    if (!transacao.finished) await transacao.rollback();
+    const duplicado = codigoErroBanco(erro) === 'ER_DUP_ENTRY';
+    resposta.status(duplicado ? 409 : 400).json({ mensagem: duplicado ? 'Este CNPJ ou a raiz deste CNPJ já está vinculado a uma empresa na plataforma.' : erro.message || 'Não foi possível atualizar suas informações.' });
+  }
 }
 
 async function alterarSenha(requisicao, resposta) {
@@ -432,15 +482,20 @@ async function listarFiliais(requisicao, resposta) {
 async function salvarFilial(requisicao, resposta, idUnidade = null) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre o salão antes de cadastrar filiais.' }); return; }
+  const dadosEmpresa = await bancoDeDados.query('SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao LIMIT 1', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT });
+  const indiceRaizEmpresa = dadosEmpresa[0]?.indiceRaizCnpj;
   const dadosFilial = requisicao.body ?? {};
   if (!dadosFilial.nome?.trim() || !dadosFilial.numero?.trim() || !categoriasPermitidas.includes(dadosFilial.categoria)) { resposta.status(400).json({ mensagem: 'Informe nome, número e categoria válidos para a filial.' }); return; }
   const email = String(dadosFilial.email ?? '').trim();
   const telefone = somenteNumeros(dadosFilial.telefone);
-  const documento = somenteNumeros(dadosFilial.documento);
-  const documentoValido = dadosFilial.tipoDocumento === 'CPF' ? cpfValido(documento) : dadosFilial.tipoDocumento === 'CNPJ' && cnpjValido(documento);
+  const documento = normalizarCnpj(dadosFilial.documento);
+  const documentoValido = cnpjValido(documento);
   if (!/^\S+@\S+\.\S+$/.test(email)) { resposta.status(400).json({ mensagem: 'Informe um e-mail válido para a filial.' }); return; }
   if (telefone.length < 10 || telefone.length > 11) { resposta.status(400).json({ mensagem: 'Informe um telefone válido para a filial.' }); return; }
-  if (!documentoValido) { resposta.status(400).json({ mensagem: `Informe um ${dadosFilial.tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido para a filial.` }); return; }
+  if (dadosFilial.tipoDocumento !== 'CNPJ' || !documentoValido) { resposta.status(400).json({ mensagem: 'Informe um CNPJ válido para a filial.' }); return; }
+  const protegido = prepararDocumento('CNPJ', documento);
+  const indiceRaizCnpj = prepararIndiceRaizCnpj(documento);
+  if (indiceRaizCnpj !== indiceRaizEmpresa) { resposta.status(409).json({ mensagem: 'O CNPJ da filial precisa pertencer à mesma empresa do salão.' }); return; }
   let horarios;
   try { horarios = normalizarHorariosUnidade(dadosFilial.horarios); } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); return; }
   const latitude = Number(dadosFilial.latitude);
@@ -454,11 +509,25 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
     return;
   }
   const coordenadas = { latitude, longitude };
-  const protegido = prepararDocumento(dadosFilial.tipoDocumento, documento);
-  const valores = { ...dadosFilial, ...enderecoCep, ...coordenadas, ...protegido, email, telefone, documento, idSalao: salao.idSalao, idUnidade };
+  const valores = { ...dadosFilial, ...enderecoCep, ...coordenadas, ...protegido, email, telefone, documento, tipoDocumento: 'CNPJ', indiceRaizCnpj, idSalao: salao.idSalao, idUnidade };
   const transacao = await bancoDeDados.transaction();
+  async function validarCnpjUnico() {
+    const cnpjsEmUnidades = await bancoDeDados.query(
+      'SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice=:documentoIndice AND (:idUnidade IS NULL OR id_unidade<>:idUnidade) LIMIT 1',
+      { replacements: { documentoIndice: protegido.documentoIndice, idUnidade }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    if (cnpjsEmUnidades.length) throw Object.assign(new Error('Este CNPJ já está cadastrado em outra unidade da plataforma.'), { status: 409 });
+    const cnpjDeOutraEmpresa = await bancoDeDados.query(
+      'SELECT id_usuario FROM tb_usuario WHERE ds_documento_indice=:documentoIndice AND id_usuario<>:idUsuario LIMIT 1',
+      { replacements: { documentoIndice: protegido.documentoIndice, idUsuario: administrador.idUsuario }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    if (cnpjDeOutraEmpresa.length) throw Object.assign(new Error('Este CNPJ já está cadastrado em outra empresa da plataforma.'), { status: 409 });
+  }
   if (idUnidade) {
     try {
+      const [salaoAtual] = await bancoDeDados.query('SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao FOR UPDATE', { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT });
+      if (salaoAtual?.indiceRaizCnpj !== indiceRaizCnpj) { await transacao.rollback(); resposta.status(409).json({ mensagem: 'O CNPJ da filial precisa pertencer à mesma empresa do salão.' }); return; }
+      await validarCnpjUnico();
       const filiais = await bancoDeDados.query('SELECT id_unidade AS idUnidade FROM tb_unidade WHERE id_unidade = :idUnidade AND fk_salao = :idSalao LIMIT 1', { replacements: valores, transaction: transacao, type: QueryTypes.SELECT });
       if (!filiais.length) { await transacao.rollback(); resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
       const agendamentosFuturos = await bancoDeDados.query(
@@ -475,11 +544,11 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       });
       if (conflitoExpediente) { await transacao.rollback(); resposta.status(409).json({ mensagem: 'O novo expediente deixaria um agendamento confirmado fora do horário.' }); return; }
       valores.slug = await criarSlugUnidadeUnico(dadosFilial.nome, salao.idSalao, { idUnidade, transaction: transacao });
-      await bancoDeDados.query(`UPDATE tb_unidade SET nm_unidade=:nome, ds_slug=:slug, tp_categoria=:categoria, ds_rua=:rua, nu_endereco=:numero, ds_complemento=:complemento, ds_bairro=:bairro, ds_municipio=:municipio, ds_estado=:estado, nu_cep=:cep, ds_email=:email, tp_documento=:tipoDocumento, ds_documento_cifrado=:documentoCifrado, nu_latitude=:latitude, nu_longitude=:longitude, nu_telefone=:telefone WHERE id_unidade=:idUnidade`, { replacements: valores, transaction: transacao });
+      await bancoDeDados.query(`UPDATE tb_unidade SET nm_unidade=:nome, ds_slug=:slug, tp_categoria=:categoria, ds_rua=:rua, nu_endereco=:numero, ds_complemento=:complemento, ds_bairro=:bairro, ds_municipio=:municipio, ds_estado=:estado, nu_cep=:cep, ds_email=:email, tp_documento='CNPJ', ds_documento_cifrado=:documentoCifrado, ds_documento_indice=:documentoIndice, ds_cnpj_raiz_indice=:indiceRaizCnpj, nu_latitude=:latitude, nu_longitude=:longitude, nu_telefone=:telefone WHERE id_unidade=:idUnidade`, { replacements: valores, transaction: transacao });
       await salvarHorariosUnidade(idUnidade, horarios, transacao);
       await transacao.commit();
       resposta.status(200).json({ mensagem: 'Filial, localização e horários atualizados.', coordenadas }); return;
-    } catch (erro) { await transacao.rollback(); resposta.status(500).json({ mensagem: erro.message }); return; }
+    } catch (erro) { await transacao.rollback(); const duplicado = codigoErroBanco(erro) === 'ER_DUP_ENTRY'; resposta.status(erro.status ?? (duplicado ? 409 : 500)).json({ mensagem: duplicado ? 'Este CNPJ já está cadastrado na plataforma.' : erro.message }); return; }
   }
   let etapa = 'gerar slug';
   let idUnidadeCriada = null;
@@ -488,9 +557,23 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
     if (!resposta.headersSent) resposta.status(201).json({ mensagem: 'Filial criada com localização e horários salvos.', idUnidade: idUnidadeCriada, coordenadas });
   };
   try {
+    const [salaoAtual] = await bancoDeDados.query('SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao FOR UPDATE', { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT });
+    if (salaoAtual?.indiceRaizCnpj !== indiceRaizCnpj) throw Object.assign(new Error('O CNPJ da filial precisa pertencer à mesma empresa do salão.'), { status: 409 });
+    const assinatura = await obterAssinaturaSalao(salao.idSalao);
+    const premiumAtivo = resumoAssinatura(assinatura).temAcessoPremium;
+    const unidadesAtivas = await bancoDeDados.query(
+      'SELECT COUNT(*) AS quantidade FROM tb_unidade WHERE fk_salao=:idSalao AND st_ativo=TRUE',
+      { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    if (!premiumAtivo && Number(unidadesAtivas[0]?.quantidade ?? 0) >= 1) {
+      await transacao.rollback();
+      resposta.status(409).json({ mensagem: 'O plano Básico permite uma unidade. Assine o Premium para cadastrar unidades ilimitadas.' });
+      return;
+    }
+    await validarCnpjUnico();
     valores.slug = await criarSlugUnidadeUnico(dadosFilial.nome, salao.idSalao, { transaction: transacao });
     etapa = 'inserir filial';
-    const [resultadoInsercao] = await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, ds_slug, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, ds_email, tp_documento, ds_documento_cifrado, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :slug, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :email, :tipoDocumento, :documentoCifrado, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
+    const [resultadoInsercao] = await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, ds_slug, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, ds_email, tp_documento, ds_documento_cifrado, ds_documento_indice, ds_cnpj_raiz_indice, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :slug, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :email, 'CNPJ', :documentoCifrado, :documentoIndice, :indiceRaizCnpj, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
     idUnidadeCriada = Number(resultadoInsercao?.insertId) || null;
     etapa = 'identificar filial criada';
     const unidadesCriadas = await bancoDeDados.query('SELECT LAST_INSERT_ID() AS idUnidade', { transaction: transacao, type: QueryTypes.SELECT });
@@ -542,10 +625,11 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
     if (!resposta.headersSent) {
       const conflitoNome = erro.name === 'SequelizeUniqueConstraintError'
         && erro.errors?.some((item) => item.path === 'uk_unidade_nome_salao');
-      resposta.status(conflitoNome ? 409 : 500).json({
+      const conflitoDocumento = codigoErroBanco(erro) === 'ER_DUP_ENTRY';
+      resposta.status(erro.status ?? (conflitoNome || conflitoDocumento ? 409 : 500)).json({
         mensagem: conflitoNome
           ? 'Já existe uma filial com esse nome neste salão. Confira a lista de filiais, inclusive as removidas da descoberta.'
-          : erro.message,
+          : conflitoDocumento ? 'Este CNPJ já está cadastrado na plataforma.' : erro.message,
       });
     }
   }

@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS tb_salao (
 
   nm_salao VARCHAR(120) NOT NULL,
   ds_slug VARCHAR(150) NOT NULL,
+  ds_cnpj_raiz_indice CHAR(64) NOT NULL,
 
   st_ativo BOOLEAN NOT NULL DEFAULT TRUE,
   st_teste_premium_utilizado BOOLEAN NOT NULL DEFAULT FALSE,
@@ -73,6 +74,9 @@ CREATE TABLE IF NOT EXISTS tb_salao (
 
   CONSTRAINT uk_salao_slug
     UNIQUE (ds_slug),
+
+  CONSTRAINT uk_salao_cnpj_raiz
+    UNIQUE (ds_cnpj_raiz_indice),
 
   INDEX idx_salao_administrador (
     fk_usuario_administrador
@@ -231,8 +235,10 @@ CREATE TABLE IF NOT EXISTS tb_unidade (
   nu_cep CHAR(8) NOT NULL,
 
   ds_email VARCHAR(254) NOT NULL,
-  tp_documento ENUM('CPF', 'CNPJ') NOT NULL,
+  tp_documento ENUM('CNPJ') NOT NULL,
   ds_documento_cifrado VARCHAR(255) NOT NULL,
+  ds_documento_indice CHAR(64) NOT NULL,
+  ds_cnpj_raiz_indice CHAR(64) NOT NULL,
 
   nu_latitude DECIMAL(10, 7) NULL,
   nu_longitude DECIMAL(10, 7) NULL,
@@ -253,6 +259,11 @@ CREATE TABLE IF NOT EXISTS tb_unidade (
 
   CONSTRAINT uk_unidade_slug_salao
     UNIQUE (fk_salao, ds_slug),
+
+  CONSTRAINT uk_unidade_documento_indice
+    UNIQUE (ds_documento_indice),
+
+  INDEX idx_unidade_cnpj_raiz (ds_cnpj_raiz_indice),
 
   INDEX idx_unidade_salao (
     fk_salao

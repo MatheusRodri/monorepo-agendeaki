@@ -1,14 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { formatarCnpj, formatarCpf, formatarTelefone } from '../../utils/formatadores';
+import { formatarCnpj, formatarTelefone } from '../../utils/formatadores';
 import MapaAjusteFilial from '../MapaAjusteFilial/MapaAjusteFilial';
 
 const diasSemana = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-
-function formatarDocumento(valor, tipo) {
-  return tipo === 'CNPJ' ? formatarCnpj(valor) : formatarCpf(valor);
-}
 
 function formatarCep(valor) {
   const numeros = String(valor ?? '').replace(/\D/g, '').slice(0, 8);
@@ -33,8 +29,7 @@ export default function FormularioFilial({ endereco, filial, buscarCep, buscarCo
   const [numero, definirNumero] = useState(filial?.numero ?? '');
   const [telefone, definirTelefone] = useState(formatarTelefone(filial?.telefone ?? responsavel?.telefone));
   const [email, definirEmail] = useState(filial?.email ?? responsavel?.email ?? '');
-  const [tipoDocumento, definirTipoDocumento] = useState(filial?.tipoDocumento ?? responsavel?.tipoDocumento ?? 'CPF');
-  const [documento, definirDocumento] = useState(formatarDocumento(filial?.documento ?? responsavel?.documento, filial?.tipoDocumento ?? responsavel?.tipoDocumento));
+  const [documento, definirDocumento] = useState(formatarCnpj(filial?.documento));
   const [usarDadosResponsavel, definirUsarDadosResponsavel] = useState(!filial);
   const [coordenadas, definirCoordenadas] = useState(filial?.latitude != null && filial?.longitude != null ? { latitude: Number(filial.latitude), longitude: Number(filial.longitude) } : null);
   const [horarios, definirHorarios] = useState(criarHorarios(filial?.horarios));
@@ -49,8 +44,7 @@ export default function FormularioFilial({ endereco, filial, buscarCep, buscarCo
     definirNumero(filial?.numero ?? '');
     definirTelefone(formatarTelefone(filial ? filial.telefone : responsavel?.telefone));
     definirEmail(filial ? filial.email ?? '' : responsavel?.email ?? '');
-    definirTipoDocumento(filial?.tipoDocumento ?? responsavel?.tipoDocumento ?? 'CPF');
-    definirDocumento(formatarDocumento(filial?.documento ?? responsavel?.documento, filial?.tipoDocumento ?? responsavel?.tipoDocumento));
+    definirDocumento(formatarCnpj(filial?.documento));
     definirUsarDadosResponsavel(!filial);
     definirCoordenadas(filial?.latitude != null && filial?.longitude != null ? { latitude: Number(filial.latitude), longitude: Number(filial.longitude) } : null);
     definirHorarios(criarHorarios(filial?.horarios));
@@ -62,8 +56,6 @@ export default function FormularioFilial({ endereco, filial, buscarCep, buscarCo
     if (!checked) return;
     definirEmail(responsavel?.email ?? '');
     definirTelefone(formatarTelefone(responsavel?.telefone));
-    definirTipoDocumento(responsavel?.tipoDocumento ?? 'CPF');
-    definirDocumento(formatarDocumento(responsavel?.documento, responsavel?.tipoDocumento));
   }
 
   useEffect(() => () => clearTimeout(temporizadorCep.current), []);
@@ -120,11 +112,11 @@ export default function FormularioFilial({ endereco, filial, buscarCep, buscarCo
         evento,
         filial ? `/filiais/${filial.idUnidade}` : '/filiais',
         filial ? 'PATCH' : 'POST',
-        { horarios, email, telefone, tipoDocumento, documento, ...(coordenadas ? coordenadas : {}) },
+        { horarios, email, telefone, tipoDocumento: 'CNPJ', documento, ...(coordenadas ? coordenadas : {}) },
       );
 
       if (!filial && resultado) {
-        definirCep(''); definirNumero(''); definirEmail(responsavel?.email ?? ''); definirTelefone(formatarTelefone(responsavel?.telefone)); definirTipoDocumento(responsavel?.tipoDocumento ?? 'CPF'); definirDocumento(formatarDocumento(responsavel?.documento, responsavel?.tipoDocumento)); definirUsarDadosResponsavel(true); definirCoordenadas(null); definirHorarios(criarHorarios()); definirSugestoesEndereco([]);
+        definirCep(''); definirNumero(''); definirEmail(responsavel?.email ?? ''); definirTelefone(formatarTelefone(responsavel?.telefone)); definirDocumento(''); definirUsarDadosResponsavel(true); definirCoordenadas(null); definirHorarios(criarHorarios()); definirSugestoesEndereco([]);
       }
     } finally {
       definirSalvando(false);
@@ -137,10 +129,9 @@ export default function FormularioFilial({ endereco, filial, buscarCep, buscarCo
       <div className="dados-contato-filial__campos">
         <label className="campo-formulario"><span>E-mail de atendimento</span><input autoComplete="email" disabled={usarDadosResponsavel} onChange={(evento) => definirEmail(evento.target.value)} required type="email" value={email} /></label>
         <label className="campo-formulario"><span>Telefone</span><input disabled={usarDadosResponsavel} inputMode="numeric" onChange={(evento) => definirTelefone(formatarTelefone(evento.target.value))} placeholder="(00) 00000-0000" required value={telefone} /></label>
-        <label className="campo-formulario"><span>Tipo de documento</span><select disabled={usarDadosResponsavel} onChange={(evento) => { definirTipoDocumento(evento.target.value); definirDocumento(''); }} required value={tipoDocumento}><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option></select></label>
-        <label className="campo-formulario"><span>Número do {tipoDocumento}</span><input disabled={usarDadosResponsavel} inputMode="numeric" onChange={(evento) => definirDocumento(formatarDocumento(evento.target.value, tipoDocumento))} placeholder={tipoDocumento === 'CNPJ' ? '00.000.000/0000-00' : '000.000.000-00'} required value={documento} /></label>
+        <label className="campo-formulario"><span>CNPJ da filial</span><input autoComplete="organization" onChange={(evento) => definirDocumento(formatarCnpj(evento.target.value))} placeholder="AA.AAA.AAA/AAAA-00" required value={documento} /></label>
       </div>
-      <label className="campo-formulario--checkbox dados-contato-filial__checkbox"><input checked={usarDadosResponsavel} onChange={(evento) => copiarDadosResponsavel(evento.target.checked)} type="checkbox" /><span>Usar e-mail, telefone e documento do responsável</span></label>
+      <label className="campo-formulario--checkbox dados-contato-filial__checkbox"><input checked={usarDadosResponsavel} onChange={(evento) => copiarDadosResponsavel(evento.target.checked)} type="checkbox" /><span>Usar e-mail e telefone do responsável</span></label>
     </section>
     <label className="campo-formulario"><span>Nome da filial</span><input defaultValue={filial?.nome ?? ''} name="nome" required /></label>
     <label className="campo-formulario"><span>Categoria</span><select defaultValue={filial?.categoria ?? 'UNISSEX'} name="categoria"><option value="FEMININO">Feminino</option><option value="MASCULINO">Masculino</option><option value="UNISSEX">Unissex</option><option value="OUTRO">Outro</option></select></label>

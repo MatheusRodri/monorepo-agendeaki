@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
-import { cnpjValido, cpfValido, dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
-import { prepararDocumento } from '../servicos/documentosProtegidos.js';
+import { cnpjValido, cpfValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
+import { prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
 import { obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 import { criarSlugSalaoUnico } from '../servicos/slugs.js';
 
@@ -13,6 +13,10 @@ const perfis = {
   cliente: 'CLIENTE',
   salao: 'ADMIN_SALAO',
 };
+
+function codigoErroBanco(erro) {
+  return erro?.original?.code ?? erro?.parent?.code ?? erro?.code;
+}
 
 async function removerCadastroLocal(idUsuario, perfil) {
   await bancoDeDados.transaction(async (transacao) => {
@@ -73,9 +77,8 @@ function validarDadosCadastro(dadosCadastro, perfil) {
   if (perfil === perfis.salao) {
     if (!dadosCadastro.nomeSalao?.trim()) return 'Informe o nome do salão.';
     if (somenteNumeros(dadosCadastro.telefoneResponsavel).length < 10 || somenteNumeros(dadosCadastro.telefoneResponsavel).length > 11) return 'Informe um telefone válido para o responsável.';
-    const tipoDocumento = dadosCadastro.tipoDocumento;
-    const documentoValido = tipoDocumento === 'CPF' ? cpfValido(dadosCadastro.documento) : tipoDocumento === 'CNPJ' && cnpjValido(dadosCadastro.documento);
-    if (!documentoValido) return `Informe um ${tipoDocumento === 'CNPJ' ? 'CNPJ' : 'CPF'} válido.`;
+    if (dadosCadastro.tipoDocumento !== 'CNPJ') return 'O cadastro de empresas aceita somente CNPJ.';
+    if (!cnpjValido(dadosCadastro.documento)) return 'Informe um CNPJ válido para a empresa.';
   }
 
   return null;
@@ -108,8 +111,8 @@ async function criarConta(requisicao, resposta, perfil) {
   const nome = obterNomeCadastro(dadosCadastro, perfil).trim();
   const email = dadosCadastro.email.trim();
   const cpf = perfil === perfis.cliente ? somenteNumeros(dadosCadastro.cpf) : null;
-  const tipoDocumento = perfil === perfis.salao ? dadosCadastro.tipoDocumento : 'CPF';
-  const documento = perfil === perfis.salao ? somenteNumeros(dadosCadastro.documento) : cpf;
+  const tipoDocumento = perfil === perfis.salao ? 'CNPJ' : 'CPF';
+  const documento = perfil === perfis.salao ? normalizarCnpj(dadosCadastro.documento) : cpf;
   const telefone = perfil === perfis.salao ? somenteNumeros(dadosCadastro.telefoneResponsavel) : null;
   const nomeSalao = perfil === perfis.salao ? dadosCadastro.nomeSalao.trim() : null;
 
@@ -141,6 +144,7 @@ async function criarConta(requisicao, resposta, perfil) {
 
     const tipoEfetivo = tipoDocumento ?? (cpf ? 'CPF' : null);
     const protegido = prepararDocumento(tipoEfetivo, documento);
+    const indiceRaizCnpj = perfil === perfis.salao ? prepararIndiceRaizCnpj(documento) : null;
     cadastroLocal = await bancoDeDados.transaction(async (transacao) => {
       const emailExistente = await bancoDeDados.query(
         'SELECT id_usuario FROM tb_usuario WHERE ds_email = :email LIMIT 1',
@@ -161,6 +165,17 @@ async function criarConta(requisicao, resposta, perfil) {
           const erro = new Error(`Este ${tipoEfetivo} já está cadastrado.`);
           erro.status = 409;
           throw erro;
+        }
+        if (perfil === perfis.salao) {
+          const cnpjUnidadeExistente = await bancoDeDados.query(
+            'SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice = :documentoIndice LIMIT 1',
+            { replacements: { documentoIndice: protegido.documentoIndice }, transaction: transacao, type: QueryTypes.SELECT },
+          );
+          if (cnpjUnidadeExistente.length) {
+            const erro = new Error('Este CNPJ já está cadastrado em uma unidade da plataforma.');
+            erro.status = 409;
+            throw erro;
+          }
         }
       }
 
@@ -191,8 +206,8 @@ async function criarConta(requisicao, resposta, perfil) {
       if (perfil === perfis.salao) {
         const slug = await criarSlugSalaoUnico(nomeSalao, { transaction: transacao });
         await bancoDeDados.query(
-          'INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_slug) VALUES (:idUsuario, :nomeSalao, :slug)',
-          { replacements: { idUsuario: usuariosInseridos[0].idUsuario, nomeSalao, slug }, transaction: transacao },
+          'INSERT INTO tb_salao (fk_usuario_administrador, nm_salao, ds_slug, ds_cnpj_raiz_indice) VALUES (:idUsuario, :nomeSalao, :slug, :indiceRaizCnpj)',
+          { replacements: { idUsuario: usuariosInseridos[0].idUsuario, nomeSalao, slug, indiceRaizCnpj }, transaction: transacao },
         );
       }
 
@@ -227,6 +242,9 @@ async function criarConta(requisicao, resposta, perfil) {
       }
     }
     if (idAutenticacaoExterna && clienteAdministrativo) await removerIdentidadeSupabase(clienteAdministrativo, idAutenticacaoExterna);
+    if (codigoErroBanco(erro) === 'ER_DUP_ENTRY' && perfil === perfis.salao) {
+      return resposta.status(409).json({ mensagem: 'Este CNPJ ou a raiz deste CNPJ já está vinculado a uma empresa na plataforma.' });
+    }
     return resposta.status(erro.status ?? 500).json({ mensagem: erro.message });
   }
 }

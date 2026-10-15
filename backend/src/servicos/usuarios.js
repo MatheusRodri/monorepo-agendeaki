@@ -87,7 +87,7 @@ export async function obterDadosCadastraisUsuario(idUsuario) {
   return { ...perfil, cpf: perfil.tipoDocumento === 'CPF' ? documento : null, documento };
 }
 
-export async function atualizarDadosCadastraisUsuario(idUsuario, { cpf = null, dataNascimento, documento = null, nome, telefone = null, tipoDocumento = null }) {
+export async function atualizarDadosCadastraisUsuario(idUsuario, { cpf = null, dataNascimento, documento = null, nome, telefone = null, tipoDocumento = null, transaction = null }) {
   const tipoEfetivo = tipoDocumento ?? (cpf ? 'CPF' : null);
   const protegido = prepararDocumento(tipoEfetivo, documento ?? cpf);
   await bancoDeDados.query(
@@ -99,7 +99,7 @@ export async function atualizarDadosCadastraisUsuario(idUsuario, { cpf = null, d
          ds_documento_cifrado = COALESCE(:documentoCifrado, ds_documento_cifrado),
          ds_documento_indice = COALESCE(:documentoIndice, ds_documento_indice)
      WHERE id_usuario = :idUsuario`,
-    { replacements: { ...protegido, dataNascimento, idUsuario, nome: nome?.trim() || null, telefone: telefone?.trim() || null, tipoDocumento: tipoEfetivo } },
+    { replacements: { ...protegido, dataNascimento, idUsuario, nome: nome?.trim() || null, telefone: telefone?.trim() || null, tipoDocumento: tipoEfetivo }, transaction },
   );
-  return obterDadosCadastraisUsuario(idUsuario);
+  return transaction ? null : obterDadosCadastraisUsuario(idUsuario);
 }

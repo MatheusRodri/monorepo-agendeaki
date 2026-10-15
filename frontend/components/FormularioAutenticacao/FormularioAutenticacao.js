@@ -20,7 +20,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
   const roteador = useRouter();
   const configuracao = configuracoesPerfil[perfil];
   const estaNoCadastro = modo === 'cadastro';
-  const [dadosFormulario, definirDadosFormulario] = useState({ nome: '', nomeSalao: '', telefoneResponsavel: '', email: '', senha: '', confirmacaoSenha: '', cpf: '', dataNascimento: '', tipoDocumento: 'CPF', documento: '' });
+  const [dadosFormulario, definirDadosFormulario] = useState({ nome: '', nomeSalao: '', telefoneResponsavel: '', email: '', senha: '', confirmacaoSenha: '', cpf: '', dataNascimento: '', tipoDocumento: 'CNPJ', documento: '' });
   const [enviando, definirEnviando] = useState(false);
   const [manterConectado, definirManterConectado] = useState(true);
   const [verificandoSessao, definirVerificandoSessao] = useState(!estaNoCadastro);
@@ -32,7 +32,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
     if (name === 'cpf') definirDadosFormulario((atual) => ({ ...atual, cpf: formatarCpf(value) }));
     else if (name === 'dataNascimento') definirDadosFormulario((atual) => ({ ...atual, dataNascimento: formatarData(value) }));
     else if (name === 'tipoDocumento') definirDadosFormulario((atual) => ({ ...atual, tipoDocumento: value, documento: '' }));
-    else if (name === 'documento') definirDadosFormulario((atual) => ({ ...atual, documento: atual.tipoDocumento === 'CNPJ' ? formatarCnpj(value) : formatarCpf(value) }));
+    else if (name === 'documento') definirDadosFormulario((atual) => ({ ...atual, documento: formatarCnpj(value) }));
     else if (name === 'telefoneResponsavel') definirDadosFormulario((atual) => ({ ...atual, telefoneResponsavel: formatarTelefone(value) }));
     else definirDadosFormulario((atual) => ({ ...atual, [name]: value }));
   }
@@ -101,7 +101,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
     if (estaNoCadastro && !dataNascimentoMaiorDeIdade(dataNascimento)) { toastErro('Você precisa ter pelo menos 18 anos para criar uma conta.'); return; }
     definirEnviando(true);
     const dadosEnvio = estaNoCadastro
-      ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento, ...(perfil === 'cliente' ? { cpf: dadosFormulario.cpf } : { nomeSalao: dadosFormulario.nomeSalao, telefoneResponsavel: dadosFormulario.telefoneResponsavel, tipoDocumento: dadosFormulario.tipoDocumento, documento: dadosFormulario.documento }) }
+      ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento, ...(perfil === 'cliente' ? { cpf: dadosFormulario.cpf } : { nomeSalao: dadosFormulario.nomeSalao, telefoneResponsavel: dadosFormulario.telefoneResponsavel, tipoDocumento: 'CNPJ', documento: dadosFormulario.documento }) }
       : { email: dadosFormulario.email, senha: dadosFormulario.senha };
     try {
       const dadosResposta = await requisitarApi(`/api/${configuracao.rotaApi}/${estaNoCadastro ? 'cadastro' : 'login'}`, { dados: dadosEnvio, metodo: 'POST' });
@@ -127,5 +127,5 @@ export default function FormularioAutenticacao({ modo, perfil }) {
 }
 
 function DadosCadastrais({ aoMudar, dados, perfil }) {
-  return <><label className="campo-formulario"><span>{perfil === 'salao' ? 'Nome do responsável' : 'Seu nome'}</span><input autoComplete="name" name="nome" onChange={aoMudar} required value={dados.nome} /></label>{perfil === 'salao' && <><label className="campo-formulario"><span>Nome do salão</span><input name="nomeSalao" onChange={aoMudar} required value={dados.nomeSalao} /></label><label className="campo-formulario"><span>Telefone do responsável</span><input autoComplete="tel" inputMode="numeric" name="telefoneResponsavel" onChange={aoMudar} placeholder="(00) 00000-0000" required value={dados.telefoneResponsavel} /></label></>}<label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" name="dataNascimento" onChange={aoMudar} placeholder="DD/MM/AAAA" required value={dados.dataNascimento} /></label>{perfil === 'cliente' ? <label className="campo-formulario"><span>CPF</span><input inputMode="numeric" name="cpf" onChange={aoMudar} placeholder="000.000.000-00" required value={dados.cpf} /></label> : <><label className="campo-formulario"><span>Usarei</span><select name="tipoDocumento" onChange={aoMudar} value={dados.tipoDocumento}><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option></select></label><label className="campo-formulario"><span>Número do {dados.tipoDocumento}</span><input inputMode="numeric" name="documento" onChange={aoMudar} placeholder={dados.tipoDocumento === 'CNPJ' ? '00.000.000/0000-00' : '000.000.000-00'} required value={dados.documento} /></label></>}</>;
+  return <><label className="campo-formulario"><span>{perfil === 'salao' ? 'Nome do responsável' : 'Seu nome'}</span><input autoComplete="name" name="nome" onChange={aoMudar} required value={dados.nome} /></label>{perfil === 'salao' && <><label className="campo-formulario"><span>Nome do salão</span><input name="nomeSalao" onChange={aoMudar} required value={dados.nomeSalao} /></label><label className="campo-formulario"><span>Telefone do responsável</span><input autoComplete="tel" inputMode="numeric" name="telefoneResponsavel" onChange={aoMudar} placeholder="(00) 00000-0000" required value={dados.telefoneResponsavel} /></label></>}<label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" name="dataNascimento" onChange={aoMudar} placeholder="DD/MM/AAAA" required value={dados.dataNascimento} /></label>{perfil === 'cliente' ? <label className="campo-formulario"><span>CPF</span><input inputMode="numeric" name="cpf" onChange={aoMudar} placeholder="000.000.000-00" required value={dados.cpf} /></label> : <label className="campo-formulario"><span>CNPJ da empresa</span><input autoComplete="organization" name="documento" onChange={aoMudar} placeholder="AA.AAA.AAA/AAAA-00" required value={dados.documento} /></label>}</>;
 }

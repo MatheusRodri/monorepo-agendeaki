@@ -6,22 +6,22 @@ import { requisitarApi } from '../../utils/api';
 import { toastErro } from '../../utils/toast';
 
 export default function ModalCompletarPerfil({ aoConcluir, cadastroIncompleto = true, dadosCadastrais, nomeSalao: nomeSalaoInicial = '', perfil, salaoIncompleto = false, rotaApi, tokenAcesso }) {
+  const salao = rotaApi === 'salao';
   const [dados, definirDados] = useState({
     nome: dadosCadastrais?.nome ?? perfil?.nome ?? '',
     telefone: formatarTelefone(dadosCadastrais?.telefone ?? perfil?.telefone),
     cpf: formatarCpf(dadosCadastrais?.cpf),
     dataNascimento: dataParaExibicao(dadosCadastrais?.dataNascimento),
-    documento: dadosCadastrais?.tipoDocumento === 'CNPJ' ? formatarCnpj(dadosCadastrais?.documento) : formatarCpf(dadosCadastrais?.documento),
-    tipoDocumento: dadosCadastrais?.tipoDocumento ?? 'CPF',
+    documento: salao ? formatarCnpj(dadosCadastrais?.documento) : formatarCpf(dadosCadastrais?.documento),
+    tipoDocumento: salao ? 'CNPJ' : 'CPF',
   });
   const [nomeSalao, definirNomeSalao] = useState(nomeSalaoInicial);
   const [enviando, definirEnviando] = useState(false);
-  const salao = rotaApi === 'salao';
 
   function alterarCampo(evento) {
     const { name, value } = evento.target;
     if (name === 'cpf') definirDados((atual) => ({ ...atual, cpf: formatarCpf(value) }));
-    else if (name === 'documento') definirDados((atual) => ({ ...atual, documento: atual.tipoDocumento === 'CNPJ' ? formatarCnpj(value) : formatarCpf(value) }));
+    else if (name === 'documento') definirDados((atual) => ({ ...atual, documento: salao ? formatarCnpj(value) : formatarCpf(value) }));
     else if (name === 'dataNascimento') definirDados((atual) => ({ ...atual, dataNascimento: formatarData(value) }));
     else if (name === 'telefone') definirDados((atual) => ({ ...atual, telefone: formatarTelefone(value) }));
     else if (name === 'tipoDocumento') definirDados((atual) => ({ ...atual, tipoDocumento: value, documento: '' }));
@@ -34,7 +34,7 @@ export default function ModalCompletarPerfil({ aoConcluir, cadastroIncompleto = 
     try {
       if (cadastroIncompleto) {
         await requisitarApi(`/api/${salao ? 'salao' : 'clientes'}/perfil`, {
-          dados: { ...dados, dataNascimento: dataParaIso(dados.dataNascimento) },
+          dados: { ...dados, ...(salao ? { tipoDocumento: 'CNPJ' } : {}), dataNascimento: dataParaIso(dados.dataNascimento) },
           metodo: 'PATCH',
           tokenAcesso,
         });
@@ -76,8 +76,7 @@ export default function ModalCompletarPerfil({ aoConcluir, cadastroIncompleto = 
         {salao && <label className="campo-formulario"><span>Telefone do responsável</span><input autoComplete="tel" inputMode="numeric" name="telefone" onChange={alterarCampo} placeholder="(00) 00000-0000" required value={dados.telefone} /></label>}
         <label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" name="dataNascimento" onChange={alterarCampo} placeholder="DD/MM/AAAA" required value={dados.dataNascimento} /></label>
         {salao ? <>
-          <label className="campo-formulario"><span>Documento</span><select name="tipoDocumento" onChange={alterarCampo} value={dados.tipoDocumento}><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option></select></label>
-          <label className="campo-formulario"><span>Número do {dados.tipoDocumento}</span><input inputMode="numeric" name="documento" onChange={alterarCampo} placeholder={dados.tipoDocumento === 'CNPJ' ? '00.000.000/0000-00' : '000.000.000-00'} required value={dados.documento} /></label>
+          <label className="campo-formulario"><span>CNPJ da empresa</span><input autoComplete="organization" name="documento" onChange={alterarCampo} placeholder="AA.AAA.AAA/AAAA-00" required value={dados.documento} /></label>
         </> : <label className="campo-formulario"><span>CPF</span><input inputMode="numeric" name="cpf" onChange={alterarCampo} placeholder="000.000.000-00" required value={dados.cpf} /></label>}
       </>}
       {salao && salaoIncompleto && <label className="campo-formulario"><span>Nome do salão</span><input autoComplete="organization" maxLength="120" onChange={(evento) => definirNomeSalao(evento.target.value)} required value={nomeSalao} /></label>}

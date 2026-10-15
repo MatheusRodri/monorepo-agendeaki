@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
+import { normalizarCnpj, somenteNumeros } from './documentos.js';
 
 function obterChave(nome) {
   const valor = process.env[nome];
@@ -17,13 +18,19 @@ export function validarChavesDocumentos() {
 export function prepararDocumento(tipo, numero) {
   if (!numero) return { documentoCifrado: null, documentoIndice: null };
   if (!['CPF', 'CNPJ'].includes(tipo)) throw new Error('Tipo de documento inválido.');
-  const normalizado = String(numero).replace(/\D/g, '');
+  const normalizado = tipo === 'CNPJ' ? normalizarCnpj(numero) : somenteNumeros(numero);
   const nonce = randomBytes(12);
   const cifrador = createCipheriv('aes-256-gcm', obterChave('DOCUMENT_ENCRYPTION_KEY'), nonce);
   const cifra = Buffer.concat([cifrador.update(normalizado, 'utf8'), cifrador.final()]);
   const documentoCifrado = ['v1', nonce.toString('base64url'), cifrador.getAuthTag().toString('base64url'), cifra.toString('base64url')].join(':');
   const documentoIndice = createHmac('sha256', obterChave('DOCUMENT_HMAC_KEY')).update(`${tipo}:${normalizado}`).digest('hex');
   return { documentoCifrado, documentoIndice };
+}
+
+export function prepararIndiceRaizCnpj(numero) {
+  const raiz = normalizarCnpj(numero).slice(0, 8);
+  if (raiz.length !== 8) throw new Error('Informe um CNPJ completo para identificar a empresa.');
+  return createHmac('sha256', obterChave('DOCUMENT_HMAC_KEY')).update(`CNPJ_RAIZ:${raiz}`).digest('hex');
 }
 
 export function decifrarDocumento(valor) {
