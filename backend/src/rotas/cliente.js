@@ -20,6 +20,7 @@ import {
 
 const roteadorCliente = Router();
 const raiosPermitidos = [0, 1, 5, 10];
+const codigoLimiteAgendamentoDiario = 'LIMITE_AGENDAMENTO_DIARIO';
 
 function extrairTokenAcesso(requisicao) {
   const cabecalhoAutorizacao = requisicao.headers.authorization;
@@ -58,6 +59,35 @@ async function obterClienteAutenticado(requisicao, resposta) {
   } catch (erro) {
     resposta.status(500).json({ mensagem: erro.message });
     return null;
+  }
+}
+
+async function bloquearAgendamentoDiario({ idUsuario, dataInicioBanco, idAgendamentoIgnorado = null, transaction }) {
+  const dataLocal = String(dataInicioBanco).slice(0, 10);
+  const [ano, mes, dia] = dataLocal.split('-').map(Number);
+  const dataSeguinte = new Date(Date.UTC(ano, mes - 1, dia + 1)).toISOString().slice(0, 10);
+  const agendamentosNoDia = await bancoDeDados.query(
+    `SELECT id_agendamento FROM tb_agendamento
+     WHERE fk_usuario=:idUsuario AND cd_status='AGENDADO'
+       AND dt_inicio >= :inicioDia AND dt_inicio < :fimDia
+       AND (:idAgendamentoIgnorado IS NULL OR id_agendamento<>:idAgendamentoIgnorado)
+     LIMIT 1 FOR UPDATE`,
+    {
+      replacements: {
+        idUsuario,
+        inicioDia: `${dataLocal} 00:00:00`,
+        fimDia: `${dataSeguinte} 00:00:00`,
+        idAgendamentoIgnorado,
+      },
+      transaction,
+      type: QueryTypes.SELECT,
+    },
+  );
+  if (agendamentosNoDia.length) {
+    throw Object.assign(new Error('Você já tem um agendamento ativo para este dia. Cancele-o ou escolha outra data.'), {
+      codigo: codigoLimiteAgendamentoDiario,
+      status: 409,
+    });
   }
 }
 
@@ -349,6 +379,10 @@ async function criarAgendamento(requisicao, resposta) {
   const transacao = await bancoDeDados.transaction();
 
   try {
+    await bancoDeDados.query(
+      'SELECT id_usuario FROM tb_usuario WHERE id_usuario=:idUsuario FOR UPDATE',
+      { replacements: { idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT },
+    );
     const reserva = await resolverReserva({
       dataHoraInicio: dadosAgendamento.dataHoraInicio,
       idFuncionario,
@@ -356,6 +390,7 @@ async function criarAgendamento(requisicao, resposta) {
       idUnidade,
       transaction: transacao,
     });
+    await bloquearAgendamentoDiario({ idUsuario: cliente.idUsuario, dataInicioBanco: reserva.dataInicioBanco, transaction: transacao });
     const conflitos = await bancoDeDados.query(
       `SELECT id_agendamento FROM tb_agendamento
        WHERE fk_funcionario = :idFuncionario AND cd_status = 'AGENDADO'
@@ -394,7 +429,7 @@ async function criarAgendamento(requisicao, resposta) {
     resposta.status(201).json({ mensagem: 'Agendamento realizado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, dataHoraFim: reserva.dataFimBanco, idFuncionario: reserva.idFuncionario, nomeFuncionario: reserva.nomeFuncionario });
   } catch (erro) {
     await transacao.rollback();
-    resposta.status(erro.status ?? 500).json({ mensagem: erro.message });
+    resposta.status(erro.status ?? 500).json({ mensagem: erro.message, ...(erro.codigo ? { codigo: erro.codigo } : {}) });
   }
 }
 
@@ -647,6 +682,10 @@ async function atualizarAgendamento(requisicao, resposta) {
 
   const transacao = await bancoDeDados.transaction();
   try {
+    await bancoDeDados.query(
+      'SELECT id_usuario FROM tb_usuario WHERE id_usuario=:idUsuario FOR UPDATE',
+      { replacements: { idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT },
+    );
     const agendamentos = await bancoDeDados.query(`SELECT id_agendamento AS idAgendamento, fk_servico AS idServicoOriginal, nm_servico_agendado AS nomeServico, vl_servico_agendado AS valorServico, nu_duracao_minutos AS duracaoMinutos FROM tb_agendamento WHERE id_agendamento = :idAgendamento AND fk_usuario = :idUsuario AND cd_status = 'AGENDADO' AND dt_inicio > NOW() LIMIT 1 FOR UPDATE`, { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT });
     if (!agendamentos.length) { const erro = new Error('Esse agendamento não pode mais ser alterado.'); erro.status = 404; throw erro; }
     const mesmoServico = Number(agendamentos[0].idServicoOriginal) === idServico;
@@ -656,6 +695,7 @@ async function atualizarAgendamento(requisicao, resposta) {
       reserva.valorServico = Number(agendamentos[0].valorServico);
       reserva.duracaoMinutos = Number(agendamentos[0].duracaoMinutos);
     }
+    await bloquearAgendamentoDiario({ idUsuario: cliente.idUsuario, dataInicioBanco: reserva.dataInicioBanco, idAgendamentoIgnorado: idAgendamento, transaction: transacao });
     const conflitos = await bancoDeDados.query(
       `SELECT id_agendamento FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
        AND id_agendamento <> :idAgendamento AND cd_status='AGENDADO'
@@ -667,7 +707,7 @@ async function atualizarAgendamento(requisicao, resposta) {
     await transacao.commit();
     void notificarSalaoDoAgendamento(idAgendamento, 'Agendamento alterado', 'Um cliente alterou os dados de um horário marcado.');
     resposta.status(200).json({ mensagem: 'Agendamento atualizado com sucesso.' });
-  } catch (erro) { await transacao.rollback(); resposta.status(erro.status ?? 400).json({ mensagem: erro.message }); }
+  } catch (erro) { await transacao.rollback(); resposta.status(erro.status ?? 400).json({ mensagem: erro.message, ...(erro.codigo ? { codigo: erro.codigo } : {}) }); }
 }
 
 async function excluirConta(requisicao, resposta) {

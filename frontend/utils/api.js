@@ -34,6 +34,7 @@ function criarErroApi(causa) {
       : 'Não foi possível conversar com a API agora. Verifique se o servidor está em execução e tente novamente.'),
   );
   erro.status = causa.response?.status;
+  erro.codigo = causa.response?.data?.codigo;
   return erro;
 }
 

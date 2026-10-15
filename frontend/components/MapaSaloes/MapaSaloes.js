@@ -11,7 +11,7 @@ function formatarCep(cep) {
   return numeros.length === 8 ? `${numeros.slice(0, 5)}-${numeros.slice(5)}` : cep;
 }
 
-function criarConteudoPopup(salao) {
+function criarConteudoPopup(salao, obterLinkSalao) {
   const conteudo = document.createElement('div');
   conteudo.className = 'popup-salao';
 
@@ -26,14 +26,14 @@ function criarConteudoPopup(salao) {
   const cep = formatarCep(salao.cep);
   endereco.textContent = [logradouro && `${logradouro}${complemento}`, localidade, cep && `CEP ${cep}`].filter(Boolean).join(' — ');
   const link = document.createElement('a');
-  link.href = `/${salao.slugSalao}/${salao.slugFilial}`;
+  link.href = obterLinkSalao(salao);
   link.textContent = 'Ver serviços →';
 
   conteudo.append(categoria, nomeUnidade, endereco, link);
   return conteudo;
 }
 
-export default function MapaSaloes({ aoSelecionarSalao, centralizarNoCliente = false, coordenadas, salaoSelecionado, saloes }) {
+export default function MapaSaloes({ aoSelecionarSalao, centralizarNoCliente = false, coordenadas, obterLinkSalao, salaoSelecionado, saloes }) {
   const elementoMapa = useRef(null);
   const instanciaMapa = useRef(null);
   const moduloMapa = useRef(null);
@@ -102,7 +102,7 @@ export default function MapaSaloes({ aoSelecionarSalao, centralizarNoCliente = f
       elementoMarcador.setAttribute('aria-label', `Selecionar ${salao.nomeSalao}`);
       elementoMarcador.append(document.createElement('span'));
 
-      const popup = new maplibregl.Popup({ closeButton: false, offset: 20 }).setDOMContent(criarConteudoPopup(salao));
+      const popup = new maplibregl.Popup({ closeButton: false, offset: 20 }).setDOMContent(criarConteudoPopup(salao, obterLinkSalao));
       const marcador = new maplibregl.Marker({ element: elementoMarcador, anchor: 'bottom' })
         .setLngLat([longitude, latitude])
         .setPopup(popup)
@@ -131,7 +131,7 @@ export default function MapaSaloes({ aoSelecionarSalao, centralizarNoCliente = f
         { padding: 48, maxZoom: 13 },
       );
     }
-  }, [aoSelecionarSalao, centralizarNoCliente, coordenadas, mapaPronto, saloes]);
+  }, [aoSelecionarSalao, centralizarNoCliente, coordenadas, mapaPronto, obterLinkSalao, saloes]);
 
   useEffect(() => {
     const marcador = salaoSelecionado ? marcadoresPorUnidade.current.get(salaoSelecionado.idUnidade) : null;
