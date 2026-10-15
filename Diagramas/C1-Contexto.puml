@@ -1,0 +1,32 @@
+@startuml C1-Contexto
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+title C1 — Contexto do sistema AgendeAki
+hide stereotype
+legend right
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$PERSON_BG_COLOR> Pessoa |
+|<$SYSTEM_BG_COLOR> Sistema AgendeAki |
+|<$EXTERNAL_SYSTEM_BG_COLOR> Sistema externo |
+endlegend
+
+Person(cliente, "Cliente", "Encontra salões, consulta serviços, agenda horários e acompanha seus atendimentos.")
+Person(administrador, "Administrador do salão", "Gerencia salões, filiais, serviços, profissionais, disponibilidade, agendamentos e assinatura.")
+
+System(agendeaki, "AgendeAki", "Plataforma de descoberta e agendamento de serviços de beleza, com gestão para salões.")
+
+System_Ext(supabase, "Supabase Auth", "Autenticação, sessões, confirmação de e-mail e recuperação de senha.")
+System_Ext(here, "HERE Maps", "Mapas, geocodificação e localização de salões.")
+System_Ext(stripe, "Stripe", "Checkout e gerenciamento de assinaturas Premium dos salões.")
+System_Ext(viaCep, "ViaCEP", "Consulta de endereço a partir do CEP.")
+System_Ext(push, "Serviços de Push dos navegadores", "Entrega notificações push aos dispositivos inscritos.")
+
+Rel(cliente, agendeaki, "Descobre salões e realiza agendamentos", "HTTPS")
+Rel(administrador, agendeaki, "Administra o salão e acompanha agendamentos", "HTTPS")
+Rel(agendeaki, supabase, "Cria contas, autentica usuários e valida tokens", "HTTPS / Supabase Auth API")
+Rel(agendeaki, here, "Consulta endereços e coordenadas", "HTTPS / HERE API")
+Rel(agendeaki, stripe, "Cria e gerencia assinaturas; recebe eventos", "HTTPS / Stripe API e webhooks")
+Rel(agendeaki, viaCep, "Consulta endereços por CEP", "HTTPS / REST")
+Rel(agendeaki, push, "Envia notificações para inscrições push", "Web Push / VAPID")
+
+@enduml

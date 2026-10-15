@@ -1,0 +1,38 @@
+@startuml C2-Containers
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title C2 — Containers do sistema AgendeAki
+LAYOUT_TOP_DOWN()
+hide stereotype
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$PERSON_BG_COLOR> Pessoa |
+|<$SYSTEM_BG_COLOR> Sistema AgendeAki |
+|<$CONTAINER_BG_COLOR> Container |
+|<$EXTERNAL_SYSTEM_BG_COLOR> Sistema externo |
+endlegend
+
+Person(cliente, "Cliente", "Usa a plataforma para encontrar salões e agendar serviços.")
+Person(administrador, "Administrador do salão", "Usa a plataforma para administrar a operação do salão.")
+
+System_Boundary(agendeaki, "AgendeAki") {
+    Container(frontend, "Aplicação Web", "Next.js / React", "Busca, agendamento e gestão do salão.")
+    Container(api, "API", "Node.js / Express", "Autenticação, regras de negócio e integrações.")
+    ContainerDb(mysql, "Banco de dados", "MySQL 8", "Dados da plataforma.")
+}
+
+System_Ext(supabase, "Supabase Auth", "Identidades, autenticação, sessões, confirmação e recuperação de senha.")
+System_Ext(here, "HERE", "Mapas e geocodificação.")
+System_Ext(stripe, "Stripe", "Checkout e ciclo de vida das assinaturas Premium.")
+
+Rel(cliente, frontend, "Usa", "HTTPS")
+Rel(administrador, frontend, "Usa", "HTTPS")
+Rel(frontend, api, "Consome endpoints REST e envia tokens de acesso", "HTTPS / JSON")
+Rel(frontend, here, "Exibe mapas", "HTTPS")
+Rel(api, mysql, "Lê e grava dados", "Sequelize / MySQL")
+Rel(api, supabase, "Autentica usuários", "HTTPS")
+Rel(api, here, "Geocodifica endereços", "HTTPS")
+Rel(api, stripe, "Gerencia assinaturas", "HTTPS")
+Rel(stripe, api, "Envia eventos", "Webhook HTTPS")
+
+@enduml

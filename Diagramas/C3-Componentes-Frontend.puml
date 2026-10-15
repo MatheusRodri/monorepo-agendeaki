@@ -1,0 +1,46 @@
+@startuml C3-Componentes-Frontend
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C3 — Componentes do frontend AgendeAki
+LAYOUT_LEFT_RIGHT()
+hide stereotype
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$PERSON_BG_COLOR> Pessoa |
+|<$CONTAINER_BG_COLOR> Container |
+|<$COMPONENT_BG_COLOR> Componente |
+|<$EXTERNAL_SYSTEM_BG_COLOR> Sistema externo |
+endlegend
+
+Person(cliente, "Cliente", "Busca salões e agenda serviços.")
+Person(administrador, "Administrador do salão", "Gerencia a operação do salão.")
+
+Container_Boundary(frontend, "Aplicação Web — Next.js 16 / React 19") {
+    Component(publico, "Busca e agendamento público", "Next.js / React", "Página inicial, busca e páginas públicas de agendamento.")
+    Component(areaCliente, "Área do cliente", "Next.js / React", "Perfil, agendamentos e notificações.")
+    Component(areaSalao, "Área do salão", "Next.js / React", "Agenda, filiais, serviços e assinatura.")
+    Component(clientApi, "Acesso à API e sessão", "Axios", "Envia requisições e renova sessões.")
+    Component(mapas, "Mapas", "MapLibre GL", "Exibe localização de salões e filiais.")
+    Component(pushBrowser, "Push no navegador", "Service Worker / Push API", "Registra dispositivos e exibe notificações.")
+}
+
+Container(api, "API", "Node.js / Express 5", "API REST do AgendeAki.")
+System_Ext(here, "HERE Maps", "Tiles de mapa e geocodificação.")
+System_Ext(push, "Serviços de Push dos navegadores", "Entrega notificações push.")
+
+Rel(cliente, publico, "Descobre salões e consulta páginas públicas")
+Rel(cliente, areaCliente, "Gerencia conta e agendamentos")
+Rel(administrador, areaSalao, "Gerencia o salão")
+Rel(publico, clientApi, "Consulta salões e horários")
+Rel(areaCliente, clientApi, "Acessa dados do cliente")
+Rel(areaSalao, clientApi, "Acessa dados do salão")
+Rel(clientApi, api, "Consome a API REST", "HTTPS / JSON")
+Rel(publico, mapas, "Exibe salões no mapa")
+Rel(areaSalao, mapas, "Localiza filiais")
+Rel(mapas, here, "Carrega mapa", "HTTPS")
+Rel(areaCliente, pushBrowser, "Configura push")
+Rel(areaSalao, pushBrowser, "Configura push")
+Rel(pushBrowser, api, "Gerencia inscrições", "HTTPS")
+Rel(pushBrowser, push, "Registra dispositivo", "Push API")
+
+@enduml

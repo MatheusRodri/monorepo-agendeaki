@@ -1,0 +1,40 @@
+@startuml C3-Backend-Agendamento
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C3 — Agendamentos e área do cliente
+LAYOUT_LEFT_RIGHT()
+hide stereotype
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$COMPONENT_BG_COLOR> Componente |
+|<$CONTAINER_BG_COLOR> Banco de dados |
+|<$EXTERNAL_SYSTEM_BG_COLOR> Sistema externo |
+endlegend
+
+Container_Boundary(api, "API — Node.js / Express") {
+    Component(auth, "Autenticação", "Rotas", "Login, cadastro e renovação de sessão.")
+    Component(publicRoutes, "Rotas públicas", "Express", "Salões, serviços e horários disponíveis.")
+    Component(clientRoutes, "Rotas do cliente", "Express", "Perfil, reservas, avaliações e notificações.")
+    Component(availability, "Disponibilidade", "Serviço de domínio", "Calcula horários e valida reservas.")
+    Component(notifications, "Notificações", "Web Push", "Persiste avisos e envia push.")
+    Component(data, "Persistência", "Sequelize", "Consultas e transações.")
+}
+
+ContainerDb(mysql, "MySQL", "MySQL 8", "Usuários, agenda e notificações.")
+System_Ext(supabase, "Supabase Auth", "Identidade e sessões.")
+System_Ext(here, "HERE", "Geocodificação.")
+System_Ext(push, "Push dos navegadores", "Entrega de notificações.")
+
+Rel(auth, supabase, "Valida sessões")
+Rel(auth, data, "Sincroniza usuários")
+Rel(publicRoutes, availability, "Consulta horários")
+Rel(publicRoutes, data, "Consulta salões e serviços")
+Rel(clientRoutes, availability, "Cria e altera reservas")
+Rel(clientRoutes, notifications, "Consulta notificações")
+Rel(clientRoutes, data, "Lê e grava dados")
+Rel(notifications, data, "Lê inscrições e persiste avisos")
+Rel(notifications, push, "Envia push", "VAPID")
+Rel(data, mysql, "Lê e grava", "MySQL")
+Rel(clientRoutes, here, "Busca localização", "HTTPS")
+
+@enduml
