@@ -1,4 +1,26 @@
 @media (max-width: 700px) {
+  .area-salao > .cabecalho-area {
+    flex-wrap: wrap;
+    gap: .5rem;
+    padding-block: .75rem;
+    width: 100%;
+  }
+
+  .area-salao .titulo-area-salao {
+    margin: 0 0 0 auto;
+    text-align: right;
+  }
+
+  .acoes-cabecalho-salao {
+    flex-basis: 100%;
+    justify-content: space-between;
+    min-width: 0;
+  }
+
+  .acoes-cabecalho-salao > * {
+    flex-shrink: 0;
+  }
+
   .estrutura-salao {
     display: block;
   }
