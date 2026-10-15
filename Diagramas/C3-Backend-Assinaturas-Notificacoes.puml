@@ -1,0 +1,35 @@
+@startuml C3-Backend-Assinaturas-Notificacoes
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C3 — Assinaturas e notificações
+LAYOUT_LEFT_RIGHT()
+hide stereotype
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$COMPONENT_BG_COLOR> Componente |
+|<$CONTAINER_BG_COLOR> Banco de dados |
+|<$EXTERNAL_SYSTEM_BG_COLOR> Sistema externo |
+endlegend
+
+Container_Boundary(api, "API — Node.js / Express") {
+    Component(salonRoutes, "Rotas do salão", "Express", "Inicia e administra a assinatura Premium.")
+    Component(subscriptions, "Assinaturas", "Serviço de domínio", "Cria checkout e sincroniza o estado da assinatura.")
+    Component(webhook, "Webhook Stripe", "Express / Stripe SDK", "Valida e processa eventos do Stripe.")
+    Component(notifications, "Notificações", "Web Push / VAPID", "Persiste avisos e envia notificações push.")
+    Component(data, "Persistência", "Sequelize", "Consultas e transações.")
+}
+
+ContainerDb(mysql, "MySQL", "MySQL 8", "Assinaturas, notificações e inscrições push.")
+System_Ext(stripe, "Stripe", "Checkout e ciclo de vida das assinaturas.")
+System_Ext(push, "Push dos navegadores", "Entrega de notificações.")
+
+Rel(salonRoutes, subscriptions, "Gerencia plano Premium")
+Rel(subscriptions, stripe, "Cria checkout e atualiza plano", "HTTPS")
+Rel(stripe, webhook, "Envia eventos", "Webhook HTTPS")
+Rel(webhook, subscriptions, "Sincroniza assinatura")
+Rel(subscriptions, data, "Lê e grava estado")
+Rel(notifications, data, "Persiste avisos e inscrições")
+Rel(notifications, push, "Envia notificações", "VAPID")
+Rel(data, mysql, "Lê e grava", "MySQL")
+
+@enduml

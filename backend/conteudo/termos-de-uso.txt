@@ -1,0 +1,15 @@
+A plataforma Agende Aki tem como objetivo facilitar a conexão entre clientes e salões, permitindo a consulta de serviços, a visualização de horários disponíveis e a realização de agendamentos. Ao utilizar a plataforma, os usuários concordam em respeitar as condições de utilização estabelecidas neste documento.
+
+Os clientes são responsáveis por fornecer informações verdadeiras durante o cadastro, manter seus dados atualizados, proteger suas credenciais de acesso e conferir as informações dos agendamentos realizados. Também devem comparecer aos horários marcados ou comunicar eventuais cancelamentos e alterações conforme as condições informadas pelo estabelecimento.
+
+Os salões são responsáveis por fornecer informações corretas sobre o estabelecimento, incluindo CNPJ, nome do salão, nome do responsável, e-mail e endereço, além de manter atualizados os serviços oferecidos, os preços e os horários disponíveis. Também devem gerenciar adequadamente suas agendas e cumprir os atendimentos confirmados, comunicando aos clientes eventuais alterações ou cancelamentos.
+
+É proibido utilizar o Agende Aki para realizar atividades fraudulentas, fornecer informações falsas, acessar contas de terceiros sem autorização ou praticar ações que prejudiquem o funcionamento e a segurança da plataforma.
+
+O Agende Aki buscará manter seus serviços disponíveis e funcionando adequadamente, podendo realizar manutenções e atualizações que ocasionem interrupções temporárias. A plataforma atua como ferramenta de organização e gerenciamento de agendamentos, sendo os salões responsáveis pelas informações divulgadas e pelos serviços prestados, sem prejuízo das responsabilidades previstas na legislação.
+
+O tratamento dos dados pessoais dos usuários será realizado conforme a Política de Privacidade do Agende Aki e a legislação aplicável, especialmente a Lei Geral de Proteção de Dados Pessoais (LGPD — Lei nº 13.709/2018).
+
+O descumprimento destes Termos de Uso poderá resultar em restrições ou suspensão do acesso à plataforma, conforme a gravidade da situação e respeitando a legislação vigente. Estes termos poderão ser atualizados para acompanhar mudanças nas funcionalidades do sistema ou nas exigências legais.
+
+Ao utilizar o Agende Aki, clientes e salões declaram estar cientes destas condições e comprometem-se a utilizar a plataforma de forma responsável, respeitando os demais usuários e as regras estabelecidas

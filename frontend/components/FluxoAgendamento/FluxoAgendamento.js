@@ -12,22 +12,36 @@ function dataLocal(data = new Date()) {
   return new Date(data.getTime() - deslocamento).toISOString().slice(0, 10);
 }
 
-function caminhoAtual(slugSalao, slugFilial, selecao) {
+function caminhoAtual(slugSalao, slugFilial, selecao, retornoMapa) {
   const parametros = new URLSearchParams();
   if (selecao.idServico) parametros.set('servico', selecao.idServico);
   if (selecao.idFuncionario) parametros.set('profissional', selecao.idFuncionario);
   if (selecao.data) parametros.set('data', selecao.data);
   if (selecao.horario) parametros.set('horario', selecao.horario);
+  if (retornoMapa !== '/cliente/inicio') parametros.set('retornoMapa', retornoMapa);
   const consulta = parametros.toString();
   return `/${slugSalao}/${slugFilial}${consulta ? `?${consulta}` : ''}`;
+}
+
+function normalizarLinkRetornoMapa(valor) {
+  if (!valor) return '/cliente/inicio';
+  try {
+    const destino = new URL(valor, window.location.origin);
+    if (destino.origin !== window.location.origin || destino.pathname !== '/cliente/inicio') return '/cliente/inicio';
+    return `${destino.pathname}${destino.search}`;
+  } catch {
+    return '/cliente/inicio';
+  }
 }
 
 export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   const roteador = useRouter();
   const [pagina, definirPagina] = useState(null);
+  const [retornoMapa, definirRetornoMapa] = useState('/cliente/inicio');
   const [selecao, definirSelecao] = useState({ data: '', horario: '', idFuncionario: '', idServico: '' });
   const [selecaoInicializada, definirSelecaoInicializada] = useState(false);
   const [horarios, definirHorarios] = useState([]);
+  const [verificacaoData, definirVerificacaoData] = useState({ data: '', estado: 'livre' });
   const [observacao, definirObservacao] = useState('');
   const [mensagem, definirMensagem] = useState('Carregando página de agendamento...');
   const [enviando, definirEnviando] = useState(false);
@@ -42,6 +56,8 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
 
   useEffect(() => {
     const parametros = new URLSearchParams(window.location.search);
+    const novoRetornoMapa = normalizarLinkRetornoMapa(parametros.get('retornoMapa'));
+    definirRetornoMapa(novoRetornoMapa);
     definirSelecao({
       data: parametros.get('data') ?? '',
       horario: parametros.get('horario') ?? '',
@@ -65,10 +81,10 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
 
   useEffect(() => {
     if (!selecaoInicializada) return;
-    const novoCaminho = caminhoAtual(slugSalao, slugFilial, selecao);
+    const novoCaminho = caminhoAtual(slugSalao, slugFilial, selecao, retornoMapa);
     const caminhoNavegador = `${window.location.pathname}${window.location.search}`;
     if (novoCaminho !== caminhoNavegador) window.history.replaceState(null, '', novoCaminho);
-  }, [selecao, selecaoInicializada, slugFilial, slugSalao]);
+  }, [retornoMapa, selecao, selecaoInicializada, slugFilial, slugSalao]);
 
   useEffect(() => {
     if (!confirmacaoFinal) return undefined;
@@ -81,17 +97,43 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   const horarioSelecionado = horarios.find((item) => item.inicio === selecao.horario);
 
   useEffect(() => {
+    if (!selecao.data || !obterTokenAcesso('cliente')) return undefined;
+    let ativo = true;
+    definirVerificacaoData({ data: selecao.data, estado: 'verificando' });
+    requisitarApi('/api/clientes/agendamentos/verificar-data', { parametros: { data: selecao.data } })
+      .then(() => { if (ativo) definirVerificacaoData({ data: selecao.data, estado: 'livre' }); })
+      .catch((erro) => {
+        if (!ativo) return;
+        if (erro.codigo === 'LIMITE_AGENDAMENTO_DIARIO') {
+          definirVerificacaoData({ data: selecao.data, estado: 'bloqueada' });
+          definirSelecao((atual) => atual.data === selecao.data ? { ...atual, horario: '' } : atual);
+          toastErro(erro.message);
+        } else definirVerificacaoData({ data: selecao.data, estado: 'erro' });
+      });
+    return () => { ativo = false; };
+  }, [selecao.data]);
+
+  useEffect(() => {
     const idFuncionarioValido = selecao.idFuncionario === 'qualquer'
       || servico?.profissionais.some((item) => String(item.idFuncionario) === String(selecao.idFuncionario));
     if (!servico || !selecao.data || !idFuncionarioValido) { definirHorarios([]); return; }
+    const estadoData = verificacaoData.data === selecao.data ? verificacaoData.estado : 'verificando';
+    if (obterTokenAcesso('cliente') && ['verificando', 'bloqueada'].includes(estadoData)) {
+      definirHorarios([]);
+      definirMensagem(estadoData === 'bloqueada' ? 'Você já tem um agendamento ativo para este dia. Cancele-o ou escolha outra data.' : 'Verificando seus agendamentos nesta data...');
+      return;
+    }
+    let ativo = true;
     definirMensagem('Consultando horários disponíveis...');
     requisitarApi(`/api/publico/agendamento/${slugSalao}/${slugFilial}/horarios`, {
       parametros: { data: selecao.data, idFuncionario: selecao.idFuncionario, idServico: selecao.idServico },
     }).then((dados) => {
+      if (!ativo) return;
       definirHorarios(dados.horarios);
       definirMensagem(dados.horarios.length ? '' : 'Não há horários disponíveis nesta data. Escolha outro dia.');
-    }).catch((erro) => { definirHorarios([]); definirMensagem(''); toastErro(erro.message); });
-  }, [selecao.data, selecao.idFuncionario, selecao.idServico, servico, slugFilial, slugSalao]);
+    }).catch((erro) => { if (ativo) { definirHorarios([]); definirMensagem(''); toastErro(erro.message); } });
+    return () => { ativo = false; };
+  }, [selecao.data, selecao.idFuncionario, selecao.idServico, servico, slugFilial, slugSalao, verificacaoData]);
 
   function atualizarSelecao(alteracoes) {
     definirSelecao((atual) => ({ ...atual, ...alteracoes }));
@@ -100,7 +142,7 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   function iniciarConfirmacao(evento) {
     evento.preventDefault();
     if (!servico || !selecao.data || !selecao.horario || !selecao.idFuncionario) return;
-    const retorno = caminhoAtual(slugSalao, slugFilial, selecao);
+    const retorno = caminhoAtual(slugSalao, slugFilial, selecao, retornoMapa);
     if (!obterTokenAcesso('cliente')) {
       localStorage.setItem('retornoAgendamento', retorno);
       roteador.push(`/cliente?retorno=${encodeURIComponent(retorno)}`);
@@ -129,7 +171,7 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
 
   async function confirmarAgendamento() {
     if (!servico || !selecao.data || !selecao.horario || !profissionalConfirmacao || !horarioConfirmacaoDisponivel) return;
-    const retorno = caminhoAtual(slugSalao, slugFilial, selecao);
+    const retorno = caminhoAtual(slugSalao, slugFilial, selecao, retornoMapa);
     definirEnviando(true);
     definirMensagemModal('');
     definirAtribuicaoMudou(false);
@@ -165,6 +207,9 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
       if (erro.status === 401) {
         limparSessao('cliente'); localStorage.setItem('retornoAgendamento', retorno);
         roteador.push(`/cliente?retorno=${encodeURIComponent(retorno)}`);
+      } else if (erro.codigo === 'LIMITE_AGENDAMENTO_DIARIO') {
+        definirMensagemModal(erro.message);
+        toastErro(erro.message);
       } else if (erro.status === 409) {
         try {
           const horarioAtualizado = await recarregarHorarioSelecionado();
@@ -210,7 +255,7 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   if (!pagina) return <main className="pagina-agendamento-publico"><p className="estado-lista">{mensagem}</p></main>;
   const filial = pagina.filial;
   return <main className="pagina-agendamento-publico">
-    <header className="cabecalho-agendamento-publico"><Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><Link href="/cliente/inicio">Explorar salões</Link></header>
+    <header className="cabecalho-agendamento-publico"><Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><Link className="botao-voltar-mapa" href={retornoMapa}>← Voltar ao mapa</Link></header>
     <section className="apresentacao-filial"><p className="sobretitulo">Agendamento online</p><h1>{filial.nomeSalao}</h1><p><strong>{filial.nomeUnidade}</strong> · {String(filial.categoria).toLowerCase()}</p><address>{filial.rua}, {filial.numero}{filial.complemento ? ` · ${filial.complemento}` : ''}<br />{filial.bairro}, {filial.municipio}/{filial.estado}{filial.telefone ? ` · ${filial.telefone}` : ''}{filial.email && <> · <a href={`mailto:${filial.email}`}>{filial.email}</a></>}</address></section>
     <form className="fluxo-agendamento" onSubmit={iniciarConfirmacao}>
       <Etapa numero="1" titulo="Escolha o serviço">

@@ -1,0 +1,35 @@
+@startuml C3-Componentes-Backend
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C3 — Visão geral dos componentes do backend
+LAYOUT_LEFT_RIGHT()
+hide stereotype
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$COMPONENT_BG_COLOR> Componente |
+|<$CONTAINER_BG_COLOR> Banco de dados |
+|<$EXTERNAL_SYSTEM_BG_COLOR> Sistema externo |
+endlegend
+
+Container_Boundary(api, "API — Node.js / Express") {
+    Component(auth, "Autenticação", "Rotas e serviços", "Contas, sessões e usuários.")
+    Component(booking, "Agendamentos", "Rotas e serviços", "Busca, horários e reservas.")
+    Component(salon, "Gestão do salão", "Rotas e serviços", "Filiais, equipe, serviços e agenda.")
+    Component(billing, "Assinaturas e notificações", "Serviços", "Plano Premium, eventos e avisos push.")
+    Component(data, "Persistência", "Sequelize", "Acesso ao banco de dados.")
+}
+
+ContainerDb(mysql, "MySQL", "MySQL 8", "Dados da plataforma.")
+System_Ext(supabase, "Supabase Auth", "Identidades e autenticação.")
+System_Ext(stripe, "Stripe", "Checkout e assinaturas.")
+
+Rel(auth, supabase, "Autentica usuários")
+Rel(auth, data, "Sincroniza usuários")
+Rel(booking, data, "Consulta e grava reservas")
+Rel(salon, data, "Consulta e grava dados")
+Rel(salon, booking, "Usa disponibilidade")
+Rel(billing, stripe, "Gerencia assinaturas")
+Rel(billing, data, "Persiste estados e avisos")
+Rel(data, mysql, "Lê e grava", "MySQL")
+
+@enduml

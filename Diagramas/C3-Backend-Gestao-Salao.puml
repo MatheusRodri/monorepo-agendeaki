@@ -1,0 +1,38 @@
+@startuml C3-Backend-Gestao-Salao
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C3 — Gestão do salão
+LAYOUT_LEFT_RIGHT()
+hide stereotype
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$COMPONENT_BG_COLOR> Componente |
+|<$CONTAINER_BG_COLOR> Banco de dados |
+|<$EXTERNAL_SYSTEM_BG_COLOR> Sistema externo |
+endlegend
+
+Person(administrador, "Administrador do salão", "Gerencia a operação.")
+
+Container_Boundary(api, "API — Node.js / Express") {
+    Component(salonRoutes, "Gestão do salão", "Rotas Express", "Filiais, serviços, equipe, clientes e agenda.")
+    Component(availability, "Disponibilidade", "Serviço de domínio", "Calcula horários e valida reservas.")
+    Component(auth, "Autenticação", "Supabase Auth SDK", "Valida o perfil e a sessão do administrador.")
+    Component(data, "Persistência", "Sequelize", "Consultas e transações.")
+}
+
+ContainerDb(mysql, "MySQL", "MySQL 8", "Dados de salões, filiais e agenda.")
+System_Ext(supabase, "Supabase Auth", "Identidade e sessões.")
+System_Ext(here, "HERE", "Geocodificação de endereços.")
+System_Ext(viaCep, "ViaCEP", "Consulta de endereço por CEP.")
+
+Rel(administrador, salonRoutes, "Gerencia o salão", "HTTPS")
+Rel(salonRoutes, auth, "Valida acesso")
+Rel(auth, supabase, "Valida token")
+Rel(salonRoutes, availability, "Consulta horários e reservas")
+Rel(salonRoutes, data, "Lê e grava dados")
+Rel(availability, data, "Consulta agenda")
+Rel(salonRoutes, here, "Geocodifica endereço", "HTTPS")
+Rel(salonRoutes, viaCep, "Consulta CEP", "HTTPS")
+Rel(data, mysql, "Lê e grava", "MySQL")
+
+@enduml

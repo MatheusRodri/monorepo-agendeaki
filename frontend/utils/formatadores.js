@@ -8,8 +8,8 @@ export function formatarCpf(valor) {
 }
 
 export function formatarCnpj(valor) {
-  const numeros = somenteNumeros(valor).slice(0, 14);
-  return numeros.replace(/(\d{2})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1/$2').replace(/(\d{4})(\d{1,2})$/, '$1-$2');
+  const cnpj = String(valor ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 14);
+  return `${cnpj.slice(0, 2)}${cnpj.length > 2 ? `.${cnpj.slice(2, 5)}` : ''}${cnpj.length > 5 ? `.${cnpj.slice(5, 8)}` : ''}${cnpj.length > 8 ? `/${cnpj.slice(8, 12)}` : ''}${cnpj.length > 12 ? `-${cnpj.slice(12)}` : ''}`;
 }
 
 export function formatarTelefone(valor) {

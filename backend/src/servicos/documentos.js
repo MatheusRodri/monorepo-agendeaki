@@ -2,6 +2,10 @@ export function somenteNumeros(valor) {
   return String(valor ?? '').replace(/\D/g, '');
 }
 
+export function normalizarCnpj(valor) {
+  return String(valor ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+}
+
 function temDigitosRepetidos(valor) {
   return /^(\d)\1+$/.test(valor);
 }
@@ -18,11 +22,11 @@ export function cpfValido(valor) {
 }
 
 export function cnpjValido(valor) {
-  const cnpj = somenteNumeros(valor);
-  if (cnpj.length !== 14 || temDigitosRepetidos(cnpj)) return false;
+  const cnpj = normalizarCnpj(valor);
+  if (!/^[0-9A-Z]{12}\d{2}$/.test(cnpj) || /^(.)\1{13}$/.test(cnpj)) return false;
   const calcularDigito = (quantidade) => {
     const pesos = quantidade === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
-    const soma = cnpj.slice(0, quantidade).split('').reduce((total, digito, indice) => total + Number(digito) * pesos[indice], 0);
+    const soma = cnpj.slice(0, quantidade).split('').reduce((total, caractere, indice) => total + (caractere.charCodeAt(0) - 48) * pesos[indice], 0);
     const resto = soma % 11;
     return resto < 2 ? 0 : 11 - resto;
   };

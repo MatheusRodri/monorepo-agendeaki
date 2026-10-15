@@ -26,6 +26,62 @@ export default function AreaCliente() {
   const [carregando, definirCarregando] = useState(false);
   const [falhaBusca, definirFalhaBusca] = useState(false);
   const idBuscaAtual = useRef(0);
+  const restauracaoConcluida = useRef(false);
+  const idSalaoSelecionadoRestaurar = useRef(null);
+  const [mapaProntoParaBuscar, definirMapaProntoParaBuscar] = useState(false);
+
+  const estadoMapa = useMemo(() => ({
+    busca,
+    buscaAplicada,
+    centralizarNoCliente,
+    cidade,
+    cidadeAplicada,
+    coordenadas,
+    coordenadasMapa,
+    idSalaoSelecionado: salaoSelecionado?.idUnidade ?? null,
+    idUnidadeSelecionada,
+    ordenacao,
+    raioKm,
+    tipoSalao,
+  }), [busca, buscaAplicada, centralizarNoCliente, cidade, cidadeAplicada, coordenadas, coordenadasMapa, idUnidadeSelecionada, ordenacao, raioKm, salaoSelecionado, tipoSalao]);
+  const urlMapa = useMemo(() => `/cliente/inicio?mapa=${encodeURIComponent(JSON.stringify(estadoMapa))}`, [estadoMapa]);
+  const urlMapaAtual = useRef(urlMapa);
+  urlMapaAtual.current = urlMapa;
+  const obterLinkSalao = useCallback((salao) => `/${salao.slugSalao}/${salao.slugFilial}?retornoMapa=${encodeURIComponent(urlMapaAtual.current)}`, []);
+
+  useEffect(() => {
+    try {
+      const mapaSalvo = new URLSearchParams(window.location.search).get('mapa');
+      const estado = mapaSalvo ? JSON.parse(mapaSalvo) : null;
+      const latitude = Number(estado?.coordenadas?.latitude);
+      const longitude = Number(estado?.coordenadas?.longitude);
+      if (Number.isFinite(latitude) && latitude >= -90 && latitude <= 90
+        && Number.isFinite(longitude) && longitude >= -180 && longitude <= 180) {
+        const coordenadaRestaurada = { latitude, longitude };
+        const latitudeMapa = Number(estado.coordenadasMapa?.latitude);
+        const longitudeMapa = Number(estado.coordenadasMapa?.longitude);
+        const centroMapaValido = Number.isFinite(latitudeMapa) && latitudeMapa >= -90 && latitudeMapa <= 90
+          && Number.isFinite(longitudeMapa) && longitudeMapa >= -180 && longitudeMapa <= 180;
+        definirCoordenadas(coordenadaRestaurada);
+        definirCoordenadasMapa(centroMapaValido ? { latitude: latitudeMapa, longitude: longitudeMapa } : coordenadaRestaurada);
+        definirRaioKm([0, 1, 5, 10].includes(Number(estado.raioKm)) ? Number(estado.raioKm) : 5);
+        definirTipoSalao(['TODOS', 'FEMININO', 'MASCULINO', 'UNISSEX'].includes(estado.tipoSalao) ? estado.tipoSalao : 'TODOS');
+        definirOrdenacao(['DISTANCIA_ASC', 'DISTANCIA_DESC', 'AVALIACOES_DESC', 'AVALIACOES_ASC'].includes(estado.ordenacao) ? estado.ordenacao : 'DISTANCIA_ASC');
+        definirBusca(String(estado.busca ?? ''));
+        definirCidade(String(estado.cidade ?? ''));
+        definirBuscaAplicada(String(estado.buscaAplicada ?? ''));
+        definirCidadeAplicada(String(estado.cidadeAplicada ?? ''));
+        definirIdUnidadeSelecionada(String(estado.idUnidadeSelecionada ?? ''));
+        definirCentralizarNoCliente(Boolean(estado.centralizarNoCliente));
+        const idSalaoSelecionado = Number(estado.idSalaoSelecionado);
+        idSalaoSelecionadoRestaurar.current = Number.isSafeInteger(idSalaoSelecionado) && idSalaoSelecionado > 0 ? idSalaoSelecionado : null;
+        restauracaoConcluida.current = true;
+      }
+    } catch {
+      restauracaoConcluida.current = false;
+    }
+    definirMapaProntoParaBuscar(true);
+  }, []);
 
   const buscarSaloes = useCallback(async () => {
     if (!coordenadas) return;
@@ -87,9 +143,21 @@ export default function AreaCliente() {
     );
   }, []);
 
-  useEffect(() => { localizarCliente(); }, [localizarCliente]);
+  useEffect(() => {
+    if (!mapaProntoParaBuscar || restauracaoConcluida.current) return;
+    restauracaoConcluida.current = true;
+    localizarCliente();
+  }, [localizarCliente, mapaProntoParaBuscar]);
 
   useEffect(() => { buscarSaloes(); }, [buscarSaloes]);
+
+  useEffect(() => {
+    if (idSalaoSelecionadoRestaurar.current == null) return;
+    const salao = saloes.find((item) => Number(item.idUnidade) === idSalaoSelecionadoRestaurar.current);
+    if (!salao) return;
+    definirSalaoSelecionado(salao);
+    idSalaoSelecionadoRestaurar.current = null;
+  }, [saloes]);
 
   useEffect(() => {
     if (idUnidadeSelecionada) { definirSugestoes([]); return undefined; }
@@ -168,15 +236,15 @@ export default function AreaCliente() {
             {mensagem && <p className="estado-lista">{mensagem}</p>}
             {!carregando && !mensagem && !falhaBusca && !saloesFiltrados.length && <p className="estado-lista">Nenhum salão desse tipo foi encontrado neste raio.</p>}
             {saloesFiltrados.map((salao) => (
-              <Link className={`cartao-salao${salao.proAtivo ? ' cartao-salao--pro' : ''}`} href={`/${salao.slugSalao}/${salao.slugFilial}`} key={salao.idUnidade}>
-                <span className="cartao-salao__icone">✦</span><span><strong>{salao.nomeUnidade} {Boolean(salao.proAtivo) && <b className="selo-pro">PRO</b>}</strong><small>{salao.nomeSalao} · {Number(salao.distanciaKm).toFixed(1)} km</small><small>{salao.quantidadeAvaliacoes ? `★ ${Number(salao.mediaAvaliacao).toFixed(1)} · ${salao.quantidadeAvaliacoes} avaliações` : 'Sem avaliações'}</small><em>{salao.categoria.toLowerCase()}</em></span>
+              <Link className={`cartao-salao${salao.proAtivo ? ' cartao-salao--pro' : ''}`} href={obterLinkSalao(salao)} key={salao.idUnidade}>
+                <span className="cartao-salao__icone">✦</span><span><strong>{salao.nomeUnidade} {Boolean(salao.proAtivo) && <b className="selo-pro">Premium</b>}</strong><small>{salao.nomeSalao} · {Number(salao.distanciaKm).toFixed(1)} km</small><small>{salao.quantidadeAvaliacoes ? `★ ${Number(salao.mediaAvaliacao).toFixed(1)} · ${salao.quantidadeAvaliacoes} avaliações` : 'Sem avaliações'}</small><em>{salao.categoria.toLowerCase()}</em></span>
               </Link>
             ))}
           </div>
         </aside>
         <section className="mapa-area">
           <button className="botao-centralizar" disabled={carregando} onClick={() => localizarCliente(true)} type="button">⌖ Centralizar na minha localização</button>
-          <MapaSaloes aoSelecionarSalao={definirSalaoSelecionado} centralizarNoCliente={centralizarNoCliente} coordenadas={coordenadasMapa} salaoSelecionado={salaoSelecionado} saloes={saloesFiltrados} />
+          <MapaSaloes aoSelecionarSalao={definirSalaoSelecionado} centralizarNoCliente={centralizarNoCliente} coordenadas={coordenadasMapa} obterLinkSalao={obterLinkSalao} salaoSelecionado={salaoSelecionado} saloes={saloesFiltrados} />
         </section>
       </section>
     </main>

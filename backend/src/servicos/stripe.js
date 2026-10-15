@@ -9,12 +9,13 @@ let clienteStripe;
 
 export function obterOfertaPremium() {
   return {
-    basico: { nome: 'Básico', preco: 0, recursos: ['Dashboard atual', 'Agenda, clientes e gestão do salão'] },
+    basico: { nome: 'Básico', preco: 0, recursos: ['Dashboard atual', 'Agenda, clientes e gestão do salão', '1 unidade'] },
     premium: {
       nome: 'Premium',
       testeGratisDias: 7,
       opcoes: Object.values(planosPremium).map(({ periodicidade, valor }) => ({ periodicidade, valor })),
       recursos: [
+        { nome: 'Unidades ilimitadas', descricao: 'Cadastre e gerencie quantas unidades sua empresa precisar.' },
         { nome: 'Dashboard avançado', descricao: 'Painel mais detalhado para te auxiliar na tomada de decisão.' },
         { nome: 'Notificações', descricao: 'Receba notificações direto no dispositivo caso o cliente faça um agendamento, cancele ou altere.' },
         { nome: 'Destaque', descricao: 'Ganhe destaque na lista de salões da sua região.' },

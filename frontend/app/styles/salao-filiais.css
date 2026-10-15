@@ -39,10 +39,21 @@
   margin-top: -.25rem;
 }
 
+.dados-contato-filial__ajuda {
+  color: var(--texto-suave);
+  font-size: .78rem;
+  margin: -.65rem 0 0;
+}
+
 .dados-contato-filial__campos {
   display: grid;
   gap: 0 1rem;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dados-contato-filial__campos input:disabled {
+  cursor: not-allowed;
+  opacity: .58;
 }
 
 .ajuste-localizacao,

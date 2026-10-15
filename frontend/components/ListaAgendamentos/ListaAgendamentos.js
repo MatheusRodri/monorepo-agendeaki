@@ -13,6 +13,7 @@ export default function ListaAgendamentos() {
   const [agendamentoEdicao, definirAgendamentoEdicao] = useState(null);
   const [servicos, definirServicos] = useState([]);
   const [horariosEdicao, definirHorariosEdicao] = useState([]);
+  const [verificacaoDataEdicao, definirVerificacaoDataEdicao] = useState({ data: '', idAgendamento: null, estado: 'livre' });
   const [enviando, definirEnviando] = useState(false);
   const [avaliacao, definirAvaliacao] = useState(null);
   const idAvaliacaoDaUrl = useRef(null);
@@ -62,7 +63,28 @@ export default function ListaAgendamentos() {
   }, [agendamentos, futuros]);
 
   useEffect(() => {
+    if (!agendamentoEdicao?.data || !agendamentoEdicao?.idAgendamento) return undefined;
+    let ativo = true;
+    definirVerificacaoDataEdicao({ data: agendamentoEdicao.data, idAgendamento: agendamentoEdicao.idAgendamento, estado: 'verificando' });
+    const parametros = new URLSearchParams({ data: agendamentoEdicao.data, ignorarIdAgendamento: String(agendamentoEdicao.idAgendamento) });
+    requisitar(`/agendamentos/verificar-data?${parametros}`)
+      .then(() => { if (ativo) definirVerificacaoDataEdicao({ data: agendamentoEdicao.data, idAgendamento: agendamentoEdicao.idAgendamento, estado: 'livre' }); })
+      .catch((erro) => {
+        if (!ativo) return;
+        if (erro.codigo === 'LIMITE_AGENDAMENTO_DIARIO') {
+          definirVerificacaoDataEdicao({ data: agendamentoEdicao.data, idAgendamento: agendamentoEdicao.idAgendamento, estado: 'bloqueada' });
+          definirAgendamentoEdicao((atual) => atual?.data === agendamentoEdicao.data ? { ...atual, horario: '' } : atual);
+          toastErro(erro.message);
+        } else definirVerificacaoDataEdicao({ data: agendamentoEdicao.data, idAgendamento: agendamentoEdicao.idAgendamento, estado: 'erro' });
+      });
+    return () => { ativo = false; };
+  }, [agendamentoEdicao?.data, agendamentoEdicao?.idAgendamento]);
+
+  useEffect(() => {
     if (!agendamentoEdicao?.data || !agendamentoEdicao?.idServico || !agendamentoEdicao?.idFuncionario) { definirHorariosEdicao([]); return; }
+    const estadoData = verificacaoDataEdicao.data === agendamentoEdicao.data && verificacaoDataEdicao.idAgendamento === agendamentoEdicao.idAgendamento ? verificacaoDataEdicao.estado : 'verificando';
+    if (['verificando', 'bloqueada'].includes(estadoData)) { definirHorariosEdicao([]); return; }
+    let ativo = true;
     const parametros = new URLSearchParams({
       data: agendamentoEdicao.data,
       idFuncionario: agendamentoEdicao.idFuncionario,
@@ -70,9 +92,10 @@ export default function ListaAgendamentos() {
       idUnidade: agendamentoEdicao.idUnidade,
     });
     requisitar(`/agendamentos/${agendamentoEdicao.idAgendamento}/horarios?${parametros}`)
-      .then((dados) => definirHorariosEdicao(dados.horarios))
-      .catch((erro) => { definirHorariosEdicao([]); toastErro(erro.message); });
-  }, [agendamentoEdicao?.data, agendamentoEdicao?.idFuncionario, agendamentoEdicao?.idServico]);
+      .then((dados) => { if (ativo) definirHorariosEdicao(dados.horarios); })
+      .catch((erro) => { if (ativo) { definirHorariosEdicao([]); toastErro(erro.message); } });
+    return () => { ativo = false; };
+  }, [agendamentoEdicao?.data, agendamentoEdicao?.idFuncionario, agendamentoEdicao?.idServico, verificacaoDataEdicao]);
 
   async function cancelarAgendamento(agendamento) {
     if (!window.confirm(`Cancelar o agendamento de ${agendamento.servico}?`)) return;

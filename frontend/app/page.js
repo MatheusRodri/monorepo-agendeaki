@@ -1,4 +1,3 @@
-import AlternadorTema from '../components/AlternadorTema/AlternadorTema';
 import BotaoNavegacao from '../components/BotaoNavegacao/BotaoNavegacao';
 import CartaoInformacao from '../components/CartaoInformacao/CartaoInformacao';
 
@@ -35,7 +34,6 @@ export default function PaginaInicial() {
             <a href="#para-saloes">Para salões</a>
           </nav>
 
-          <AlternadorTema />
         </header>
 
         <div className="conteudo-limitado apresentacao__conteudo">
