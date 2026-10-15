@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { dataNascimentoMaiorDeIdade, dataParaIso, formatarCnpj, formatarCpf, formatarData, formatarTelefone } from '../../utils/formatadores';
 import { requisitarApi } from '../../utils/api';
 import { armazenarSessao, limparSessao, obterTokenAcesso, obterTokenAtualizacao } from '../../utils/respostaApi';
@@ -26,6 +26,11 @@ export default function FormularioAutenticacao({ modo, perfil }) {
   const [verificandoSessao, definirVerificandoSessao] = useState(!estaNoCadastro);
   const [confirmarEmail, definirConfirmarEmail] = useState('');
   const [completarPerfil, definirCompletarPerfil] = useState(null);
+  const [aceitouDocumentos, definirAceitouDocumentos] = useState(false);
+  const [documentoAberto, definirDocumentoAberto] = useState(null);
+  const [documentosLegais, definirDocumentosLegais] = useState(null);
+  const [carregandoDocumentos, definirCarregandoDocumentos] = useState(false);
+  const [erroDocumentos, definirErroDocumentos] = useState('');
 
   function alterarCampo(evento) {
     const { name, value } = evento.target;
@@ -49,6 +54,22 @@ export default function FormularioAutenticacao({ modo, perfil }) {
   }
 
   function irParaArea() { const retorno = obterRetorno(); if (retorno) localStorage.removeItem('retornoAgendamento'); roteador.push(retorno ?? (perfil === 'cliente' ? '/cliente/inicio' : '/salao/dashboard')); }
+
+  async function abrirDocumento(tipo) {
+    definirDocumentoAberto(tipo);
+    if (documentosLegais || carregandoDocumentos) return;
+    definirCarregandoDocumentos(true);
+    definirErroDocumentos('');
+    try {
+      definirDocumentosLegais(await requisitarApi('/api/documentos-legais'));
+    } catch (erro) {
+      definirErroDocumentos(erro.message);
+    } finally {
+      definirCarregandoDocumentos(false);
+    }
+  }
+
+  const fecharDocumento = useCallback(() => definirDocumentoAberto(null), []);
 
   useEffect(() => {
     if (estaNoCadastro) return undefined;
@@ -101,7 +122,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
     if (estaNoCadastro && !dataNascimentoMaiorDeIdade(dataNascimento)) { toastErro('Você precisa ter pelo menos 18 anos para criar uma conta.'); return; }
     definirEnviando(true);
     const dadosEnvio = estaNoCadastro
-      ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento, ...(perfil === 'cliente' ? { cpf: dadosFormulario.cpf } : { nomeSalao: dadosFormulario.nomeSalao, telefoneResponsavel: dadosFormulario.telefoneResponsavel, tipoDocumento: 'CNPJ', documento: dadosFormulario.documento }) }
+      ? { [perfil === 'salao' ? 'nomeResponsavel' : 'nome']: dadosFormulario.nome, email: dadosFormulario.email, senha: dadosFormulario.senha, confirmacaoSenha: dadosFormulario.confirmacaoSenha, dataNascimento, aceitouDocumentos, ...(perfil === 'cliente' ? { cpf: dadosFormulario.cpf } : { nomeSalao: dadosFormulario.nomeSalao, telefoneResponsavel: dadosFormulario.telefoneResponsavel, tipoDocumento: 'CNPJ', documento: dadosFormulario.documento }) }
       : { email: dadosFormulario.email, senha: dadosFormulario.senha };
     try {
       const dadosResposta = await requisitarApi(`/api/${configuracao.rotaApi}/${estaNoCadastro ? 'cadastro' : 'login'}`, { dados: dadosEnvio, metodo: 'POST' });
@@ -123,7 +144,41 @@ export default function FormularioAutenticacao({ modo, perfil }) {
     } catch (erro) { toastErro(erro.message); } finally { definirEnviando(false); }
   }
 
-  return <main className="pagina-autenticacao"><div className="pagina-autenticacao__painel"><Link aria-label="Voltar para a página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><div className="pagina-autenticacao__texto"><span aria-hidden="true" className="pagina-autenticacao__icone">{configuracao.icone}</span><p className="sobretitulo">Área do {configuracao.nome}</p><h1>{estaNoCadastro ? configuracao.tituloCadastro : configuracao.tituloLogin}</h1><p>{configuracao.descricao}</p></div></div><section className="pagina-autenticacao__formulario" aria-labelledby="titulo-formulario"><div className="formulario-cartao"><Link className="voltar-home" href="/">← Página inicial</Link><div className="formulario-cartao__cabecalho"><p className="sobretitulo">{estaNoCadastro ? 'Novo começo' : 'Acesse sua conta'}</p><h2 id="titulo-formulario">{estaNoCadastro ? `Cadastro de ${configuracao.nome}` : `Entrar como ${configuracao.nome}`}</h2><p>{estaNoCadastro ? 'Preencha seus dados para começar.' : verificandoSessao ? 'Verificando sua sessão salva...' : 'Informe seus dados para continuar.'}</p></div>{!verificandoSessao && <form onSubmit={enviarFormulario}>{estaNoCadastro && <DadosCadastrais aoMudar={alterarCampo} dados={dadosFormulario} perfil={perfil} />}<label className="campo-formulario"><span>E-mail</span><input autoComplete="email" name="email" onChange={alterarCampo} placeholder="voce@exemplo.com" required type="email" value={dadosFormulario.email} /></label><CampoSenha aoMudar={alterarCampo} autoComplete={estaNoCadastro ? 'new-password' : 'current-password'} id="senha" nome="senha" placeholder="No mínimo 6 caracteres" rotulo="Senha" valor={dadosFormulario.senha} />{estaNoCadastro && <CampoSenha aoMudar={alterarCampo} autoComplete="new-password" id="confirmacaoSenha" nome="confirmacaoSenha" placeholder="Repita sua senha" rotulo="Confirme sua senha" valor={dadosFormulario.confirmacaoSenha} />}{!estaNoCadastro && <label className="manter-conectado"><input checked={manterConectado} onChange={(evento) => definirManterConectado(evento.target.checked)} type="checkbox" /><span>Manter conectado neste dispositivo</span></label>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Aguarde...' : estaNoCadastro ? 'Criar minha conta' : 'Entrar na minha conta'} <span aria-hidden="true">→</span></button></form>}<p className="alternativa-autenticacao">{estaNoCadastro ? 'Já tem uma conta?' : 'Ainda não tem uma conta?'} <Link href={caminhoAutenticacao(estaNoCadastro ? `/${configuracao.caminho}` : `/${configuracao.caminho}/cadastro`)}>{estaNoCadastro ? 'Fazer login' : 'Criar conta'}</Link></p>{!estaNoCadastro && <p className="alternativa-autenticacao"><Link href={`/${configuracao.caminho}/recuperar-senha`}>Esqueci minha senha</Link></p>}</div></section>{confirmarEmail && <ModalConfirmacaoEmail aoFechar={() => roteador.push(caminhoAutenticacao(`/${configuracao.caminho}`))} email={confirmarEmail} />}{completarPerfil && <ModalCompletarPerfil aoConcluir={irParaArea} cadastroIncompleto={completarPerfil.cadastroIncompleto} dadosCadastrais={completarPerfil.dadosCadastrais} nomeSalao={completarPerfil.nomeSalao} perfil={completarPerfil.perfil} salaoIncompleto={completarPerfil.salaoIncompleto} rotaApi={perfil === 'cliente' ? 'clientes' : 'salao'} tokenAcesso={completarPerfil.tokenAcesso} />}</main>;
+  return <main className="pagina-autenticacao"><div className="pagina-autenticacao__painel"><Link aria-label="Voltar para a página inicial" className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><div className="pagina-autenticacao__texto"><span aria-hidden="true" className="pagina-autenticacao__icone">{configuracao.icone}</span><p className="sobretitulo">Área do {configuracao.nome}</p><h1>{estaNoCadastro ? configuracao.tituloCadastro : configuracao.tituloLogin}</h1><p>{configuracao.descricao}</p></div></div><section className="pagina-autenticacao__formulario" aria-labelledby="titulo-formulario"><div className="formulario-cartao"><Link className="voltar-home" href="/">← Página inicial</Link><div className="formulario-cartao__cabecalho"><p className="sobretitulo">{estaNoCadastro ? 'Novo começo' : 'Acesse sua conta'}</p><h2 id="titulo-formulario">{estaNoCadastro ? `Cadastro de ${configuracao.nome}` : `Entrar como ${configuracao.nome}`}</h2><p>{estaNoCadastro ? 'Preencha seus dados para começar.' : verificandoSessao ? 'Verificando sua sessão salva...' : 'Informe seus dados para continuar.'}</p></div>{!verificandoSessao && <form onSubmit={enviarFormulario}>{estaNoCadastro && <DadosCadastrais aoMudar={alterarCampo} dados={dadosFormulario} perfil={perfil} />}<label className="campo-formulario"><span>E-mail</span><input autoComplete="email" name="email" onChange={alterarCampo} placeholder="voce@exemplo.com" required type="email" value={dadosFormulario.email} /></label><CampoSenha aoMudar={alterarCampo} autoComplete={estaNoCadastro ? 'new-password' : 'current-password'} id="senha" nome="senha" placeholder="No mínimo 6 caracteres" rotulo="Senha" valor={dadosFormulario.senha} />{estaNoCadastro && <CampoSenha aoMudar={alterarCampo} autoComplete="new-password" id="confirmacaoSenha" nome="confirmacaoSenha" placeholder="Repita sua senha" rotulo="Confirme sua senha" valor={dadosFormulario.confirmacaoSenha} />} {estaNoCadastro && <label className="aceite-documentos"><input checked={aceitouDocumentos} onChange={(evento) => definirAceitouDocumentos(evento.target.checked)} required type="checkbox" /><span>Li e aceito os <button onClick={() => abrirDocumento('termosDeUso')} type="button">Termos de Uso</button> e a <button onClick={() => abrirDocumento('politicaPrivacidade')} type="button">Política de Privacidade</button>.</span></label>}{!estaNoCadastro && <label className="manter-conectado"><input checked={manterConectado} onChange={(evento) => definirManterConectado(evento.target.checked)} type="checkbox" /><span>Manter conectado neste dispositivo</span></label>}<button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Aguarde...' : estaNoCadastro ? 'Criar minha conta' : 'Entrar na minha conta'} <span aria-hidden="true">→</span></button></form>}<p className="alternativa-autenticacao">{estaNoCadastro ? 'Já tem uma conta?' : 'Ainda não tem uma conta?'} <Link href={caminhoAutenticacao(estaNoCadastro ? `/${configuracao.caminho}` : `/${configuracao.caminho}/cadastro`)}>{estaNoCadastro ? 'Fazer login' : 'Criar conta'}</Link></p>{!estaNoCadastro && <p className="alternativa-autenticacao"><Link href={`/${configuracao.caminho}/recuperar-senha`}>Esqueci minha senha</Link></p>}</div></section>{documentoAberto && <ModalDocumentoLegal aoFechar={fecharDocumento} carregando={carregandoDocumentos} documento={documentosLegais?.[documentoAberto]} erro={erroDocumentos} onRetry={() => abrirDocumento(documentoAberto)} tipo={documentoAberto} />}{confirmarEmail && <ModalConfirmacaoEmail aoFechar={() => roteador.push(caminhoAutenticacao(`/${configuracao.caminho}`))} email={confirmarEmail} />}{completarPerfil && <ModalCompletarPerfil aoConcluir={irParaArea} cadastroIncompleto={completarPerfil.cadastroIncompleto} dadosCadastrais={completarPerfil.dadosCadastrais} nomeSalao={completarPerfil.nomeSalao} perfil={completarPerfil.perfil} salaoIncompleto={completarPerfil.salaoIncompleto} rotaApi={perfil === 'cliente' ? 'clientes' : 'salao'} tokenAcesso={completarPerfil.tokenAcesso} />}</main>;
+}
+
+function ModalDocumentoLegal({ aoFechar, carregando, documento, erro, onRetry, tipo }) {
+  const botaoFechar = useRef(null);
+  const dialogo = useRef(null);
+  const titulo = tipo === 'termosDeUso' ? 'Termos de Uso' : 'Política de Privacidade';
+
+  useEffect(() => {
+    const elementoAnterior = document.activeElement;
+    botaoFechar.current?.focus();
+    function fecharComEscape(evento) {
+      if (evento.key === 'Escape') aoFechar();
+      if (evento.key === 'Tab') {
+        const itensFocaveis = [...(dialogo.current?.querySelectorAll('button:not(:disabled), [tabindex="0"]') ?? [])];
+        if (!itensFocaveis.length) return;
+        const primeiro = itensFocaveis[0];
+        const ultimo = itensFocaveis[itensFocaveis.length - 1];
+        if (evento.shiftKey && document.activeElement === primeiro) {
+          evento.preventDefault();
+          ultimo.focus();
+        } else if (!evento.shiftKey && document.activeElement === ultimo) {
+          evento.preventDefault();
+          primeiro.focus();
+        }
+      }
+    }
+    window.addEventListener('keydown', fecharComEscape);
+    return () => {
+      window.removeEventListener('keydown', fecharComEscape);
+      elementoAnterior?.focus?.();
+    };
+  }, [aoFechar]);
+
+  return <div className="modal-documento-legal__fundo" onMouseDown={(evento) => { if (evento.target === evento.currentTarget) aoFechar(); }}><section aria-labelledby="titulo-documento-legal" aria-modal="true" className="modal-documento-legal" ref={dialogo} role="dialog"><header className="modal-documento-legal__cabecalho"><div><h2 id="titulo-documento-legal">{titulo}</h2>{documento && <p>Versão {documento.versao}</p>}</div><button aria-label="Fechar documento" className="modal-documento-legal__fechar" onClick={aoFechar} ref={botaoFechar} type="button">×</button></header><div className="modal-documento-legal__conteudo" tabIndex="0">{carregando ? <p>Carregando documento…</p> : erro ? <div><p>{erro}</p><button onClick={onRetry} type="button">Tentar novamente</button></div> : <div className="modal-documento-legal__texto">{documento?.texto}</div>}</div><footer className="modal-documento-legal__rodape"><button className="botao-enviar" onClick={aoFechar} type="button">Fechar</button></footer></section></div>;
 }
 
 function DadosCadastrais({ aoMudar, dados, perfil }) {

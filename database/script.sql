@@ -48,6 +48,20 @@ CREATE TABLE IF NOT EXISTS tb_usuario (
     UNIQUE (id_autenticacao_externa)
 ) ENGINE = InnoDB;
 
+CREATE TABLE IF NOT EXISTS tb_aceite_documento_legal (
+  fk_usuario BIGINT UNSIGNED NOT NULL,
+  cd_documento ENUM('TERMOS_USO', 'POLITICA_PRIVACIDADE') NOT NULL,
+  ds_versao VARCHAR(40) NOT NULL,
+  dt_aceite DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (fk_usuario, cd_documento, ds_versao),
+  INDEX idx_aceite_documento_legal_usuario (fk_usuario),
+  CONSTRAINT fk_aceite_documento_legal_usuario
+    FOREIGN KEY (fk_usuario)
+    REFERENCES tb_usuario (id_usuario)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE = InnoDB;
+
 
 -- =====================================================
 -- SALÕES

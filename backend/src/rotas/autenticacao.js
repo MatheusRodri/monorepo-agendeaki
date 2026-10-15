@@ -6,6 +6,7 @@ import { cnpjValido, cpfValido, dataNascimentoValida, normalizarCnpj, somenteNum
 import { prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
 import { obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 import { criarSlugSalaoUnico } from '../servicos/slugs.js';
+import { obterDocumentosLegais, obterVersoesDocumentosLegais } from '../servicos/documentosLegais.js';
 
 const roteadorAutenticacao = Router();
 
@@ -102,6 +103,9 @@ function obterUrlRedefinicaoSenha(perfil) {
 
 async function criarConta(requisicao, resposta, perfil) {
   const dadosCadastro = requisicao.body ?? {};
+  if (dadosCadastro.aceitouDocumentos !== true) {
+    return resposta.status(400).json({ mensagem: 'É necessário aceitar os Termos de Uso e a Política de Privacidade para criar a conta.' });
+  }
   const mensagemValidacao = validarDadosCadastro(dadosCadastro, perfil);
 
   if (mensagemValidacao) {
@@ -211,6 +215,20 @@ async function criarConta(requisicao, resposta, perfil) {
         );
       }
 
+      const versoesDocumentos = obterVersoesDocumentosLegais();
+      await bancoDeDados.query(
+        `INSERT INTO tb_aceite_documento_legal (fk_usuario, cd_documento, ds_versao)
+         VALUES (:idUsuario, 'TERMOS_USO', :versaoTermos), (:idUsuario, 'POLITICA_PRIVACIDADE', :versaoPolitica)`,
+        {
+          replacements: {
+            idUsuario: usuariosInseridos[0].idUsuario,
+            versaoTermos: versoesDocumentos.termosDeUso,
+            versaoPolitica: versoesDocumentos.politicaPrivacidade,
+          },
+          transaction: transacao,
+        },
+      );
+
       return usuariosInseridos[0];
     });
 
@@ -248,6 +266,15 @@ async function criarConta(requisicao, resposta, perfil) {
     return resposta.status(erro.status ?? 500).json({ mensagem: erro.message });
   }
 }
+
+roteadorAutenticacao.get('/documentos-legais', async (_requisicao, resposta) => {
+  try {
+    return resposta.status(200).json(await obterDocumentosLegais());
+  } catch (erro) {
+    console.error('[Documentos legais] Não foi possível ler os documentos.', erro.message);
+    return resposta.status(500).json({ mensagem: 'Não foi possível carregar os documentos legais agora.' });
+  }
+});
 
 async function realizarLogin(requisicao, resposta, perfil) {
   const { email, senha } = requisicao.body ?? {};
