@@ -1,0 +1,33 @@
+@startuml C4-Code-Disponibilidade
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C4 — Código: resolução da disponibilidade
+LAYOUT_TOP_DOWN()
+hide stereotype
+skinparam nodesep 35
+skinparam ranksep 35
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$COMPONENT_BG_COLOR> Função / componente de código |
+|<$CONTAINER_BG_COLOR> Banco de dados |
+endlegend
+
+Container_Boundary(servico, "backend/src/servicos/disponibilidade.js") {
+    Component(resolver, "resolverReserva()", "Função exportada", "Valida e resolve a reserva solicitada.")
+    Component(listar, "listarHorariosDisponiveis()", "Função exportada", "Calcula os horários disponíveis para o dia.")
+}
+
+Component(contexto, "buscarContexto()", "Função interna", "Carrega serviço, unidade e profissionais elegíveis.")
+Component(periodos, "periodosDoProfissional()", "Função interna", "Obtém os períodos de trabalho aplicáveis.")
+Component(ocupacoes, "ocupacoesDoProfissional()", "Função interna", "Obtém reservas e bloqueios existentes.")
+ContainerDb(mysql, "MySQL", "MySQL 8", "Dados de serviços, profissionais e agenda.")
+
+Rel(resolver, listar, "Recalcula e valida o horário")
+Rel(listar, contexto, "Carrega contexto da busca")
+Rel(listar, periodos, "Consulta períodos de trabalho")
+Rel(listar, ocupacoes, "Consulta ocupações da agenda")
+Rel(contexto, mysql, "Lê dados de serviço e unidade", "SQL")
+Rel(periodos, mysql, "Lê horários de trabalho", "SQL")
+Rel(ocupacoes, mysql, "Lê reservas e bloqueios", "SQL")
+
+@enduml
