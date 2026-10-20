@@ -1,0 +1,28 @@
+@startuml Dinamico-CriarAgendamento-02-Confirmacao
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Dynamic.puml
+
+title Dinâmico — Criar agendamento (2/2): conflito e confirmação
+LAYOUT_TOP_DOWN()
+hide stereotype
+SHOW_LEGEND()
+
+Person(cliente, "Cliente", "Recebe o resultado da solicitação.")
+Container(frontend, "Frontend Web", "Next.js", "Exibe o resultado ao cliente.")
+Container(api, "API", "Node.js / Express", "Conclui a reserva e responde à requisição.")
+ContainerDb(mysql, "MySQL", "MySQL 8", "Mantém a transação e os dados da agenda.")
+Container_Ext(notificacoes, "Serviço de notificações", "Web Push", "Notifica o salão após a confirmação.")
+
+Rel_D(api, mysql, "Verifica limite diário e conflito do profissional")
+Rel_D(api, mysql, "Insere tb_agendamento")
+Rel_D(api, mysql, "Confirma a transação (COMMIT)")
+Rel_D(api, notificacoes, "Dispara notificação assíncrona")
+Rel_D(api, frontend, "Responde 201 Created")
+Rel_D(frontend, cliente, "Exibe confirmação")
+
+note right of mysql
+  Em caso de limite diário atingido
+  ou conflito, a API executa ROLLBACK
+  e responde com erro HTTP 409.
+end note
+
+@enduml

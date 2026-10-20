@@ -1,0 +1,33 @@
+@startuml C4-Code-CriarAgendamento-Transacao
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C4 — Código: transação e persistência da reserva
+LAYOUT_TOP_DOWN()
+hide stereotype
+skinparam nodesep 35
+skinparam ranksep 35
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$COMPONENT_BG_COLOR> Função / operação de código |
+|<$CONTAINER_BG_COLOR> Banco de dados |
+endlegend
+
+Container_Boundary(rota, "backend/src/rotas/cliente.js — criarAgendamento()") {
+    Component(iniciar, "transaction()", "Sequelize", "Abre a transação.")
+    Component(bloquear, "Bloqueio do usuário", "SELECT ... FOR UPDATE", "Serializa reservas concorrentes do mesmo cliente.")
+    Component(inserir, "INSERT tb_agendamento", "Sequelize / SQL", "Grava os dados confirmados da reserva.")
+    Component(commit, "commit()", "Sequelize", "Confirma a reserva antes da resposta 201.")
+    Component(rollback, "rollback()", "Sequelize", "Desfaz a transação quando uma validação falha.")
+}
+
+ContainerDb(mysql, "MySQL", "MySQL 8", "Mantém a transação e os dados da agenda.")
+Component(notificacao, "notificarSalaoDoAgendamento()", "Serviço de notificações", "É disparado após o commit.")
+
+Rel(iniciar, bloquear, "Inicia fluxo transacional")
+Rel(bloquear, mysql, "Bloqueia linha do cliente")
+Rel(inserir, mysql, "Insere reserva")
+Rel(commit, mysql, "Sucesso")
+Rel(rollback, mysql, "Erro / conflito")
+Rel(commit, notificacao, "Aciona após confirmação")
+
+@enduml

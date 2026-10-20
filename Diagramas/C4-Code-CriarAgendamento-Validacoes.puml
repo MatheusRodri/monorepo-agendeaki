@@ -1,0 +1,38 @@
+@startuml C4-Code-CriarAgendamento-Validacoes
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C4 — Código: validações da reserva
+LAYOUT_TOP_DOWN()
+hide stereotype
+skinparam nodesep 35
+skinparam ranksep 35
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$COMPONENT_BG_COLOR> Função / componente de código |
+|<$CONTAINER_BG_COLOR> Banco de dados |
+endlegend
+
+Container_Boundary(rotas, "backend/src/rotas/cliente.js") {
+    Component(criar, "criarAgendamento()", "Rota Express", "Coordena as validações antes da gravação.")
+    Component(limitar, "bloquearAgendamentoDiario()", "Função interna", "Impede mais de um agendamento ativo no mesmo dia.")
+    Component(existe, "existeAgendamentoDiario()", "Função interna", "Consulta agendamento ativo do cliente.")
+}
+
+Container_Boundary(disponibilidade, "backend/src/servicos/disponibilidade.js") {
+    Component(resolver, "resolverReserva()", "Serviço de domínio", "Confirma que o horário e o serviço são válidos.")
+    Component(listar, "listarHorariosDisponiveis()", "Serviço de domínio", "Recalcula a disponibilidade atual.")
+}
+
+Component(conflito, "Consulta de conflito", "SQL", "Procura sobreposição para o profissional com bloqueio FOR UPDATE.")
+ContainerDb(mysql, "MySQL", "MySQL 8", "Horários, bloqueios e agendamentos.")
+
+Rel(criar, resolver, "Valida horário e serviço")
+Rel(resolver, listar, "Recalcula disponibilidade")
+Rel(criar, limitar, "Aplica limite diário")
+Rel(limitar, existe, "Verifica reserva ativa")
+Rel(criar, conflito, "Confere sobreposição")
+Rel(existe, mysql, "Consulta agendamentos", "Sequelize / SQL")
+Rel(listar, mysql, "Consulta agenda e disponibilidade", "Sequelize / SQL")
+Rel(conflito, mysql, "SELECT ... FOR UPDATE")
+
+@enduml

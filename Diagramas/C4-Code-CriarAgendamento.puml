@@ -1,0 +1,37 @@
+@startuml C4-Code-CriarAgendamento
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C4 — Código: orquestração da criação de agendamento
+LAYOUT_TOP_DOWN()
+hide stereotype
+skinparam nodesep 35
+skinparam ranksep 35
+legend bottom
+|<color:$LEGEND_TITLE_COLOR>**Legenda**</color> |
+|<$PERSON_BG_COLOR> Pessoa |
+|<$COMPONENT_BG_COLOR> Função / componente de código |
+|<$CONTAINER_BG_COLOR> Banco de dados |
+|<$EXTERNAL_SYSTEM_BG_COLOR> Serviço externo |
+endlegend
+
+Person(cliente, "Cliente", "Solicita um horário.")
+
+Container_Boundary(rotas, "backend/src/rotas/cliente.js") {
+    Component(autenticar, "obterClienteAutenticado()", "Supabase Auth", "Valida a identidade do cliente.")
+    Component(criar, "criarAgendamento()", "Express", "Coordena validações, transação e resposta HTTP.")
+    Component(notificar, "notificarSalaoDoAgendamento()", "Web Push", "Dispara a notificação após confirmar a reserva.")
+}
+
+Container_Boundary(servico, "backend/src/servicos/disponibilidade.js") {
+    Component(resolver, "resolverReserva()", "Serviço de domínio", "Valida e resolve os dados do horário solicitado.")
+}
+
+ContainerDb(mysql, "MySQL", "MySQL 8", "Persiste usuários e agendamentos.")
+
+Rel(cliente, criar, "Envia a solicitação")
+Rel(criar, autenticar, "Obtém o cliente autenticado")
+Rel(criar, resolver, "Valida o horário na transação")
+Rel(criar, mysql, "Bloqueia usuário e grava reserva", "Sequelize / SQL")
+Rel(criar, notificar, "Notifica após o commit")
+
+@enduml
