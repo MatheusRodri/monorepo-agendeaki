@@ -1,6 +1,7 @@
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteStripe } from './stripe.js';
+import { obterIdAssinaturaFatura, salvarFaturaAssinatura } from './faturasAssinaturas.js';
 
 function dataStripe(timestamp) {
   return timestamp ? new Date(Number(timestamp) * 1000) : null;
@@ -135,11 +136,13 @@ export async function sincronizarEventoStripe(evento) {
   }
 
   if (evento.type === 'invoice.paid' || evento.type === 'invoice.payment_failed') {
-    const idAssinatura = recurso.subscription
-      ?? recurso.parent?.subscription_details?.subscription
-      ?? recurso.parent?.subscription_details?.subscription_id;
+    const idAssinatura = obterIdAssinaturaFatura(recurso);
     if (!idAssinatura) return false;
-    return sincronizarAssinaturaStripe(typeof idAssinatura === 'string' ? idAssinatura : idAssinatura.id);
+    const sincronizada = await sincronizarAssinaturaStripe(idAssinatura);
+    if (!sincronizada) throw new Error('A assinatura da fatura ainda não está associada a um salão local.');
+    const faturaSalva = await salvarFaturaAssinatura(recurso);
+    if (!faturaSalva) throw new Error('A fatura não foi associada a uma assinatura local.');
+    return true;
   }
   return false;
 }
