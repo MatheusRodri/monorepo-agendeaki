@@ -13,6 +13,7 @@ const roteadorAutenticacao = Router();
 const perfis = {
   cliente: 'CLIENTE',
   salao: 'ADMIN_SALAO',
+  admin: 'ADMIN_AGENDEAKI',
 };
 
 function codigoErroBanco(erro) {
@@ -326,15 +327,29 @@ async function realizarLogin(requisicao, resposta, perfil) {
       return resposta.status(403).json({ mensagem: 'Use a área de acesso correspondente ao seu perfil.' });
     }
 
-    const usuarioLocal = await sincronizarUsuario({
-      email: dadosAutenticacao.user.email,
-      idAutenticacaoExterna: dadosAutenticacao.user.id,
-      nome: dadosAutenticacao.user.user_metadata.nome ?? dadosAutenticacao.user.email,
-      perfil,
-      telefone: dadosAutenticacao.user.user_metadata.telefone ?? null,
-    });
-    const dadosCadastrais = await obterDadosCadastraisUsuario(usuarioLocal.idUsuario);
-    const cadastroIncompleto = perfil === perfis.cliente
+    let usuarioLocal;
+    if (perfil === perfis.admin) {
+      const administradores = await bancoDeDados.query(
+        `SELECT id_usuario AS idUsuario, nm_usuario AS nome, st_ativo AS ativo FROM tb_usuario
+         WHERE id_autenticacao_externa=:idExterno AND tp_usuario='ADMIN_AGENDEAKI' LIMIT 1`,
+        { replacements: { idExterno: dadosAutenticacao.user.id }, type: QueryTypes.SELECT },
+      );
+      if (!administradores[0]?.ativo) {
+        await clienteSupabase.auth.signOut({ scope: 'local' });
+        return resposta.status(403).json({ mensagem: 'Esta conta não possui acesso administrativo ao AgendeAki.' });
+      }
+      usuarioLocal = administradores[0];
+    } else {
+      usuarioLocal = await sincronizarUsuario({
+        email: dadosAutenticacao.user.email,
+        idAutenticacaoExterna: dadosAutenticacao.user.id,
+        nome: dadosAutenticacao.user.user_metadata.nome ?? dadosAutenticacao.user.email,
+        perfil,
+        telefone: dadosAutenticacao.user.user_metadata.telefone ?? null,
+      });
+    }
+    const dadosCadastrais = perfil === perfis.admin ? null : await obterDadosCadastraisUsuario(usuarioLocal.idUsuario);
+    const cadastroIncompleto = perfil === perfis.admin ? false : perfil === perfis.cliente
       ? !dadosCadastrais?.dataNascimento || !dadosCadastrais?.telefone
       : !dadosCadastrais?.dataNascimento || !dadosCadastrais?.tipoDocumento || !dadosCadastrais?.documento || !dadosCadastrais?.telefone;
     let salaoIncompleto = false;
@@ -351,7 +366,7 @@ async function realizarLogin(requisicao, resposta, perfil) {
       usuario: {
         id: dadosAutenticacao.user.id,
         email: dadosAutenticacao.user.email,
-        nome: dadosAutenticacao.user.user_metadata.nome,
+        nome: dadosAutenticacao.user.user_metadata.nome ?? usuarioLocal.nome ?? dadosAutenticacao.user.email,
         perfil,
       },
       tokenAcesso: dadosAutenticacao.session.access_token,
@@ -384,6 +399,16 @@ async function renovarSessao(requisicao, resposta, perfil) {
 
     if (dadosAutenticacao.user?.user_metadata?.perfil !== perfil) {
       return resposta.status(403).json({ mensagem: 'A sessão não corresponde a esta área.' });
+    }
+
+    if (perfil === perfis.admin) {
+      const administradores = await bancoDeDados.query(
+        `SELECT u.st_ativo AS ativo FROM tb_usuario u
+         WHERE u.id_autenticacao_externa=:idAutenticacaoExterna
+           AND u.tp_usuario='ADMIN_AGENDEAKI' LIMIT 1`,
+        { replacements: { idAutenticacaoExterna: dadosAutenticacao.user.id }, type: QueryTypes.SELECT },
+      );
+      if (!administradores[0]?.ativo) return resposta.status(403).json({ mensagem: 'Esta conta não possui acesso administrativo ao AgendeAki.' });
     }
 
     return resposta.status(200).json({
