@@ -206,7 +206,7 @@ Abra [http://localhost:3000](http://localhost:3000).
 
 ### 6. Teste pagamentos com Stripe (opcional)
 
-Crie os preços recorrentes em BRL no Stripe, preencha os IDs no `backend/.env` e mantenha `ASSINATURA_MODO_TESTE=false`. Instale o Stripe CLI e autentique a máquina uma vez com `stripe login`. Com o backend rodando na porta `3001`, abra outro terminal e encaminhe os eventos para a API local:
+Crie no Stripe os preços recorrentes em BRL de **R$ 50,00 por mês** e **R$ 400,00 por ano**, atualize `STRIPE_PRICE_ID_MENSAL` e `STRIPE_PRICE_ID_ANUAL` no `backend/.env` com os novos IDs, e mantenha `ASSINATURA_MODO_TESTE=false`. Os preços Stripe existentes não são alterados automaticamente; assinaturas já contratadas continuam seguindo o preço registrado no Stripe até uma migração explícita. Instale o Stripe CLI e autentique a máquina uma vez com `stripe login`. Com o backend rodando na porta `3001`, abra outro terminal e encaminhe os eventos para a API local:
 
 ```bash
 stripe listen --events checkout.session.completed,checkout.session.expired,customer.subscription.created,customer.subscription.updated,customer.subscription.paused,customer.subscription.resumed,customer.subscription.deleted,invoice.paid,invoice.payment_failed --forward-to localhost:3001/api/webhooks/stripe
