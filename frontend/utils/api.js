@@ -17,6 +17,7 @@ const renovacoesEmAndamento = new Map();
 
 function obterPerfilDaRota(caminho) {
   const caminhoRelativo = caminho.split('?')[0];
+  if (caminhoRelativo.startsWith('/api/admin/')) return 'admin';
   if (caminhoRelativo.startsWith('/api/salao/') || caminhoRelativo.startsWith('/api/saloes/')) return 'salao';
   if (caminhoRelativo.startsWith('/api/clientes/') || caminhoRelativo.startsWith('/api/cliente/')) return 'cliente';
   return null;
@@ -58,6 +59,11 @@ async function enviarRequisicao(caminho, { dados, metodo = 'GET', parametros, to
 }
 
 async function renovarSessao(perfilUsuario) {
+  if (perfilUsuario === 'admin') {
+    limparSessao(perfilUsuario);
+    return null;
+  }
+
   const renovacaoEmAndamento = renovacoesEmAndamento.get(perfilUsuario);
   if (renovacaoEmAndamento) return renovacaoEmAndamento;
 
@@ -67,7 +73,8 @@ async function renovarSessao(perfilUsuario) {
     return null;
   }
 
-  const promessaRenovacao = enviarRequisicao(`/api/${perfilUsuario === 'cliente' ? 'clientes' : 'saloes'}/refresh`, {
+  const caminhoRefresh = perfilUsuario === 'cliente' ? '/api/clientes/refresh' : perfilUsuario === 'salao' ? '/api/saloes/refresh' : '/api/admin/refresh';
+  const promessaRenovacao = enviarRequisicao(caminhoRefresh, {
     dados: { tokenAtualizacao },
     metodo: 'POST',
   })

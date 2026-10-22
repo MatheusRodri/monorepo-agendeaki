@@ -1,12 +1,13 @@
-const perfisValidos = ['cliente', 'salao'];
+const perfisValidos = ['cliente', 'salao', 'admin'];
 
 function obterPerfilAtual() {
   if (typeof window === 'undefined') return null;
+  if (window.location.pathname.startsWith('/admin')) return 'admin';
   return window.location.pathname.startsWith('/salao') ? 'salao' : 'cliente';
 }
 
 function obterChaves(perfilUsuario) {
-  const sufixo = perfilUsuario === 'salao' ? 'Salao' : 'Cliente';
+  const sufixo = perfilUsuario === 'salao' ? 'Salao' : perfilUsuario === 'admin' ? 'Admin' : 'Cliente';
   return {
     tokenAcesso: `tokenAcesso${sufixo}`,
     tokenAtualizacao: `tokenAtualizacao${sufixo}`,

@@ -3,6 +3,7 @@ import cors from 'cors';
 import express from 'express';
 import { bancoDeDados } from './configuracoes/bancoDeDados.js';
 import roteadorAutenticacao from './rotas/autenticacao.js';
+import roteadorAdmin from './rotas/admin.js';
 import roteadorCliente from './rotas/cliente.js';
 import roteadorPublico from './rotas/publico.js';
 import roteadorSalao from './rotas/salao.js';
@@ -42,6 +43,7 @@ aplicacao.use((requisicao, resposta, proximo) => {
   proximo();
 });
 aplicacao.use('/api', roteadorAutenticacao);
+aplicacao.use('/api/admin', roteadorAdmin);
 aplicacao.use('/api/clientes', roteadorCliente);
 aplicacao.use('/api/publico', roteadorPublico);
 aplicacao.use('/api/salao', roteadorSalao);

@@ -24,7 +24,7 @@ export default function PaginaInicial() {
     <main>
       <section className="apresentacao" id="inicio">
         <header className="cabecalho conteudo-limitado">
-          <a aria-label="AgendeAki: página inicial" className="marca" href="#inicio">
+          <a className="marca" href="#inicio">
             <span aria-hidden="true" className="marca__simbolo">a</span>
             <span>agende<span>aki</span></span>
           </a>

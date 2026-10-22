@@ -74,7 +74,7 @@
   border: 1px solid var(--ameixa, #74445f);
   border-radius: 999px;
   color: var(--ameixa, #74445f);
-  font-size: 12px;
+  font-size: .75rem;
   font-weight: 800;
   letter-spacing: .12em;
 }
@@ -137,13 +137,13 @@
 .grafico-linha svg line { stroke: var(--borda, #e4e0e5); stroke-width: .5; }
 .grafico-linha svg polyline { fill: none; stroke-width: 1.8; vector-effect: non-scaling-stroke; }
 .grafico-linha svg circle { vector-effect: non-scaling-stroke; }
-.grafico-linha__legenda { display: flex; justify-content: space-between; color: var(--texto-secundario, #74727b); font-size: 12px; }
+.grafico-linha__legenda { display: flex; justify-content: space-between; color: var(--texto-secundario, #74727b); font-size: .75rem; }
 .grafico-barras { display: grid; gap: 15px; padding: 14px 0; }
 .grafico-barras__linha { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(80px, 2fr) auto; align-items: center; gap: 12px; }
 .grafico-barras__linha > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grafico-barras__linha > div { height: 9px; overflow: hidden; border-radius: 999px; background: var(--fundo-secundario, #f0edf1); }
 .grafico-barras__linha i { display: block; height: 100%; border-radius: inherit; background: var(--ameixa, #74445f); }
-.grafico-barras__linha b { font-size: 13px; white-space: nowrap; }
+.grafico-barras__linha b { font-size: .8125rem; white-space: nowrap; }
 .dashboard-premium__status { display: grid; gap: 10px; margin-top: 8px; }
 .dashboard-premium__status > div { align-items: center; display: grid; font-size: .8rem; gap: 10px; grid-template-columns: 90px minmax(60px, 1fr) 32px; }
 .dashboard-premium__status > div > div { background: var(--fundo-secundario, #f0edf1); border-radius: 999px; height: 8px; overflow: hidden; }
@@ -181,8 +181,8 @@
   .notificacoes-dispositivo { align-items: stretch; flex-direction: column; }
   .notificacoes-dispositivo .botao-secundario { width: 100%; }
   .dashboard-premium__cliente-metricas { grid-template-columns: 1fr; }
-  .grafico-barras__linha { grid-template-columns: minmax(65px, 1fr) minmax(55px, 1.3fr) auto; gap: 8px; font-size: 13px; }
-  .grafico-barras__linha b { font-size: 12px; }
+  .grafico-barras__linha { grid-template-columns: minmax(65px, 1fr) minmax(55px, 1.3fr) auto; gap: 8px; font-size: .8125rem; }
+  .grafico-barras__linha b { font-size: .75rem; }
 }
 
 @media (max-width: 520px) {

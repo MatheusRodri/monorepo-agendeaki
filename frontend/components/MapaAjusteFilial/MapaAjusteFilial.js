@@ -62,5 +62,5 @@ export default function MapaAjusteFilial({ coordenadas }) {
   }, [coordenadas, mapaPronto]);
 
   if (erro) return <p className="estado-localizacao">{erro}</p>;
-  return <div aria-label="Mapa da localização da filial" className="mapa-ajuste-filial maplibregl-map" ref={elementoMapa} />;
+  return <div aria-hidden="true" className="mapa-ajuste-filial maplibregl-map" inert ref={elementoMapa} />;
 }

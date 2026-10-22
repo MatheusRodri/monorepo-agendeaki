@@ -1,8 +1,8 @@
 import Stripe from 'stripe';
 
 const planosPremium = {
-  MENSAL: { periodicidade: 'MENSAL', valor: 29.90, frequencia: 1, variavelPreco: 'STRIPE_PRICE_ID_MENSAL' },
-  ANUAL: { periodicidade: 'ANUAL', valor: 299.00, frequencia: 12, variavelPreco: 'STRIPE_PRICE_ID_ANUAL' },
+  MENSAL: { periodicidade: 'MENSAL', valor: 50.00, frequencia: 1, variavelPreco: 'STRIPE_PRICE_ID_MENSAL' },
+  ANUAL: { periodicidade: 'ANUAL', valor: 400.00, frequencia: 12, variavelPreco: 'STRIPE_PRICE_ID_ANUAL' },
 };
 
 let clienteStripe;

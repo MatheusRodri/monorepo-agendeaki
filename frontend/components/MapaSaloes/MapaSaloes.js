@@ -140,5 +140,5 @@ export default function MapaSaloes({ aoSelecionarSalao, centralizarNoCliente = f
   }, [salaoSelecionado]);
 
   if (erro) return <p className="estado-lista">{erro}</p>;
-  return <div aria-label="Mapa de salões próximos" className="mapa-saloes maplibregl-map" ref={elementoMapa} role="application" />;
+  return <div aria-describedby="descricao-mapa-saloes" aria-labelledby="titulo-mapa-saloes" className="mapa-saloes maplibregl-map" ref={elementoMapa} role="region" />;
 }

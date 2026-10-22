@@ -3,6 +3,7 @@ import RegistrarPwa from '../components/RegistrarPwa/RegistrarPwa';
 import AlternadorTema from '../components/AlternadorTema/AlternadorTema';
 import TelaManutencao from '../components/TelaManutencao/TelaManutencao';
 import ToastProvider from '../components/ToastProvider/ToastProvider';
+import AcessibilidadeGlobal from '../components/AcessibilidadeGlobal/AcessibilidadeGlobal';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +24,7 @@ export default function LayoutPrincipal({ children }) {
     <html lang="pt-BR">
       <body>
         <ToastProvider />
+        <AcessibilidadeGlobal />
         <AlternadorTema />
         {emManutencao ? <TelaManutencao /> : <><RegistrarPwa />{children}</>}
       </body>

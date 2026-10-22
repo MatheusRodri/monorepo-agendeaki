@@ -575,7 +575,7 @@ function MapaCalor({ dados }) {
   const dias = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const maximo = Math.max(...dados.map((item) => Number(item.quantidade ?? 0)), 1);
   const quantidades = new Map(dados.map((item) => [`${item.diaSemana}-${item.hora}`, item]));
-  return <div className="mapa-calor__rolagem"><div className="mapa-calor" style={{ gridTemplateColumns: '42px repeat(24, minmax(19px, 1fr))' }}><span />{Array.from({ length: 24 }, (_, hora) => <span className="mapa-calor__hora" key={hora}>{hora}</span>)}{dias.map((dia, diaSemana) => <Fragment key={dia}><strong>{dia}</strong>{Array.from({ length: 24 }, (_, hora) => { const item = quantidades.get(`${diaSemana}-${hora}`); const quantidade = Number(item?.quantidade ?? 0); const cancelados = Number(item?.cancelados ?? 0); return <span aria-label={`${dia}, ${hora}h: ${quantidade} agendamentos, ${cancelados} cancelados`} className="mapa-calor__celula" key={hora} style={{ backgroundColor: quantidade ? `rgba(116, 68, 95, ${0.12 + (quantidade / maximo) * 0.78})` : undefined }} title={`${dia}, ${hora}:00 — ${quantidade} agendamentos, ${cancelados} cancelados`} />; })}</Fragment>)}</div></div>;
+  return <div className="mapa-calor__rolagem"><div aria-hidden="true" className="mapa-calor" style={{ gridTemplateColumns: '42px repeat(24, minmax(19px, 1fr))' }}><span />{Array.from({ length: 24 }, (_, hora) => <span className="mapa-calor__hora" key={hora}>{hora}</span>)}{dias.map((dia, diaSemana) => <Fragment key={dia}><strong>{dia}</strong>{Array.from({ length: 24 }, (_, hora) => { const item = quantidades.get(`${diaSemana}-${hora}`); const quantidade = Number(item?.quantidade ?? 0); return <span className="mapa-calor__celula" key={hora} style={{ backgroundColor: quantidade ? `rgba(116, 68, 95, ${0.12 + (quantidade / maximo) * 0.78})` : undefined }} />; })}</Fragment>)}</div><table className="visualmente-oculto"><caption>Agendamentos e cancelamentos por dia da semana e hora</caption><thead><tr><th scope="col">Dia</th>{Array.from({ length: 24 }, (_, hora) => <th scope="col" key={hora}>{hora}h</th>)}</tr></thead><tbody>{dias.map((dia, diaSemana) => <tr key={dia}><th scope="row">{dia}</th>{Array.from({ length: 24 }, (_, hora) => { const item = quantidades.get(`${diaSemana}-${hora}`); return <td key={hora}>{Number(item?.quantidade ?? 0)} agendamentos; {Number(item?.cancelados ?? 0)} cancelamentos</td>; })}</tr>)}</tbody></table></div>;
 }
 
 function TabelaProfissionais({ profissionais, dinheiro }) {
@@ -588,7 +588,7 @@ function GraficoLinha({ dados, campo, cor, vazio }) {
   const valores = dados.map((item) => Number(item[campo] ?? 0));
   const maximo = Math.max(...valores, 1);
   const pontos = valores.map((valor, indice) => `${dados.length === 1 ? 50 : 8 + (indice * 84) / (dados.length - 1)},${92 - (valor / maximo) * 78}`).join(' ');
-  return <div className="grafico-linha"><svg aria-label="Gráfico de evolução" role="img" viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="5" x2="95" y1="92" y2="92" /><line x1="5" x2="95" y1="53" y2="53" /><line x1="5" x2="95" y1="14" y2="14" /><polyline points={pontos} style={{ stroke: cor }} />{valores.map((valor, indice) => { const x = dados.length === 1 ? 50 : 8 + (indice * 84) / (dados.length - 1); const y = 92 - (valor / maximo) * 78; return <circle key={`${dados[indice].data}-${indice}`} cx={x} cy={y} r="1.3" style={{ fill: cor }} />; })}</svg><div className="grafico-linha__legenda"><span>{dados[0].data}</span><span>{dados[dados.length - 1].data}</span></div></div>;
+  return <div className="grafico-linha"><svg aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="5" x2="95" y1="92" y2="92" /><line x1="5" x2="95" y1="53" y2="53" /><line x1="5" x2="95" y1="14" y2="14" /><polyline points={pontos} style={{ stroke: cor }} />{valores.map((valor, indice) => { const x = dados.length === 1 ? 50 : 8 + (indice * 84) / (dados.length - 1); const y = 92 - (valor / maximo) * 78; return <circle key={`${dados[indice].data}-${indice}`} cx={x} cy={y} r="1.3" style={{ fill: cor }} />; })}</svg><div className="grafico-linha__legenda"><span>{dados[0].data}</span><span>{dados[dados.length - 1].data}</span></div><table className="visualmente-oculto"><caption>{campo}: valores por período</caption><thead><tr><th scope="col">Período</th><th scope="col">{campo}</th></tr></thead><tbody>{dados.map((item) => <tr key={item.data}><th scope="row">{item.data}</th><td>{item[campo]}</td></tr>)}</tbody></table></div>;
 }
 
 function GraficoBarras({ dados, campo, valor, formatar, vazio }) {
@@ -618,7 +618,7 @@ function Assinatura({ aoAtivarPremium, dados, requisitar }) {
     { nome: 'Exportação de dados e relatórios', descricao: 'Exporte seus dados e relatórios.' },
     { nome: 'Unidades ilimitadas', descricao: 'Cadastre e gerencie quantas unidades sua empresa precisar.' },
   ];
-  const opcoesPremium = premium.opcoes?.length ? premium.opcoes : [{ periodicidade: 'MENSAL', valor: 29.90 }, { periodicidade: 'ANUAL', valor: 299.00 }];
+  const opcoesPremium = premium.opcoes?.length ? premium.opcoes : [{ periodicidade: 'MENSAL', valor: 50.00 }, { periodicidade: 'ANUAL', valor: 400.00 }];
   const premiumAtivo = assinatura?.temAcessoPremium;
   const modoTeste = Boolean(dados.modoTeste);
 

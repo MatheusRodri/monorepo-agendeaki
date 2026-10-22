@@ -99,6 +99,42 @@ Antes de executar os comandos de migração, conclua a configuração do ambient
 
 A remoção final apaga os documentos em texto simples da tabela. Revise também a retenção dos backups antigos. Mantenha as chaves em um gerenciador de segredos; substituir uma delas exige planejar a migração dos dados cifrados ou dos índices HMAC.
 
+#### Ativar o painel administrativo global
+
+Em uma base existente, aplique a migração antes de publicar a versão que inclui `/admin`:
+
+```bash
+mysql -u agendeaki_user -p tcc_salao < database/migracoes/2026-10-22-painel-administrativo.sql
+```
+
+Em uma base nova, `database/script.sql` já cria o perfil e as tabelas de histórico.
+
+Para gerar inserts de demonstração para quatro filiais do salão Hair Plus, configure no `backend/.env` as mesmas chaves de proteção documental do banco de teste e `HERE_API_KEY`. Execute:
+
+```bash
+cd backend
+npm run gerar:seed-filiais-demo
+```
+
+O comando gera `database/seeds/filiais-hair-plus-demo.sql` na raiz do projeto; ele não conecta nem grava no MySQL. Revise e aplique manualmente somente no banco de teste que usa as mesmas chaves. O seed inclui endereços reais de referência, mas usa contatos, CNPJs, serviços e profissionais fictícios. Nunca use esses dados em produção.
+
+O painel não tem cadastro público e não exige uma conta administrativa no Supabase nem uma linha de administrador em `tb_usuario`. Configure `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` e `ADMIN_SESSION_SECRET` no `backend/.env`; use uma senha exclusiva e gere um segredo aleatório com pelo menos 32 bytes:
+
+```bash
+openssl rand -base64 48
+```
+
+Copie o resultado para `ADMIN_SESSION_SECRET` e reinicie o backend. A sessão administrativa expira após oito horas; entre diretamente em `/admin`. Mantenha essas variáveis apenas no backend e não versione o arquivo `.env`.
+
+Para importar as faturas de assinatura já disponíveis no Stripe, configure `STRIPE_SECRET_KEY` no backend e execute o comando abaixo uma vez após aplicar a migração. Ele pode ser repetido sem duplicar faturas:
+
+```bash
+cd backend
+npm run importar:faturas-stripe
+```
+
+Mudanças de status, periodicidade e valor das assinaturas serão guardadas a partir da instalação do gatilho incluído na migração; o histórico anterior dessas mudanças não é reconstruído.
+
 ### 3. Configure as variáveis de ambiente
 
 Crie os arquivos locais a partir dos modelos:
@@ -120,6 +156,9 @@ Preencha os valores reais. O backend usa:
 | `FRONTEND_URL` | URL do frontend; padrão `http://localhost:3000` |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | URL e chave pública do projeto Supabase |
 | `SUPABASE_SECRET_KEY` | Chave secreta usada somente pelo backend |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Credenciais privadas para o acesso ao painel em `/admin` |
+| `ADMIN_NAME` | Nome exibido no cabeçalho do painel |
+| `ADMIN_SESSION_SECRET` | Segredo aleatório com pelo menos 32 bytes para assinar sessões administrativas de oito horas |
 | `HERE_API_KEY` | Chave de servidor da HERE para geocodificação |
 | `ASSINATURA_MODO_TESTE` | `true` ativa Premium localmente; `false` usa checkout Stripe |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Credenciais Stripe para checkout e webhooks |
@@ -134,7 +173,7 @@ No `frontend/.env.local`, configure:
 | `NEXT_PUBLIC_HERE_API_KEY` | Chave HERE usada pelo mapa no navegador |
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Valores públicos do Supabase presentes no modelo; o fluxo atual de autenticação usa a API backend |
 
-Restrinja `NEXT_PUBLIC_HERE_API_KEY` ao domínio do frontend no painel da HERE. Nunca exponha `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` ou `VAPID_PRIVATE_KEY` no frontend nem versione arquivos `.env` reais.
+Restrinja `NEXT_PUBLIC_HERE_API_KEY` ao domínio do frontend no painel da HERE. Nunca exponha `SUPABASE_SECRET_KEY`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` ou `VAPID_PRIVATE_KEY` no frontend nem versione arquivos `.env` reais.
 
 ### 4. Instale as dependências
 
@@ -167,7 +206,7 @@ Abra [http://localhost:3000](http://localhost:3000).
 
 ### 6. Teste pagamentos com Stripe (opcional)
 
-Crie os preços recorrentes em BRL no Stripe, preencha os IDs no `backend/.env` e mantenha `ASSINATURA_MODO_TESTE=false`. Instale o Stripe CLI e autentique a máquina uma vez com `stripe login`. Com o backend rodando na porta `3001`, abra outro terminal e encaminhe os eventos para a API local:
+Crie no Stripe os preços recorrentes em BRL de **R$ 50,00 por mês** e **R$ 400,00 por ano**, atualize `STRIPE_PRICE_ID_MENSAL` e `STRIPE_PRICE_ID_ANUAL` no `backend/.env` com os novos IDs, e mantenha `ASSINATURA_MODO_TESTE=false`. Os preços Stripe existentes não são alterados automaticamente; assinaturas já contratadas continuam seguindo o preço registrado no Stripe até uma migração explícita. Instale o Stripe CLI e autentique a máquina uma vez com `stripe login`. Com o backend rodando na porta `3001`, abra outro terminal e encaminhe os eventos para a API local:
 
 ```bash
 stripe listen --events checkout.session.completed,checkout.session.expired,customer.subscription.created,customer.subscription.updated,customer.subscription.paused,customer.subscription.resumed,customer.subscription.deleted,invoice.paid,invoice.payment_failed --forward-to localhost:3001/api/webhooks/stripe
