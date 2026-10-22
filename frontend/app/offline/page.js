@@ -12,7 +12,6 @@ export default function PaginaOffline() {
         fontFamily: "'DM Sans', Arial, sans-serif",
         justifyContent: 'center',
         minHeight: '100vh',
-        overflow: 'hidden',
         padding: '32px 20px',
         position: 'relative',
       }}
@@ -45,19 +44,20 @@ export default function PaginaOffline() {
       >
         <div
           aria-label="AgendeAki"
+          role="img"
           style={{ alignItems: 'center', display: 'flex', gap: 12, justifyContent: 'center', margin: '0 auto 30px' }}
         >
           <span
             aria-hidden="true"
             style={{
               alignItems: 'center',
-              background: '#df7168',
+              background: '#b34549',
               borderRadius: '50% 50% 50% 12%',
               boxShadow: '0 8px 18px rgba(198, 86, 89, .2)',
               color: '#fff',
               display: 'inline-flex',
               fontFamily: 'Georgia, serif',
-              fontSize: 27,
+              fontSize: '1.6875rem',
               fontStyle: 'italic',
               fontWeight: 700,
               height: 48,
@@ -69,8 +69,8 @@ export default function PaginaOffline() {
           >
             a
           </span>
-          <span style={{ color: '#3f1d3b', fontSize: 27, fontWeight: 700, letterSpacing: '-.07em' }}>
-            agende<span style={{ color: '#df7168' }}>aki</span>
+          <span style={{ color: '#3f1d3b', fontSize: '1.6875rem', fontWeight: 700, letterSpacing: '-.07em' }}>
+            agende<span style={{ color: '#b34549' }}>aki</span>
           </span>
         </div>
 
@@ -80,9 +80,9 @@ export default function PaginaOffline() {
             background: '#fff5ef',
             border: '1px solid rgba(223, 113, 104, .18)',
             borderRadius: 999,
-            color: '#a84e50',
+            color: '#813238',
             display: 'inline-flex',
-            fontSize: 12,
+            fontSize: '.75rem',
             fontWeight: 700,
             gap: 8,
             letterSpacing: '.1em',
@@ -100,7 +100,7 @@ export default function PaginaOffline() {
           style={{
             color: '#3f1d3b',
             fontFamily: "'Playfair Display', Georgia, serif",
-            fontSize: 'clamp(34px, 8vw, 46px)',
+            fontSize: 'clamp(2.125rem, 8vw, 2.875rem)',
             letterSpacing: '-.04em',
             lineHeight: 1.13,
             margin: '22px 0 14px',
@@ -108,7 +108,7 @@ export default function PaginaOffline() {
         >
           Parece que você está offline.
         </h1>
-        <p style={{ color: '#6b5969', fontSize: 16, lineHeight: 1.75, margin: '0 auto', maxWidth: 390 }}>
+        <p style={{ color: '#6b5969', fontSize: '1rem', lineHeight: 1.75, margin: '0 auto', maxWidth: 390 }}>
           Confira sua conexão com a internet. Quando ela voltar, você poderá encontrar salões e cuidar dos seus agendamentos por aqui.
         </p>
 
@@ -121,7 +121,7 @@ export default function PaginaOffline() {
             boxShadow: '0 12px 24px rgba(63, 29, 59, .2)',
             color: '#fff',
             display: 'inline-flex',
-            fontSize: 15,
+            fontSize: '.9375rem',
             fontWeight: 700,
             gap: 10,
             justifyContent: 'center',
@@ -133,12 +133,12 @@ export default function PaginaOffline() {
           }}
         >
           Tentar novamente
-          <span aria-hidden="true" style={{ fontSize: 20, lineHeight: 1 }}>→</span>
+          <span aria-hidden="true" style={{ fontSize: '1.25rem', lineHeight: 1 }}>→</span>
         </Link>
 
         <BotaoResetarPwa />
 
-        <p style={{ color: '#9b8998', fontSize: 12, lineHeight: 1.5, margin: '24px 0 0' }}>
+        <p style={{ color: '#6b5969', fontSize: '.75rem', lineHeight: 1.5, margin: '24px 0 0' }}>
           Seus dados continuam seguros. Esta página estará aqui enquanto a conexão não volta.
         </p>
       </section>

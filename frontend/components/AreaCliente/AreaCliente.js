@@ -223,9 +223,9 @@ export default function AreaCliente() {
             <label className="filtro-ordenacao"><span>Ordenar por</span><select onChange={(evento) => definirOrdenacao(evento.target.value)} value={ordenacao}><option value="DISTANCIA_ASC">Menor distância</option><option value="DISTANCIA_DESC">Maior distância</option><option value="AVALIACOES_DESC">Mais avaliações</option><option value="AVALIACOES_ASC">Menos avaliações</option></select></label>
           </div>
           <div className="lista-saloes">
-            {carregando && <p className="estado-lista">Buscando salões...</p>}
-            {mensagem && <p className="estado-lista">{mensagem}</p>}
-            {!carregando && !mensagem && !falhaBusca && !saloesFiltrados.length && <p className="estado-lista">Nenhum salão desse tipo foi encontrado neste raio.</p>}
+            {carregando && <p aria-live="polite" className="estado-lista" role="status">Buscando salões...</p>}
+            {mensagem && <p aria-live="polite" className="estado-lista" role={falhaBusca ? 'alert' : 'status'}>{mensagem}</p>}
+            {!carregando && !mensagem && !falhaBusca && !saloesFiltrados.length && <p className="estado-lista" role="status">Nenhum salão desse tipo foi encontrado neste raio.</p>}
             {saloesFiltrados.map((salao) => (
               <Link className={`cartao-salao${salao.proAtivo ? ' cartao-salao--pro' : ''}`} href={obterLinkSalao(salao)} key={salao.idUnidade}>
                 <span className="cartao-salao__icone">✦</span><span><strong>{salao.nomeUnidade} {Boolean(salao.proAtivo) && <b className="selo-pro">Premium</b>}</strong><small>{salao.nomeSalao} · {Number(salao.distanciaKm).toFixed(1)} km</small><small>{salao.quantidadeAvaliacoes ? `★ ${Number(salao.mediaAvaliacao).toFixed(1)} · ${salao.quantidadeAvaliacoes} avaliações` : 'Sem avaliações'}</small><em>{salao.categoria.toLowerCase()}</em></span>
@@ -234,6 +234,8 @@ export default function AreaCliente() {
           </div>
         </aside>
         <section className="mapa-area">
+          <h2 className="visualmente-oculto" id="titulo-mapa-saloes">Mapa e resultados próximos</h2>
+          <p className="visualmente-oculto" id="descricao-mapa-saloes">O mapa é uma representação visual. Os salões com endereço e link para agendamento estão disponíveis na lista de resultados.</p>
           <button className="botao-centralizar" disabled={carregando} onClick={() => localizarCliente(true)} type="button">⌖ Centralizar na minha localização</button>
           <MapaSaloes aoSelecionarSalao={definirSalaoSelecionado} centralizarNoCliente={centralizarNoCliente} coordenadas={coordenadasMapa} obterLinkSalao={obterLinkSalao} salaoSelecionado={salaoSelecionado} saloes={saloesFiltrados} />
         </section>

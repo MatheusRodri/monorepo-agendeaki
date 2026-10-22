@@ -2,6 +2,7 @@
 @import 'maplibre-gl/dist/maplibre-gl.css';
 @import 'react-toastify/dist/ReactToastify.css';
 @import './styles/base.css';
+@import './styles/acessibilidade.css';
 @import './styles/inicial-apresentacao.css';
 @import './styles/inicial-recursos.css';
 @import './styles/inicial-responsivo.css';
@@ -22,5 +23,6 @@
 @import './styles/gestao-agendamentos.css';
 @import './styles/gestao-responsivo.css';
 @import './styles/avaliacoes.css';
+@import './styles/admin.css';
 @import './styles/pwa.css';
 @import '../components/TelaManutencao/tela-manutencao.css';
