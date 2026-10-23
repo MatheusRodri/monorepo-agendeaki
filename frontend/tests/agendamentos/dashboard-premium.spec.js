@@ -216,6 +216,28 @@ test('erro permite repetir e respostas antigas não sobrescrevem o novo recorte'
   await expect(page.getByRole('navigation', { name: 'Paginação do analítico' })).toContainText('de 20 registros');
 });
 
+test('dashboard ocupa a largura do celular sem afastar o conteúdo para a esquerda', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await preparar(page);
+  await expect(page.locator('.dashboard-premium__indicadores > button')).toHaveCount(12);
+  for (const aba of ['Geral', 'Detalhado', 'Analítico']) {
+    await page.getByRole('tab', { name: aba, exact: true }).click();
+    if (aba === 'Analítico') await expect(page.getByRole('columnheader', { name: 'Ordenar por Realizado em' })).toBeVisible();
+    const medidas = await page.evaluate(() => ({
+      larguraTela: innerWidth,
+      larguraDocumento: document.documentElement.scrollWidth,
+      larguraConteudo: document.querySelector('.conteudo-salao').getBoundingClientRect().width,
+      cartoes: [...document.querySelectorAll('.dashboard-premium__indicadores .indicador')].map((item) => {
+        const retangulo = item.getBoundingClientRect();
+        return { esquerda: retangulo.left, direita: retangulo.right };
+      }),
+    }));
+    expect(medidas.larguraDocumento, aba).toBeLessThanOrEqual(medidas.larguraTela);
+    expect(medidas.larguraConteudo, aba).toBeGreaterThan(300);
+    if (aba === 'Geral') expect(medidas.cartoes.every((item) => item.esquerda >= 0 && item.direita <= medidas.larguraTela)).toBe(true);
+  }
+});
+
 for (const tema of ['claro', 'escuro']) test(`navegação acessível e tabela no celular em tema ${tema}`, async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await preparar(page, { tema });
