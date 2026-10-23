@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import CampoSenha from '../CampoSenha/CampoSenha';
 import FormularioFilial from '../FormularioFilial/FormularioFilial';
 import FormularioProfissional from '../FormularioProfissional/FormularioProfissional';
+import FormularioServico from '../FormularioServico/FormularioServico';
 import DashboardPremium from '../DashboardPremium/DashboardPremium';
 import DisponibilidadeSalao from '../DisponibilidadeSalao/DisponibilidadeSalao';
 import AgendaSalao from '../AgendaSalao/AgendaSalao';
@@ -589,7 +590,23 @@ function Filiais({ dados, enderecoCep, enviarFormulario, excluirItem, buscarCep,
   </>;
 }
 
-function Servicos({ dados, enviarFormulario, excluirItem, servicoEdicao, definirServicoEdicao }) { const editando = Boolean(servicoEdicao); return <><p className="sobretitulo">Seu catálogo</p><h1>{editando ? 'Atualize o serviço.' : 'Serviços que encantam.'}</h1><form className="formulario-salao grade-formulario" key={servicoEdicao?.idServico ?? 'novo'} onSubmit={(evento) => enviarFormulario(evento, editando ? `/servicos/${servicoEdicao.idServico}` : '/servicos', editando ? 'PATCH' : 'POST')}><SelectFilial filiais={dados.filiais} valor={servicoEdicao?.idUnidade} /><Campo nome="nome" rotulo="Nome do serviço" valor={servicoEdicao?.nome} /><Campo nome="valor" rotulo="Valor" tipo="number" passo="0.01" valor={servicoEdicao?.valor} /><SelectDuracao valor={servicoEdicao?.duracaoMinutos} /><Campo nome="descricao" rotulo="Descrição" valor={servicoEdicao?.descricao} obrigatorio={false} /><div className="acoes-formulario"><button className="botao-enviar">{editando ? 'Salvar serviço' : 'Adicionar serviço'} <span>→</span></button>{editando && <button className="botao-secundario" onClick={() => definirServicoEdicao(null)} type="button">Cancelar edição</button>}</div></form><CabecalhoLista titulo="Serviços cadastrados" descricao="Seu catálogo organizado por filial." /><div className="grade-gestao">{dados.servicos?.map((servico) => <article className="cartao-gestao" key={servico.idServico}><div><strong>{servico.nome}</strong><span>{servico.filial} · {servico.duracaoMinutos} min · R$ {Number(servico.valor).toFixed(2).replace('.', ',')}</span>{servico.descricao && <small>{servico.descricao}</small>}</div><AcoesGestao aoEditar={() => definirServicoEdicao(servico)} aoExcluir={() => excluirItem(`/servicos/${servico.idServico}`, `o serviço “${servico.nome}”`)} /></article>)}</div>{!dados.servicos?.length && <p className="estado-lista">Nenhum serviço cadastrado.</p>}</>; }
+function Servicos({ dados, enviarFormulario, excluirItem, servicoEdicao, definirServicoEdicao }) {
+  const editando = Boolean(servicoEdicao);
+  return <>
+    <p className="sobretitulo">Seu catálogo</p>
+    <h1>{editando ? 'Atualize o serviço.' : 'Serviços que encantam.'}</h1>
+    <FormularioServico
+      aoCancelar={() => definirServicoEdicao(null)}
+      enviarFormulario={enviarFormulario}
+      filiais={dados.filiais}
+      key={servicoEdicao?.idServico ?? 'novo'}
+      servico={servicoEdicao}
+    />
+    <CabecalhoLista titulo="Serviços cadastrados" descricao="Seu catálogo organizado por filial." />
+    <div className="grade-gestao">{dados.servicos?.map((servico) => <article className="cartao-gestao" key={servico.idServico}><div><strong>{servico.nome}</strong><span>{servico.filial} · {servico.duracaoMinutos} min · R$ {Number(servico.valor).toFixed(2).replace('.', ',')}</span>{servico.descricao && <small>{servico.descricao}</small>}</div><AcoesGestao aoEditar={() => definirServicoEdicao(servico)} aoExcluir={() => excluirItem(`/servicos/${servico.idServico}`, `o serviço “${servico.nome}”`)} /></article>)}</div>
+    {!dados.servicos?.length && <p className="estado-lista">Nenhum serviço cadastrado.</p>}
+  </>;
+}
 
 function Funcionarios({ dados, enviarFormulario, excluirItem, funcionarioEdicao, definirFuncionarioEdicao }) {
   return <>
@@ -639,8 +656,6 @@ function Indicador({ titulo, valor, variante = '' }) { return <article className
 function CabecalhoLista({ titulo, descricao }) { return <div className="cabecalho-lista"><h2>{titulo}</h2><p>{descricao}</p></div>; }
 function AcoesGestao({ aoEditar, aoExcluir }) { return <div className="acoes-gestao"><button onClick={aoEditar} type="button">Alterar</button><button className="botao-perigo" onClick={aoExcluir} type="button">Excluir</button></div>; }
 function Campo({ aoMudar, nome, rotulo, tipo = 'text', valor, passo, obrigatorio = true }) { return <label className="campo-formulario"><span>{rotulo}</span><input defaultValue={aoMudar ? undefined : valor ?? ''} name={nome} onChange={aoMudar} required={obrigatorio} step={passo} type={tipo} value={aoMudar ? valor ?? '' : undefined} /></label>; }
-function SelectFilial({ filiais, valor }) { return <label className="campo-formulario"><span>Filial</span><select defaultValue={valor ?? ''} name="idUnidade" required><option value="">Selecione</option>{filiais?.map((filial) => <option key={filial.idUnidade} value={filial.idUnidade}>{filial.nome}</option>)}</select></label>; }
-function SelectDuracao({ valor }) { return <label className="campo-formulario"><span>Duração</span><select defaultValue={valor ?? ''} name="duracaoMinutos" required><option disabled value="">Selecione</option>{[30, 45, 60, 90, 120].map((duracao) => <option key={duracao} value={duracao}>{duracao} minutos</option>)}</select></label>; }
 function SelectCampo({ aoMudar, chave, opcoes, rotulo, valor }) { return <label className="campo-formulario"><span>{rotulo}</span><select onChange={aoMudar} value={valor}><option value="">Todos</option>{opcoes?.map((opcao) => <option key={opcao[chave]} value={opcao[chave]}>{opcao.nome}</option>)}</select></label>; }
 function ListaSimples({ itens = [], campo, vazio }) { return <div className="lista-simples">{itens.length ? itens.map((item, indice) => <article key={item.idAgendamento ?? item.idClienteSalao ?? item.idUsuario ?? indice}><strong>{item[campo]}</strong><span>{item.servico ?? item.email ?? item.telefone ?? item.quantidade ?? ''}</span></article>) : <p className="estado-lista">{vazio}</p>}</div>; }
 function formatarDataAssinatura(valor) { return valor ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(new Date(valor)) : 'Data não informada'; }
