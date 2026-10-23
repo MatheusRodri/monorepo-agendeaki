@@ -10,7 +10,7 @@
 
 @media (max-width: 520px) {
   .filtros-dashboard {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .cartao-gestao {
