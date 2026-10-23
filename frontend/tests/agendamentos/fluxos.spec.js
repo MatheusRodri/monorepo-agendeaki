@@ -30,7 +30,7 @@ async function preparar(page, { autenticado = true, aoLote, indisponivel = () =>
     }
     if (caminho === '/api/clientes/agendamentos/lote') return aoLote ? aoLote(route, responder) : responder({ agendamentos: [] }, 201);
     if (caminho.endsWith('/confirmar-atendimento')) return aoConcluir ? aoConcluir(route, responder) : responder({ mensagem: 'Atendimento confirmado.' });
-    if (caminho === '/api/salao/agendamentos') return responder({ agendamentos: [agendamento] });
+    if (caminho === '/api/salao/agendamentos') return responder({ agendamentos: [agendamento], pagina: 1, porPagina: 10, total: 1, totalPaginas: 1 });
     if (caminho === '/api/salao/filiais') return responder({ filiais: [{ idUnidade: 1, nome: 'Centro' }] });
     if (caminho === '/api/salao/servicos') return responder({ servicos });
     if (caminho === '/api/salao/funcionarios') return responder({ funcionarios: profissionais.map((p) => ({ ...p, idUnidade: 1, idsServicos: [1,2] })) });
@@ -156,7 +156,7 @@ test('conclui atendimento com extra de outro profissional e preço ajustado', as
   await extra.getByRole('combobox',{name:'Serviço',exact:true}).selectOption('2');
   await extra.getByRole('combobox',{name:'Profissional que realizou'}).selectOption('2');
   await extra.getByLabel('Valor cobrado (R$)').fill('35.50');
-  await expect(page.getByRole('dialog')).toContainText('Total do atendimento: R$ 85,50');
+  await expect(page.getByRole('dialog').locator('.conclusao-total')).toContainText('R$ 85,50');
   await semViolacoes(page);
   await page.getByRole('button',{name:'Confirmar como realizado'}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
