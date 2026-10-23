@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/agendamentos.test.js && node tests/agendamentos.integration.test.js",
+    "test": "node tests/agendamentos.test.js && node tests/agenda-salao.test.js && node tests/listagem-agendamentos-cliente.test.js && node tests/funcionarios.test.js && node tests/conclusao-atendimento.test.js && node tests/dashboard-indicadores.test.js && node tests/dashboard-analitico.test.js && node tests/dashboard-excel.test.js && node tests/agendamentos.integration.test.js",
     "dev": "node --watch src/servidor.js",
     "start": "node src/servidor.js",
     "migrar:documentos": "node scripts/migrar-documentos.js",
@@ -15,6 +15,7 @@
     "@supabase/supabase-js": "^2.57.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "mysql2": "^3.14.3",
     "sequelize": "^6.37.7",

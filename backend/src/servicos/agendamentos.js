@@ -94,14 +94,14 @@ export async function salvarServicosAdicionais({ idAgendamento, idUnidade, servi
   }
 }
 
-export async function incluirServicosAdicionais(agendamentos) {
+export async function incluirServicosAdicionais(agendamentos, { transaction } = {}) {
   if (!agendamentos.length) return agendamentos;
   const adicionais = await bancoDeDados.query(`SELECT fk_agendamento AS idAgendamento,
     fk_servico AS idServico, fk_funcionario AS idFuncionario, nm_servico AS servico,
     nm_funcionario AS profissional, vl_referencia AS valorReferencia, vl_cobrado AS valorCobrado,
     nu_duracao_minutos AS duracaoMinutos FROM tb_agendamento_servico_adicional
     WHERE fk_agendamento IN (:ids) ORDER BY id_servico_adicional`, {
-    replacements: { ids: agendamentos.map(({ idAgendamento }) => idAgendamento) }, type: QueryTypes.SELECT,
+    replacements: { ids: agendamentos.map(({ idAgendamento }) => idAgendamento) }, type: QueryTypes.SELECT, transaction,
   });
   return agendamentos.map((agendamento) => {
     const servicosAdicionais = adicionais.filter((item) => Number(item.idAgendamento) === Number(agendamento.idAgendamento));

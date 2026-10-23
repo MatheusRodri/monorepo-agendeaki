@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import mysql from 'mysql2/promise';
+import ExcelJS from 'exceljs';
 
 // Só executa com uma conexão de testes explícita. Cria e remove um banco exclusivo.
 const habilitado = Boolean(process.env.TEST_MYSQL_SOCKET || process.env.TEST_MYSQL_HOST);
@@ -187,9 +188,20 @@ integrar('conclusão com extras de outro profissional, valor ajustado e proteç�
   assert.equal(Number(painel.dados.profissionais.find((p)=>p.profissional==='Bia').receitaRealizada),35.5);
   assert.equal(Number(painel.dados.profissionais.find((p)=>p.profissional==='Bia').minutosAtendimentoRealizado),0);
   assert.equal(Number(painel.dados.analiseAgendamentos[0].valor),85.5);
+  assert.equal(Number(painel.dados.resumo.quantidadeServicosExtras), 1);
+  assert.equal(Number(painel.dados.resumo.quantidadeServicosRealizados), 2);
+  assert.equal(Number(painel.dados.resumo.receitaServicosExtras), 35.5);
+  assert.equal(Number(painel.dados.analiseAgendamentos[0].quantidadeServicosExtras), 1);
   const filtrado = await api('/salao/indicadores/premium?idServico=2&idFuncionario=2');
   assert.equal(filtrado.status,200,JSON.stringify(filtrado));assert.equal(Number(filtrado.dados.resumo.receitaRealizada),35.5);
   assert.equal(Number(filtrado.dados.resumo.atendimentosRealizados),1);
+  assert.equal(Number(filtrado.dados.resumo.quantidadeServicosExtras), 1);
+  assert.equal(Number(filtrado.dados.resumo.quantidadeServicosRealizados), 1);
+  assert.equal(Number(filtrado.dados.resumo.receitaServicosExtras), 35.5);
+  const original = await api('/salao/indicadores/premium?idServico=1&idFuncionario=1');
+  assert.equal(Number(original.dados.resumo.quantidadeServicosExtras), 0);
+  assert.equal(Number(original.dados.resumo.quantidadeServicosRealizados), 1);
+  assert.equal(Number(original.dados.resumo.receitaServicosExtras), 0);
 });
 integrar('vários extras no mesmo profissional não multiplicam atendimentos ou ocupação', async () => {
   const [reserva] = await criar([item()]);
@@ -202,6 +214,22 @@ integrar('vários extras no mesmo profissional não multiplicam atendimentos ou 
   const ana = painel.dados.profissionais.find((p)=>p.profissional==='Ana');
   assert.equal(Number(ana.atendimentosRealizados),1); assert.equal(Number(ana.minutosAtendimentoRealizado),30);
   assert.equal(Number(ana.receitaRealizada),60); assert.equal(Number(painel.dados.resumo.atendimentosRealizados),1);
+  assert.equal(Number(painel.dados.resumo.quantidadeServicosExtras), 2);
+  assert.equal(Number(painel.dados.resumo.quantidadeServicosRealizados), 3);
+  assert.equal(Number(painel.dados.resumo.receitaServicosExtras), 10);
+  const extras = await api('/salao/indicadores/premium/analitico?recorte=extras');
+  assert.equal(extras.dados.total, 1); assert.equal(extras.dados.totalServicosExtras, 2);
+  assert.equal(Number(extras.dados.agendamentos[0].valor), 10);
+  const servicos = await api('/salao/indicadores/premium/analitico?recorte=realizados&visualizarPor=servico');
+  assert.equal(servicos.status, 200, JSON.stringify(servicos.dados));
+  assert.equal(servicos.dados.total, 3); assert.equal(servicos.dados.totalAtendimentos, 1);
+  assert.equal(servicos.dados.totalServicosExtras, 2);
+  assert.deepEqual(servicos.dados.agendamentos.map((linha) => Number(linha.valor)), [50, 10, 0]);
+  assert.equal(new Set(servicos.dados.agendamentos.map((linha) => linha.idLinha)).size, 3);
+  const porServico = await api('/salao/indicadores/premium/analitico?visualizarPor=servico&recorte=extras&idServico=2&idFuncionario=1&ordenarPor=valor&direcao=asc');
+  assert.equal(porServico.dados.total, 2); assert.equal(porServico.dados.totalAtendimentos, 1);
+  assert.ok(porServico.dados.agendamentos.every((linha) => linha.tipoItem === 'EXTRA'));
+  assert.deepEqual(porServico.dados.agendamentos.map((linha) => Number(linha.valor)), [0, 10]);
 });
 integrar('extras inválidos, serviço de outra filial e salão sem acesso não concluem o atendimento', async () => {
   const [reserva] = await criar([item()]);
@@ -214,4 +242,205 @@ integrar('extras inválidos, serviço de outra filial e salão sem acesso não c
   assert.equal((await api(caminho,'PATCH',{},'salao2')).status,404);
   assert.equal((await query('SELECT cd_status FROM tb_agendamento'))[0].cd_status,'AGENDADO');
   assert.equal((await api(caminho,'PATCH')).status,200);
+});
+
+integrar('agenda pagina próximos e histórico no servidor, preservando extras e isolamento do salão', async () => {
+  const { normalizarConsultaAgenda } = await import('../src/servicos/agendaSalao.js');
+  const dia = normalizarConsultaAgenda({ periodo: 'amanha' }).inicioPeriodo.slice(0, 10);
+  for (const tipo of ['futuros', 'historico']) {
+    for (let indice = 0; indice < 13; indice++) await banco.query(`INSERT INTO tb_agendamento
+      (fk_usuario,fk_unidade,fk_funcionario,fk_servico,dt_inicio,dt_fim,cd_status,nm_servico_agendado,vl_servico_agendado,nu_duracao_minutos)
+      VALUES (2,1,1,1,:inicio,:fim,:status,'Corte',50,30)`, { replacements: {
+      inicio: `${tipo === 'futuros' ? dia : '2020-01-01'} 09:00:00`, fim: `${tipo === 'futuros' ? dia : '2020-01-01'} 09:30:00`,
+      status: tipo === 'futuros' ? 'AGENDADO' : 'REALIZADO',
+    } });
+  }
+  const [ultimo] = await query('SELECT id_agendamento AS id FROM tb_agendamento ORDER BY id_agendamento DESC LIMIT 1');
+  await banco.query(`INSERT INTO tb_agendamento_servico_adicional
+    (fk_agendamento,fk_servico,fk_funcionario,nm_servico,nm_funcionario,vl_referencia,vl_cobrado,nu_duracao_minutos)
+    VALUES (:id,2,2,'Escova','Bia',40,12.50,45),(:id,2,2,'Escova','Bia',40,0,45)`, { replacements: { id: ultimo.id } });
+  for (const tipo of ['futuros', 'historico']) {
+    const caminho = `/salao/agendamentos?tipo=${tipo}`;
+    const primeira = await api(caminho);
+    assert.equal(primeira.status, 200, JSON.stringify(primeira.dados));
+    assert.deepEqual([primeira.dados.total, primeira.dados.pagina, primeira.dados.porPagina, primeira.dados.totalPaginas], [13, 1, 10, 2]);
+    assert.equal(primeira.dados.agendamentos.length, 10);
+    const segunda = await api(`${caminho}&pagina=2`);
+    assert.equal(segunda.dados.agendamentos.length, 3);
+    const ids = [...primeira.dados.agendamentos, ...segunda.dados.agendamentos].map((item) => item.idAgendamento);
+    assert.equal(new Set(ids).size, 13);
+    assert.deepEqual(ids, [...ids].sort((a,b) => tipo === 'futuros' ? a-b : b-a));
+    const fora = await api(caminho, 'GET', undefined, 'salao2');
+    assert.equal(fora.dados.total, 0);
+    assert.deepEqual(fora.dados.agendamentos, []);
+  }
+  const historico = await api('/salao/agendamentos?tipo=historico&porPagina=25');
+  assert.equal(historico.dados.agendamentos[0].servicosAdicionais.length, 2);
+  assert.equal(historico.dados.agendamentos[0].valorTotal, 62.5);
+  const amanhaFiltrado = await api('/salao/agendamentos?periodo=amanha');
+  assert.equal(amanhaFiltrado.dados.total, 13);
+  assert.equal((await api('/salao/agendamentos?periodo=hoje')).dados.total, 0);
+  assert.equal((await api('/salao/agendamentos?periodo=7dias')).dados.total, 13);
+  assert.equal((await api('/salao/agendamentos?tipo=historico&periodo=amanha')).dados.total, 0);
+  for (const parametros of ['tipo=outro', 'periodo=ontem', 'pagina=0', 'porPagina=1000']) {
+    assert.equal((await api(`/salao/agendamentos?${parametros}`)).status, 400);
+  }
+  assert.equal((await api('/salao/agendamentos', 'GET', undefined, 'cliente')).status, 403);
+});
+
+integrar('cliente pagina as duas listas, localiza avaliação antiga e não acessa agendamentos alheios', async () => {
+  const futuro = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() + 7 * 86400000));
+  for (const [quantidade, data, status, idUsuario] of [
+    [24, '2020-01-01', 'REALIZADO', 2], [12, futuro, 'AGENDADO', 2], [1, '2020-01-01', 'REALIZADO', 3],
+  ]) for (let indice = 0; indice < quantidade; indice++) await banco.query(`INSERT INTO tb_agendamento
+    (fk_usuario,fk_unidade,fk_funcionario,fk_servico,dt_inicio,dt_fim,cd_status,nm_servico_agendado,vl_servico_agendado,nu_duracao_minutos)
+    VALUES (:idUsuario,1,1,1,:inicio,:fim,:status,'Corte',50,30)`, { replacements: {
+    idUsuario, inicio: `${data} 09:00:00`, fim: `${data} 09:30:00`, status,
+  } });
+  const historicos = await query('SELECT id_agendamento AS id FROM tb_agendamento WHERE fk_usuario=2 AND cd_status=\'REALIZADO\' ORDER BY id_agendamento');
+  const alvo = historicos[2].id;
+  const [alheio] = await query('SELECT id_agendamento AS id FROM tb_agendamento WHERE fk_usuario=3');
+  await banco.query(`INSERT INTO tb_agendamento_servico_adicional
+    (fk_agendamento,fk_servico,fk_funcionario,nm_servico,nm_funcionario,vl_referencia,vl_cobrado,nu_duracao_minutos)
+    VALUES (:id,2,2,'Escova','Bia',40,10,45),(:id,2,2,'Escova','Bia',40,0,45)`, { replacements: { id: alvo } });
+  for (const [tipo, total] of [['historico', 24], ['futuros', 12]]) {
+    const primeira = await api(`/clientes/agendamentos/${tipo}`, 'GET', undefined, 'cliente');
+    assert.equal(primeira.status, 200, JSON.stringify(primeira.dados));
+    assert.deepEqual([primeira.dados.total, primeira.dados.pagina, primeira.dados.porPagina, primeira.dados.totalPaginas], [total, 1, 10, Math.ceil(total/10)]);
+    const ultima = await api(`/clientes/agendamentos/${tipo}?pagina=99`, 'GET', undefined, 'cliente');
+    assert.equal(ultima.dados.pagina, Math.ceil(total/10));
+    assert.equal(ultima.dados.agendamentos.length, total % 10);
+    assert.ok([...primeira.dados.agendamentos, ...ultima.dados.agendamentos].every((item) => item.idAgendamento !== alheio.id));
+  }
+  const localizada = await api(`/clientes/agendamentos/historico?localizar=${alvo}`, 'GET', undefined, 'cliente');
+  assert.equal(localizada.dados.localizado, true);
+  assert.equal(localizada.dados.pagina, 3);
+  const atendimento = localizada.dados.agendamentos.find((item) => item.idAgendamento === alvo);
+  assert.equal(atendimento.podeAvaliar, 1);
+  assert.equal(atendimento.servicosAdicionais.length, 2);
+  assert.equal(atendimento.valorTotal, 60);
+  const privada = await api(`/clientes/agendamentos/historico?localizar=${alheio.id}`, 'GET', undefined, 'cliente');
+  assert.equal(privada.dados.localizado, false);
+  assert.equal(privada.dados.pagina, 1);
+  for (const parametros of ['pagina=0', 'porPagina=100', 'localizar=-1']) {
+    assert.equal((await api(`/clientes/agendamentos/historico?${parametros}`, 'GET', undefined, 'cliente')).status, 400);
+  }
+  assert.equal((await api('/clientes/agendamentos/historico', 'GET', undefined, 'salao')).status, 403);
+});
+
+integrar('analítico separa data agendada da realização e explica os indicadores por recorte', async () => {
+  const [reserva] = await criar([item()]);
+  await banco.query("UPDATE tb_agendamento SET dt_inicio='2026-06-12 09:00:00',dt_fim='2026-06-12 09:30:00',dt_realizacao='2026-07-01 11:00:00',cd_status='REALIZADO' WHERE id_agendamento=:id", { replacements: { id: reserva.idAgendamento } });
+  const periodo = 'dataInicio=2026-07-01&dataFim=2026-07-01';
+  const realizados = await api(`/salao/indicadores/premium/analitico?${periodo}&recorte=realizados`);
+  assert.equal(realizados.status, 200, JSON.stringify(realizados.dados));
+  assert.equal(realizados.dados.total, 1);
+  assert.equal(realizados.dados.agendamentos[0].dataInicio, '2026-06-12T09:00:00-03:00');
+  assert.equal(realizados.dados.agendamentos[0].dataRealizacao, '2026-07-01T11:00:00-03:00');
+  const marcados = await api(`/salao/indicadores/premium/analitico?${periodo}&recorte=agendamentos`);
+  assert.equal(marcados.dados.total, 0);
+  await banco.query("UPDATE tb_agendamento SET cd_status='CANCELADO',dt_realizacao=NULL,dt_cancelamento='2026-07-01 12:00:00' WHERE id_agendamento=:id", { replacements: { id: reserva.idAgendamento } });
+  const cancelados = await api(`/salao/indicadores/premium/analitico?${periodo}&recorte=cancelados`);
+  assert.equal(cancelados.dados.total, 1);
+  assert.equal(cancelados.dados.agendamentos[0].dataRealizacao, null);
+  const operacional = await api(`/salao/indicadores/premium/analitico?${periodo}`);
+  assert.equal(operacional.dados.total, 1);
+});
+
+integrar('comparecimento usa a data agendada, exclui pendentes e cancelados e preserva filtros e comparação', async () => {
+  for (const [unidade, funcionario, servico, data, realizacao, status] of [
+    [1, 1, 1, '2026-06-12', '2026-07-01 11:00:00', 'REALIZADO'],
+    [1, 1, 1, '2026-06-13', null, 'REALIZADO'],
+    [1, 1, 1, '2026-06-14', null, 'NAO_COMPARECEU'],
+    [1, 1, 1, '2026-06-15', null, 'CANCELADO'],
+    [1, 1, 1, '2026-06-16', null, 'AGENDADO'],
+    [1, 1, 1, '2026-05-20', '2026-05-20 11:00:00', 'REALIZADO'],
+    [2, 3, 3, '2026-06-17', null, 'NAO_COMPARECEU'],
+    [3, 4, 4, '2026-06-18', null, 'NAO_COMPARECEU'],
+  ]) await banco.query(`INSERT INTO tb_agendamento
+    (fk_usuario,fk_unidade,fk_funcionario,fk_servico,dt_inicio,dt_fim,dt_realizacao,cd_status,nm_servico_agendado,vl_servico_agendado,nu_duracao_minutos)
+    VALUES (2,:unidade,:funcionario,:servico,:inicio,:fim,:realizacao,:status,'Corte',50,30)`, {
+    replacements: { unidade, funcionario, servico, inicio: `${data} 09:00:00`, fim: `${data} 09:30:00`, realizacao, status },
+  });
+  const filtros = 'dataInicio=2026-06-01&dataFim=2026-06-30&idUnidade=1&idServico=1&idFuncionario=1';
+  const painel = await api(`/salao/indicadores/premium?${filtros}&incluirAnalise=false`);
+  assert.equal(painel.status, 200, JSON.stringify(painel.dados));
+  assert.equal(Number(painel.dados.resumo.quantidadeComparecimentos), 2);
+  assert.equal(Number(painel.dados.resumo.quantidadeNaoCompareceu), 1);
+  assert.ok(Math.abs(painel.dados.resumo.taxaComparecimento - 200 / 3) < 0.00001);
+  assert.equal(painel.dados.comparacaoAnterior.taxaComparecimento, 100);
+  assert.equal(Number(painel.dados.comparacaoAnterior.quantidadeServicosRealizados), 1);
+  assert.equal(Number(painel.dados.resumo.quantidadeServicosRealizados), 0);
+  const analitico = await api(`/salao/indicadores/premium/analitico?${filtros}&recorte=comparecimento`);
+  assert.equal(analitico.dados.total, 3);
+  assert.ok(analitico.dados.agendamentos.every((linha) => ['REALIZADO', 'NAO_COMPARECEU'].includes(linha.status)));
+  const vazio = await api('/salao/indicadores/premium?dataInicio=2026-07-01&dataFim=2026-07-01&incluirAnalise=false');
+  assert.equal(vazio.dados.resumo.taxaComparecimento, null);
+  assert.equal(Number(vazio.dados.resumo.quantidadeServicosRealizados), 1);
+  const foraDoSalao = await api('/salao/indicadores/premium?dataInicio=2026-06-01&dataFim=2026-06-30&idUnidade=3&incluirAnalise=false');
+  assert.equal(foraDoSalao.dados.resumo.taxaComparecimento, null);
+  assert.equal(Number(foraDoSalao.dados.resumo.quantidadeServicosRealizados), 0);
+});
+
+integrar('analítico pagina e ordena antes de limitar, mantém nulos por último e valida parâmetros', async () => {
+  for (let indice = 0; indice < 53; indice++) await banco.query(`INSERT INTO tb_agendamento
+    (fk_usuario,fk_unidade,fk_funcionario,fk_servico,dt_inicio,dt_fim,dt_realizacao,nm_servico_agendado,vl_servico_agendado,nu_duracao_minutos)
+    VALUES (2,1,1,1,'2026-06-12 09:00:00','2026-06-12 09:30:00',:realizacao,'Corte',:valor,30)`,
+    { replacements: { realizacao: indice % 2 ? '2026-06-12 11:00:00' : null, valor: indice + 1 } });
+  const caminho = '/salao/indicadores/premium/analitico?dataInicio=2026-06-01&dataFim=2026-06-30';
+  const primeira = await api(`${caminho}&ordenarPor=valor&direcao=desc`);
+  assert.equal(primeira.status, 200, JSON.stringify(primeira.dados));
+  assert.equal(primeira.dados.total, 53); assert.equal(primeira.dados.totalPaginas, 3);
+  assert.equal(primeira.dados.agendamentos.length, 25);
+  assert.equal(Number(primeira.dados.agendamentos[0].valor), 53);
+  const ultima = await api(`${caminho}&ordenarPor=valor&direcao=desc&pagina=99`);
+  assert.equal(ultima.dados.pagina, 3); assert.equal(ultima.dados.agendamentos.length, 3);
+  assert.deepEqual(ultima.dados.agendamentos.map((linha) => Number(linha.valor)), [3,2,1]);
+  for (const direcao of ['asc', 'desc']) {
+    const ordenado = await api(`${caminho}&ordenarPor=dataRealizacao&direcao=${direcao}`);
+    assert.ok(ordenado.dados.agendamentos.every((linha) => linha.dataRealizacao !== null));
+  }
+  for (const filtro of ['pagina=-1', 'porPagina=500', 'ordenarPor=valor%20DESC', 'recorte=outro', 'dataInicio=2026-13-01']) assert.equal((await api(`${caminho}&${filtro}`)).status, 400);
+  assert.equal((await api(`${caminho}&idUnidade=3`)).dados.total, 0);
+  assert.equal((await api(caminho, 'GET', undefined, 'salao2')).status, 403);
+  assert.equal((await api(caminho, 'GET', undefined, 'cliente')).status, 403);
+});
+
+integrar('CSV para BI separa itens, exporta além da página e respeita filtros de serviço e profissional', async () => {
+  const [reserva] = await criar([item()]);
+  const conclusao = await api(`/salao/agendamentos/${reserva.idAgendamento}/confirmar-atendimento`, 'PATCH', { servicosAdicionais: [
+    { idServico: 2, idFuncionario: 2, valorCobrado: '35.50' }, { idServico: 2, idFuncionario: 2, valorCobrado: '0.00' },
+  ] });
+  assert.equal(conclusao.status, 200, JSON.stringify(conclusao.dados));
+  for (let indice = 0; indice < 27; indice++) await banco.query(`INSERT INTO tb_agendamento
+    (fk_usuario,fk_unidade,fk_funcionario,fk_servico,dt_inicio,dt_fim,dt_realizacao,cd_status,nm_servico_agendado,vl_servico_agendado,nu_duracao_minutos)
+    VALUES (2,1,1,1,NOW(),DATE_ADD(NOW(),INTERVAL 30 MINUTE),NOW(),'REALIZADO','Corte',50,30)`);
+  const exportar = async (filtros = '', token = 'salao') => {
+    const resposta = await fetchOriginal(`${base}/salao/indicadores/premium/analitico/exportar?recorte=realizados&${filtros}`, { headers: { Authorization: `Bearer ${token}` } });
+    return { status: resposta.status, conteudo: await resposta.text(), tipo: resposta.headers.get('content-type') };
+  };
+  const arquivo = await exportar();
+  assert.equal(arquivo.status, 200); assert.match(arquivo.tipo, /text\/csv/);
+  const linhas = arquivo.conteudo.replace(/^\uFEFF/, '').trimEnd().split('\r\n').map((linha) => linha.split(';').map((valor) => valor.slice(1, -1).replaceAll('""', '"')));
+  const cabecalho = linhas.shift();
+  assert.equal(linhas.length, 30);
+  assert.equal(new Set(linhas.map((linha) => linha[0])).size, 28);
+  assert.equal(linhas.reduce((soma, linha) => soma + Number(linha[cabecalho.indexOf('valor_item')]), 0), 1435.5);
+  const filtrado = await exportar('idServico=2&idFuncionario=2');
+  const extras = filtrado.conteudo.trimEnd().split('\r\n').slice(1);
+  assert.equal(extras.length, 2); assert.ok(extras.every((linha) => linha.includes(';"EXTRA";')));
+  const foraDoSalao = await exportar('', 'salao2'); assert.equal(foraDoSalao.status, 403);
+  const respostaExcel = await fetchOriginal(`${base}/salao/indicadores/premium/analitico/exportar?recorte=realizados&formato=xlsx`, { headers: { Authorization: 'Bearer salao' } });
+  assert.equal(respostaExcel.status, 200);
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(Buffer.from(await respostaExcel.arrayBuffer()));
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ['Analítico', 'Filiais', 'Serviços', 'Profissionais']);
+  assert.equal(workbook.getWorksheet('Analítico').rowCount, 31);
+  assert.equal(workbook.getWorksheet('Filiais').rowCount, 2);
+  assert.equal(workbook.getWorksheet('Serviços').rowCount, 3);
+  assert.equal(workbook.getWorksheet('Profissionais').rowCount, 3);
+  const leve = await api('/salao/indicadores/premium?incluirAnalise=false');
+  assert.deepEqual(leve.dados.analiseAgendamentos, []);
+  assert.equal(Number(leve.dados.resumo.receitaRealizada), 1435.5);
+  const completo = await api(`/salao/indicadores/premium?dataFim=${amanha}`);
+  assert.equal(completo.dados.analiseAgendamentos.length, 28);
 });

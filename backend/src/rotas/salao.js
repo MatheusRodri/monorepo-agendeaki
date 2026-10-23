@@ -13,7 +13,10 @@ import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincroniz
 import { bloquearRecursosAgenda, criarTransacaoAgenda, listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 import { consultarInscricaoPush, criarNotificacaoCliente, enviarNotificacaoPushCliente, listarNotificacoesSalao, marcarNotificacaoSalaoLida, marcarTodasNotificacoesSalaoLidas, obterChavePublicaPush, removerInscricaoPush, salvarInscricaoPush } from '../servicos/notificacoesPush.js';
 
-import { incluirServicosAdicionais, salvarServicosAdicionais } from '../servicos/agendamentos.js';
+import { consultarAnalitico, consultarLinhasAnaliticas, contagemServicosExtrasSql, exportarAnaliticoCsv, normalizarConsultaAnalitica } from '../servicos/dashboardAnalitico.js';
+import { exportarAnaliticoExcel } from '../servicos/dashboardExcel.js';
+import { salvarServicosAdicionais } from '../servicos/agendamentos.js';
+import { consultarAgendaSalao, normalizarConsultaAgenda } from '../servicos/agendaSalao.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -78,12 +81,12 @@ async function obterSalaoAdministrador(idUsuario) {
   return saloes[0] ?? null;
 }
 
-async function obterSalaoPremiumAdministrador(idUsuario, resposta) {
+async function obterSalaoPremiumAdministrador(idUsuario, resposta, mensagemPremium = 'As notificações são um recurso disponível para assinantes Premium.') {
   const salao = await obterSalaoAdministrador(idUsuario);
   if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return null; }
   const assinatura = await obterAssinaturaSalao(salao.idSalao);
   if (!resumoAssinatura(assinatura).temAcessoPremium) {
-    resposta.status(403).json({ mensagem: 'As notificações são um recurso disponível para assinantes Premium.' });
+    resposta.status(403).json({ mensagem: mensagemPremium });
     return null;
   }
   return salao;
@@ -763,14 +766,22 @@ async function atualizarFuncionario(requisicao, resposta) {
   const transacao = await bancoDeDados.transaction();
   try {
     if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao, transacao)) throw new Error('Filial não encontrada.');
-    const [resultado] = await bancoDeDados.query(`UPDATE tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade SET f.fk_unidade=:idUnidade, f.nm_funcionario=:nome WHERE f.id_funcionario=:idFuncionario AND u.fk_salao=:idSalao AND f.st_ativo=TRUE`, { replacements: { idFuncionario, idUnidade, nome: nome.trim(), idSalao: salao.idSalao }, transaction: transacao });
-    if (!resultado.affectedRows) throw new Error('Profissional não encontrado.');
+    const profissionais = await bancoDeDados.query(
+      `SELECT f.id_funcionario AS idFuncionario FROM tb_funcionario f
+       INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
+       WHERE f.id_funcionario=:idFuncionario AND u.fk_salao=:idSalao AND f.st_ativo=TRUE
+       LIMIT 1 FOR UPDATE`,
+      { replacements: { idFuncionario, idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT },
+    );
+    if (!profissionais.length) throw Object.assign(new Error('Profissional não encontrado.'), { status: 404 });
     const servicos = await bancoDeDados.query('SELECT id_servico AS idServico FROM tb_servico WHERE fk_unidade=:idUnidade AND st_ativo=TRUE AND id_servico IN (:idsServicos)', { replacements: { idUnidade, idsServicos }, transaction: transacao, type: QueryTypes.SELECT });
     if (servicos.length !== idsServicos.length) throw new Error('Selecione apenas serviços ativos da filial informada.');
+    // Nome e filial podem permanecer iguais em uma alteração apenas dos serviços.
+    await bancoDeDados.query('UPDATE tb_funcionario SET fk_unidade=:idUnidade, nm_funcionario=:nome WHERE id_funcionario=:idFuncionario', { replacements: { idFuncionario, idUnidade, nome: nome.trim() }, transaction: transacao });
     await bancoDeDados.query('DELETE FROM tb_funcionario_servico WHERE fk_funcionario=:idFuncionario', { replacements: { idFuncionario }, transaction: transacao });
     for (const servico of servicos) await bancoDeDados.query('INSERT INTO tb_funcionario_servico (fk_funcionario, fk_servico) VALUES (:idFuncionario, :idServico)', { replacements: { idFuncionario, idServico: servico.idServico }, transaction: transacao });
     await transacao.commit(); resposta.status(200).json({ mensagem: 'Profissional atualizado com sucesso.' });
-  } catch (erro) { await transacao.rollback(); resposta.status(400).json({ mensagem: erro.message }); }
+  } catch (erro) { await transacao.rollback(); resposta.status(erro.status ?? 400).json({ mensagem: erro.message }); }
 }
 
 async function excluirFuncionario(requisicao, resposta) {
@@ -1111,8 +1122,14 @@ async function listarClientes(requisicao, resposta) {
 
 async function listarAgendamentos(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return; const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const futuros = requisicao.query.tipo !== 'historico'; const condicao = futuros ? "a.dt_inicio >= NOW() AND a.cd_status='AGENDADO'" : "a.dt_inicio < NOW() OR a.cd_status IN ('REALIZADO', 'CANCELADO', 'NAO_COMPARECEU')";
-  const agendamentos = await bancoDeDados.query(`SELECT a.id_agendamento AS idAgendamento, a.fk_unidade AS idUnidade, a.fk_funcionario AS idFuncionario, a.dt_inicio AS dataHoraInicio, a.dt_fim AS dataHoraFim, a.cd_status AS status, a.nm_servico_agendado AS servico, a.vl_servico_agendado AS valor, a.ds_observacao AS observacao, COALESCE(c.nm_usuario, cs.nm_cliente) AS cliente, COALESCE(c.ds_email, cs.ds_email) AS emailCliente, COALESCE(c.nu_telefone, cs.nu_telefone) AS telefoneCliente, f.nm_funcionario AS funcionario, u.nm_unidade AS filial, COALESCE(p.cd_status_pagamento, 'PENDENTE') AS statusPagamento, CASE WHEN p.cd_status_pagamento = 'APROVADO' THEN TRUE ELSE FALSE END AS pago FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao INNER JOIN tb_funcionario f ON f.id_funcionario=a.fk_funcionario LEFT JOIN (SELECT p1.fk_agendamento, p1.cd_status_pagamento FROM tb_pagamento p1 INNER JOIN (SELECT fk_agendamento, MAX(id_pagamento) AS idPagamento FROM tb_pagamento GROUP BY fk_agendamento) ultimo ON ultimo.idPagamento=p1.id_pagamento) p ON p.fk_agendamento=a.id_agendamento WHERE u.fk_salao=:idSalao AND (${condicao}) ORDER BY a.dt_inicio ${futuros ? 'ASC' : 'DESC'}`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ agendamentos: await incluirServicosAdicionais(agendamentos) });
+  try {
+    const consulta = normalizarConsultaAgenda(requisicao.query);
+    resposta.status(200).json(await consultarAgendaSalao(salao.idSalao, consulta));
+  } catch (erro) {
+    if (erro.status === 400) { resposta.status(400).json({ mensagem: erro.message }); return; }
+    console.error('[Agenda salão] Falha ao consultar agendamentos.', { mensagem: erro.message });
+    resposta.status(500).json({ mensagem: 'Não foi possível carregar os agendamentos.' });
+  }
 }
 
 async function confirmarAtendimentoAgendamento(requisicao, resposta) {
@@ -1153,9 +1170,9 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
     }
     if (status === 'REALIZADO') await salvarServicosAdicionais({ idAgendamento, idUnidade: contexto.idUnidade,
       servicosAdicionais: requisicao.body?.servicosAdicionais, transaction: transacao });
-    await bancoDeDados.query(`UPDATE tb_agendamento SET cd_status=:status,
-      dt_realizacao=CASE WHEN :status='REALIZADO' THEN NOW() ELSE dt_realizacao END
-      WHERE id_agendamento=:idAgendamento`, { replacements: { idAgendamento, status }, transaction: transacao });
+    await bancoDeDados.query(`UPDATE tb_agendamento SET cd_status = :status,
+      dt_realizacao = CASE WHEN :status = 'REALIZADO' THEN NOW() ELSE dt_realizacao END
+      WHERE id_agendamento = :idAgendamento`, { replacements: { idAgendamento, status }, transaction: transacao });
     if (status === 'REALIZADO' && contexto.idUsuario) {
       const titulo = 'Como foi seu atendimento?';
       const mensagem = `Seu atendimento de ${agendamento.servico} foi marcado como realizado. Avalie sua experiência.`;
@@ -1432,26 +1449,17 @@ async function indicadoresPremium(requisicao, resposta) {
     const filtros = { idSalao: salao.idSalao, idServico, idFuncionario };
     const condicoes = ['u.fk_salao=:idSalao'];
     if (idUnidade) { filtros.idUnidade = idUnidade; condicoes.push('a.fk_unidade=:idUnidade'); }
-    const filtroItem = '(:idServico=0 OR item.fk_servico=:idServico) AND (:idFuncionario=0 OR item.fk_funcionario=:idFuncionario)';
+    const filtroItem = '(:idServico = 0 OR item.fk_servico=:idServico) AND (:idFuncionario = 0 OR item.fk_funcionario=:idFuncionario)';
     if (idServico || idFuncionario) condicoes.push(`EXISTS (SELECT 1 FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem})`);
     const valorAtendimento = `(SELECT SUM(item.valor) FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem})`;
+    const quantidadeServicos = `(SELECT COUNT(*) FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem})`;
+    const valorExtras = `(SELECT COALESCE(SUM(item.vl_cobrado),0) FROM tb_agendamento_servico_adicional item WHERE item.fk_agendamento=a.id_agendamento AND ${filtroItem})`;
     const condicoesItens = ['u.fk_salao=:idSalao', filtroItem, ...(idUnidade ? ['a.fk_unidade=:idUnidade'] : [])];
     const condicaoBase = condicoes.join(' AND ');
     const condicoesAgendamentos = [...condicoes];
     if (dataInicio) { filtros.dataInicio = dataInicio; condicoesAgendamentos.push('DATE(a.dt_inicio)>=:dataInicio'); }
     if (dataFim) { filtros.dataFim = dataFim; condicoesAgendamentos.push('DATE(a.dt_inicio)<=:dataFim'); }
     const condicaoAgendamentos = condicoesAgendamentos.join(' AND ');
-    const filtroDataAnaliseAgendamentos = dataInicio && dataFim
-      ? `(a.cd_status = 'CANCELADO' AND DATE(COALESCE(a.dt_cancelamento,a.dt_inicio)) BETWEEN :dataInicio AND :dataFim)
-        OR (a.cd_status <> 'CANCELADO' AND DATE(a.dt_inicio) BETWEEN :dataInicio AND :dataFim)`
-      : dataInicio
-        ? `(a.cd_status = 'CANCELADO' AND DATE(COALESCE(a.dt_cancelamento,a.dt_inicio)) >= :dataInicio)
-          OR (a.cd_status <> 'CANCELADO' AND DATE(a.dt_inicio) >= :dataInicio)`
-        : dataFim
-          ? `(a.cd_status = 'CANCELADO' AND DATE(COALESCE(a.dt_cancelamento,a.dt_inicio)) <= :dataFim)
-            OR (a.cd_status <> 'CANCELADO' AND DATE(a.dt_inicio) <= :dataFim)`
-          : null;
-    const condicaoAnaliseAgendamentos = [...condicoes, ...(filtroDataAnaliseAgendamentos ? [`(${filtroDataAnaliseAgendamentos})`] : [])].join(' AND ');
     const periodoAgendamento = [dataInicio ? 'DATE(a.dt_inicio)>=:dataInicio' : null, dataFim ? 'DATE(a.dt_inicio)<=:dataFim' : null].filter(Boolean).join(' AND ');
     const restricaoAgendamento = periodoAgendamento ? ` AND ${periodoAgendamento}` : '';
     const periodoCancelamento = [dataInicio ? 'DATE(COALESCE(a.dt_cancelamento,a.dt_inicio))>=:dataInicio' : null, dataFim ? 'DATE(COALESCE(a.dt_cancelamento,a.dt_inicio))<=:dataFim' : null].filter(Boolean).join(' AND ');
@@ -1468,6 +1476,10 @@ async function indicadoresPremium(requisicao, resposta) {
       bancoDeDados.query(`SELECT
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN ${valorAtendimento} ELSE 0 END),0) AS receitaRealizada,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN ${contagemServicosExtrasSql} ELSE 0 END),0) AS quantidadeServicosExtras,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN ${quantidadeServicos} ELSE 0 END),0) AS quantidadeServicosRealizados,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN ${valorExtras} ELSE 0 END),0) AS receitaServicosExtras,
+        COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeComparecimentos,
         COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos,
         COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoCancelamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados,
         COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
@@ -1485,6 +1497,11 @@ async function indicadoresPremium(requisicao, resposta) {
       bancoDeDados.query(`SELECT
         COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN ${valorAtendimento} ELSE 0 END),0) AS receitaRealizada,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN ${contagemServicosExtrasSql} ELSE 0 END),0) AS quantidadeServicosExtras,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN ${quantidadeServicos} ELSE 0 END),0) AS quantidadeServicosRealizados,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN ${valorExtras} ELSE 0 END),0) AS receitaServicosExtras,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS quantidadeComparecimentos,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='NAO_COMPARECEU' THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' AND a.dt_inicio<NOW() THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis,
@@ -1554,10 +1571,10 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN item.valor ELSE 0 END),0) AS receitaRealizada
         FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
         LEFT JOIN vw_servico_atendimento item ON item.fk_funcionario=f.id_funcionario
-          AND (:idServico=0 OR item.fk_servico=:idServico)
+          AND (:idServico = 0 OR item.fk_servico=:idServico)
         LEFT JOIN tb_agendamento a ON a.id_agendamento=item.id_agendamento
-        WHERE u.fk_salao=:idSalao AND (:idUnidade=0 OR f.fk_unidade=:idUnidade)
-          AND (:idFuncionario=0 OR f.id_funcionario=:idFuncionario)
+        WHERE u.fk_salao=:idSalao AND (:idUnidade = 0 OR f.fk_unidade=:idUnidade)
+          AND (:idFuncionario = 0 OR f.id_funcionario=:idFuncionario)
         GROUP BY f.id_funcionario, f.nm_funcionario ORDER BY atendimentosRealizados DESC, receitaRealizada DESC`,
         { replacements: { ...filtros, idUnidade }, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT f.id_funcionario AS idFuncionario, d.nr_dia_semana AS diaSemana,
@@ -1584,37 +1601,9 @@ async function indicadoresPremium(requisicao, resposta) {
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase} AND a.cd_status='CANCELADO'${restricaoCancelamento}
         GROUP BY motivo ORDER BY quantidade DESC, motivo`, { replacements: filtros, type: QueryTypes.SELECT }),
-      bancoDeDados.query(`SELECT a.id_agendamento AS idAgendamento,
-        a.dt_inicio AS dataInicio, a.dt_fim AS dataFim,
-        COALESCE(c.nm_usuario, cs.nm_cliente, 'Cliente sem identificação') AS cliente,
-        COALESCE(c.ds_email, cs.ds_email) AS email,
-        COALESCE(c.nu_telefone, cs.nu_telefone) AS telefone,
-        (SELECT GROUP_CONCAT(item.servico ORDER BY item.servico SEPARATOR ' + ') FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem}) AS servico,
-        u.nm_unidade AS unidade,
-        (SELECT GROUP_CONCAT(DISTINCT fp.nm_funcionario ORDER BY fp.nm_funcionario SEPARATOR ', ') FROM vw_servico_atendimento item INNER JOIN tb_funcionario fp ON fp.id_funcionario=item.fk_funcionario WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem}) AS profissional,
-        a.cd_status AS status,
-        ${valorAtendimento} AS valor,
-        (SELECT p.cd_status_pagamento FROM tb_pagamento p
-          WHERE p.fk_agendamento=a.id_agendamento
-          ORDER BY p.dt_criacao DESC, p.id_pagamento DESC LIMIT 1) AS statusPagamento,
-        CASE a.cd_motivo_cancelamento
-          WHEN 'BLOQUEIO_AGENDA' THEN 'Bloqueio da agenda'
-          WHEN 'INDISPONIBILIDADE_PROFISSIONAL' THEN 'Indisponibilidade do profissional'
-          WHEN 'SOLICITACAO_CLIENTE' THEN 'Solicitação do cliente'
-          WHEN 'PROBLEMA_UNIDADE' THEN 'Problema na unidade'
-          WHEN 'ERRO_AGENDAMENTO' THEN 'Erro no agendamento'
-          WHEN 'OUTRO' THEN 'Outro motivo'
-          ELSE NULL
-        END AS motivoCancelamento,
-        a.ds_motivo_cancelamento AS detalheCancelamento,
-        a.cd_origem_cancelamento AS origemCancelamento
-        FROM tb_agendamento a
-        INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-        INNER JOIN tb_funcionario f ON f.id_funcionario=a.fk_funcionario
-        LEFT JOIN tb_usuario c ON c.id_usuario=a.fk_usuario
-        LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao=a.fk_cliente_salao
-        WHERE ${condicaoAnaliseAgendamentos}
-        ORDER BY COALESCE(a.dt_cancelamento,a.dt_inicio) DESC, a.id_agendamento DESC`, { replacements: filtros, type: QueryTypes.SELECT }),
+      requisicao.query.incluirAnalise === 'false' ? Promise.resolve([]) : consultarLinhasAnaliticas(
+        normalizarConsultaAnalitica({ dataInicio, dataFim, idUnidade, idServico, idFuncionario }, salao.idSalao),
+      ),
     ]);
     const ocorrenciasSemana = Array(7).fill(Math.floor(quantidadeDiasPeriodo / 7));
     const diasRestantes = quantidadeDiasPeriodo % 7;
@@ -1638,6 +1627,13 @@ async function indicadoresPremium(requisicao, resposta) {
       };
     });
     resumo[0].receitaPrevista = receitaPrevista[0].receitaPrevista;
+    // Comparecimento usa a mesma data agendada para realizados e ausências.
+    // Os agregados partem dos atendimentos, evitando multiplicação pelos extras.
+    for (const periodo of [resumo[0], comparacaoAnterior[0]]) {
+      const realizados = Number(periodo.quantidadeComparecimentos);
+      const encerrados = realizados + Number(periodo.quantidadeNaoCompareceu);
+      periodo.taxaComparecimento = encerrados ? realizados / encerrados * 100 : null;
+    }
     const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
     const insights = [];
     const taxaCancelamentoAtual = Number(resumo[0].quantidadeAgendamentosElegiveis)
@@ -1683,6 +1679,26 @@ async function indicadoresPremium(requisicao, resposta) {
   } catch (erro) {
     console.error('[Dashboard Premium salão] Falha ao carregar.', { mensagem: erro.message, parametros: requisicao.query });
     resposta.status(500).json({ mensagem: 'Não foi possível carregar o dashboard Premium.' });
+  }
+}
+
+async function analiticoPremium(requisicao, resposta, exportar = false) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta, 'O dashboard avançado está disponível para assinantes Premium.');
+  if (!salao) return;
+  try {
+    const consulta = normalizarConsultaAnalitica(requisicao.query, salao.idSalao);
+    if (exportar) {
+      const formato = requisicao.query.formato ?? 'csv';
+      if (!['csv', 'xlsx'].includes(formato)) throw Object.assign(new Error('Formato de exportação inválido.'), { status: 400 });
+      if (formato === 'xlsx') await exportarAnaliticoExcel(consulta, resposta);
+      else await exportarAnaliticoCsv(consulta, resposta);
+    }
+    else resposta.status(200).json(await consultarAnalitico(consulta));
+  } catch (erro) {
+    console.error('[Analítico Premium] Falha na consulta.', { mensagem: erro.message });
+    if (resposta.headersSent) { resposta.destroy(erro); return; }
+    resposta.status(erro.status ?? 500).json({ mensagem: erro.status === 400 ? erro.message : 'Não foi possível carregar o analítico Premium.' });
   }
 }
 
@@ -1886,6 +1902,8 @@ roteadorSalao.patch('/agendamentos/:idAgendamento/cancelar', cancelarAgendamento
 roteadorSalao.get('/agendamentos/:idAgendamento/horarios-reagendamento', horariosReagendamentoSalao);
 roteadorSalao.patch('/agendamentos/:idAgendamento/reagendar', reagendarAgendamentoSalao);
 roteadorSalao.get('/avaliacoes', listarAvaliacoesSalao);
+roteadorSalao.get('/indicadores/premium/analitico', (req, res) => analiticoPremium(req, res));
+roteadorSalao.get('/indicadores/premium/analitico/exportar', (req, res) => analiticoPremium(req, res, true));
 roteadorSalao.get('/indicadores', indicadores); roteadorSalao.get('/indicadores/premium', indicadoresPremium);
 roteadorSalao.get('/assinatura', consultarAssinatura); roteadorSalao.post('/assinatura/ativar', ativarAssinaturaTeste); roteadorSalao.post('/assinatura/checkout', iniciarCheckoutAssinatura); roteadorSalao.patch('/assinatura/cancelar', cancelarAssinatura); roteadorSalao.patch('/assinatura/periodicidade', alterarPeriodicidadeAssinatura);
 

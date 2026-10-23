@@ -18,7 +18,8 @@ import {
   notificarSalaoDoAgendamento,
 } from '../servicos/notificacoesPush.js';
 
-import { criarReservasCliente, idValido, incluirServicosAdicionais } from '../servicos/agendamentos.js';
+import { criarReservasCliente, idValido } from '../servicos/agendamentos.js';
+import { consultarAgendamentosCliente, normalizarPaginacaoCliente } from '../servicos/listagemAgendamentosCliente.js';
 
 const roteadorCliente = Router();
 const raiosPermitidos = [0, 1, 5, 10];
@@ -375,39 +376,14 @@ async function listarAgendamentos(requisicao, resposta, tipoListagem) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
 
-  const condicaoData = tipoListagem === 'futuros'
-    ? "a.dt_inicio >= NOW() AND a.cd_status = 'AGENDADO'"
-    : "a.dt_inicio < NOW() OR a.cd_status IN ('REALIZADO', 'CANCELADO', 'NAO_COMPARECEU')";
-  const ordenacao = tipoListagem === 'futuros' ? 'ASC' : 'DESC';
-  const agendamentos = await bancoDeDados.query(
-    `SELECT a.id_agendamento AS idAgendamento,
-            a.fk_unidade AS idUnidade,
-            a.fk_servico AS idServico,
-            a.fk_funcionario AS idFuncionario,
-            a.dt_inicio AS dataHoraInicio,
-            a.dt_fim AS dataHoraFim,
-            a.nm_servico_agendado AS servico,
-            a.vl_servico_agendado AS valor,
-            a.ds_observacao AS observacao,
-            a.ds_motivo_cancelamento AS motivoCancelamento,
-            a.cd_status AS status,
-            av.id_avaliacao AS idAvaliacao,
-            CASE WHEN a.cd_status='REALIZADO' AND av.id_avaliacao IS NULL THEN TRUE ELSE FALSE END AS podeAvaliar,
-            f.nm_funcionario AS profissional,
-            s.nm_salao AS salao,
-            u.nm_unidade AS unidade,
-            u.ds_municipio AS municipio
-     FROM tb_agendamento a
-     INNER JOIN tb_funcionario f ON f.id_funcionario = a.fk_funcionario
-     INNER JOIN tb_unidade u ON u.id_unidade = a.fk_unidade
-     INNER JOIN tb_salao s ON s.id_salao = u.fk_salao
-     LEFT JOIN tb_avaliacao av ON av.fk_agendamento = a.id_agendamento
-     WHERE a.fk_usuario = :idUsuario AND (${condicaoData})
-     ORDER BY a.dt_inicio ${ordenacao}`,
-    { replacements: { idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
-  );
-
-  resposta.status(200).json({ agendamentos: await incluirServicosAdicionais(agendamentos) });
+  try {
+    const consulta = normalizarPaginacaoCliente(requisicao.query);
+    resposta.status(200).json(await consultarAgendamentosCliente(cliente.idUsuario, tipoListagem, consulta));
+  } catch (erro) {
+    if (erro.status === 400) { resposta.status(400).json({ mensagem: erro.message }); return; }
+    console.error('[Agenda cliente] Falha ao consultar agendamentos.', { mensagem: erro.message });
+    resposta.status(500).json({ mensagem: 'Não foi possível carregar seus agendamentos.' });
+  }
 }
 
 async function consultarNotificacoesCliente(requisicao, resposta) {
