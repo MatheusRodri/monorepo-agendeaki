@@ -329,6 +329,11 @@
 .profissional-acoes .botao-secundario { min-height: 48px; padding-inline: 1rem; }
 .profissional-acoes button:disabled { cursor: not-allowed; opacity: .5; }
 
+.formulario-servico__campos { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.formulario-servico__campos--identidade { grid-template-columns: 1fr; }
+.formulario-servico__campos .campo-formulario { min-width: 0; }
+.formulario-servico__campos .campo-formulario small { color: var(--texto-suave); font-size: .72rem; font-weight: 400; }
+
 @media (max-width: 540px) {
   .formulario-profissional { padding: 1rem; }
   .profissional-etapas { gap: .25rem; }
@@ -336,4 +341,5 @@
   .profissional-etapas small { font-size: .68rem; }
   .profissional-servicos__lista { grid-template-columns: 1fr; }
   .formulario-profissional .profissional-acoes .botao-enviar { flex-basis: 100%; }
+  .formulario-servico__campos { grid-template-columns: 1fr; }
 }
