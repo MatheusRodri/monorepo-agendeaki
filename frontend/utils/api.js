@@ -40,7 +40,7 @@ function criarErroApi(causa) {
   return erro;
 }
 
-async function enviarRequisicao(caminho, { dados, metodo = 'GET', parametros, tokenAcesso } = {}) {
+async function enviarRequisicao(caminho, { dados, metodo = 'GET', parametros, tokenAcesso, tipoResposta, timeout } = {}) {
   try {
     const resposta = await clienteApi({
       baseURL: obterUrlApi(),
@@ -50,11 +50,16 @@ async function enviarRequisicao(caminho, { dados, metodo = 'GET', parametros, to
       },
       method: metodo,
       params: parametros,
+      responseType: tipoResposta,
+      ...(timeout !== undefined ? { timeout } : {}),
       url: caminho,
     });
 
     return resposta.data;
   } catch (causa) {
+    if (typeof Blob !== 'undefined' && causa.response?.data instanceof Blob && causa.response.data.type.includes('json')) {
+      try { causa.response.data = JSON.parse(await causa.response.data.text()); } catch {}
+    }
     throw criarErroApi(causa);
   }
 }
