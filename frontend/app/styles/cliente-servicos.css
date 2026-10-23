@@ -161,10 +161,12 @@
 .apresentacao-filial { padding-block: 3.5rem 2rem; }
 .apresentacao-filial h1 { color: var(--ameixa); font-family: 'Playfair Display', Georgia, serif; font-size: clamp(2.5rem, 7vw, 4.8rem); line-height: 1; margin: .35rem 0 .8rem; }
 .apresentacao-filial>p:last-of-type, .apresentacao-filial address { color: var(--texto-suave); font-size: .86rem; font-style: normal; line-height: 1.6; }
-.fluxo-agendamento, .etapa-agendamento { display: grid; gap: 1rem; }
+.fluxo-agendamento, .etapa-agendamento { display: grid; gap: 1rem; min-width: 0; }
+.fluxo-agendamento { margin-bottom: 2.5rem; width: 100%; }
+.pagina-agendamento-publico .botao-enviar { color: var(--fundo); margin-top: 0; }
 .etapa-agendamento { background: var(--cartao); border: 1px solid var(--borda); border-radius: 18px; padding: 1.35rem; }
 .etapa-agendamento__titulo { align-items: center; display: flex; gap: .75rem; }
-.etapa-agendamento__titulo>span { align-items: center; background: var(--coral); border-radius: 50%; color: #fff; display: flex; font-size: .75rem; font-weight: 800; height: 28px; justify-content: center; width: 28px; }
+.etapa-agendamento__titulo>span { align-items: center; background: var(--coral); border-radius: 50%; color: var(--fundo); display: flex; flex-shrink: 0; font-size: .75rem; font-weight: 800; height: 28px; justify-content: center; width: 28px; }
 .etapa-agendamento h2 { color: var(--ameixa); font-size: 1rem; margin: 0; }
 .opcoes-agendamento { display: grid; gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .opcoes-agendamento--compactas { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -175,10 +177,59 @@
 .campo-data-agendamento { max-width: 300px; }
 .grade-horarios { display: grid; gap: .6rem; grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .horario-disponivel { background: var(--fundo-suave); border: 1px solid var(--borda); border-radius: 9px; color: var(--ameixa); cursor: pointer; font-weight: 700; padding: .7rem .4rem; }
-.horario-disponivel:hover, .horario-disponivel--ativo { background: var(--coral); border-color: var(--coral); color: #fff; }
+.horario-disponivel:hover, .horario-disponivel--ativo { background: var(--coral); border-color: var(--coral); color: var(--fundo); }
 .resumo-agendamento { background: var(--creme); border-radius: 12px; display: grid; gap: .25rem; padding: 1rem; }
 .resumo-agendamento strong { color: var(--ameixa); }
 .resumo-agendamento span { color: var(--texto-suave); font-size: .78rem; }
+
+.modal-revisao-agendamento__conteudo ol { display: grid; gap: .75rem; list-style-position: inside; padding: 0; }
+.modal-revisao-agendamento__conteudo { max-height: calc(100dvh - 2.5rem); overflow-y: auto; }
+
+.etapa-agendamento__cabecalho { align-items: center; display: flex; flex-wrap: wrap; gap: .75rem; justify-content: space-between; }
+.etapa-agendamento__ajuda { color: var(--texto-suave); font-size: .83rem; line-height: 1.6; margin: 0; }
+.opcao-agendamento--servico { padding-right: 3rem; position: relative; }
+.opcao-agendamento__check { align-items: center; border: 1px solid var(--borda); border-radius: 6px; display: flex; height: 22px; justify-content: center; position: absolute; right: 1rem; top: 1rem; width: 22px; }
+.opcao-agendamento--ativa .opcao-agendamento__check { background: var(--coral); border-color: var(--coral); color: var(--fundo); font-size: .8rem; font-weight: 800; }
+.rodape-selecao-servicos { align-items: center; border-top: 1px solid var(--borda); display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; padding-top: 1rem; }
+.rodape-selecao-servicos p { color: var(--texto-suave); display: grid; font-size: .8rem; gap: .25rem; margin: 0; }
+.rodape-selecao-servicos strong { color: var(--ameixa); font-size: 1.1rem; }
+.rodape-selecao-servicos .botao-enviar { width: auto; }
+.link-etapa-agendamento { background: none; border: 0; color: var(--coral-escuro); cursor: pointer; font-size: .78rem; font-weight: 700; padding: .5rem 0; text-align: left; }
+.link-etapa-agendamento:hover { text-decoration: underline; }
+.link-etapa-agendamento:disabled { cursor: default; opacity: .5; }
+.link-etapa-agendamento--remover { color: var(--texto-suave); }
+.progresso-horarios { color: var(--texto-suave); font-size: .75rem; margin: -.25rem 0 0; }
+.servicos-selecionados { display: grid; gap: .75rem; min-width: 0; }
+.servico-selecionado { border: 1px solid var(--borda); border-radius: 12px; min-width: 0; }
+.servico-selecionado--aberto { border-color: var(--coral); }
+.servico-selecionado__titulo { font-size: inherit; margin: 0; }
+.servico-selecionado__abrir { align-items: center; background: none; border: 0; border-radius: 12px; color: var(--texto); cursor: pointer; display: grid; gap: .75rem; grid-template-columns: 28px minmax(0, 1fr) auto 16px; padding: 1rem; text-align: left; width: 100%; }
+.servico-selecionado__numero { align-items: center; background: var(--creme); border: 1px solid var(--borda); border-radius: 50%; color: var(--texto-suave); display: flex; font-size: .75rem; height: 28px; justify-content: center; width: 28px; }
+.servico-selecionado__numero--pronto { background: color-mix(in srgb, var(--coral) 12%, var(--fundo)); border-color: var(--coral); color: var(--coral-escuro); }
+.servico-selecionado__descricao { display: grid; gap: .3rem; min-width: 0; }
+.servico-selecionado__descricao strong { color: var(--ameixa); font-size: .88rem; }
+.servico-selecionado__descricao>span { color: var(--texto-suave); font-size: .75rem; font-weight: 400; line-height: 1.5; overflow-wrap: anywhere; }
+.servico-selecionado__valor { color: var(--ameixa); font-size: .85rem; white-space: nowrap; }
+.servico-selecionado__seta { color: var(--texto-suave); font-size: 1rem; text-align: center; }
+.servico-selecionado__conteudo { padding: 0 1rem 1rem; }
+.servico-selecionado__acoes { align-items: center; border-top: 1px solid var(--borda); display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; padding: .25rem 1rem; }
+.servico-selecionado__acoes .link-etapa-agendamento--remover { margin-left: auto; }
+.escolha-horario-servico { display: grid; gap: 1rem; }
+.escolha-horario-servico__campos { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.escolha-horario-servico__horarios { border: 0; margin: 0; min-width: 0; padding: 0; }
+.escolha-horario-servico__horarios legend { color: var(--ameixa); font-size: .8rem; font-weight: 700; margin-bottom: .65rem; padding: 0; }
+.escolha-horario-servico__atribuicao { color: var(--texto-suave); font-size: .78rem; margin: .75rem 0 0; }
+.escolha-horario-servico__acoes { display: flex; justify-content: flex-end; }
+.escolha-horario-servico__acoes .botao-enviar { width: auto; }
+.aviso-horario-servico { color: var(--texto-suave); font-size: .8rem; line-height: 1.6; margin: 0; }
+.aviso-horario-servico[role='alert'] { color: var(--coral-escuro); }
+.servico-selecionado__aviso { padding: 0 1rem 1rem; }
+.resumo-servicos-agendamento { align-items: center; column-gap: 1.5rem; grid-template-columns: minmax(0, 1fr) auto; }
+.resumo-servicos-agendamento .etapa-agendamento__ajuda { margin-top: .35rem; }
+.resumo-servicos-agendamento__total { display: grid; gap: .25rem; text-align: right; }
+.resumo-servicos-agendamento__total>span { color: var(--texto-suave); font-size: .78rem; }
+.resumo-servicos-agendamento__total strong { color: var(--ameixa); font-size: 1.35rem; }
+.resumo-servicos-agendamento>.botao-enviar { grid-column: 1 / -1; }
 
 .modal-revisao-agendamento {
   align-items: center;
@@ -264,4 +315,17 @@
 @media (max-width: 700px) {
   .opcoes-agendamento, .opcoes-agendamento--compactas { grid-template-columns: 1fr; }
   .grade-horarios { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .etapa-agendamento { padding: 1rem; }
+  .rodape-selecao-servicos { align-items: stretch; flex-direction: column; }
+  .rodape-selecao-servicos .botao-enviar,
+  .escolha-horario-servico__acoes .botao-enviar { width: 100%; }
+  .escolha-horario-servico__campos { grid-template-columns: 1fr; }
+  .servico-selecionado__abrir { column-gap: .5rem; grid-template-columns: 24px minmax(0, 1fr) auto 12px; padding: .85rem; }
+  .servico-selecionado__numero { height: 24px; width: 24px; }
+  .servico-selecionado__valor { font-size: .75rem; }
+  .resumo-servicos-agendamento { column-gap: .75rem; }
+  .resumo-servicos-agendamento h2 { font-size: .9rem; }
 }

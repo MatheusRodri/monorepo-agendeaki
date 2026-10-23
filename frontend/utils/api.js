@@ -36,6 +36,7 @@ function criarErroApi(causa) {
   );
   erro.status = causa.response?.status;
   erro.codigo = causa.response?.data?.codigo;
+  erro.indiceItem = causa.response?.data?.indiceItem;
   return erro;
 }
 
