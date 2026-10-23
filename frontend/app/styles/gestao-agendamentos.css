@@ -198,3 +198,7 @@
   background: #f9e1e3;
   color: #a23846 !important;
 }
+
+.servico-adicional-formulario { border: 1px solid var(--borda); border-radius: 12px; display: grid; gap: .75rem; margin-block: 1rem; min-width: 0; padding: 1rem; }
+.servico-adicional-formulario legend { font-weight: 700; padding-inline: .3rem; }
+.servico-adicional-historico { display: block; margin-top: .4rem; }
