@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node tests/agendamentos.test.js && node tests/agendamentos.integration.test.js",
     "dev": "node --watch src/servidor.js",
     "start": "node src/servidor.js",
     "migrar:documentos": "node scripts/migrar-documentos.js",

@@ -11,6 +11,7 @@ export const bancoDeDados = new Sequelize(
     host: process.env.MYSQL_HOST,
     port: portaBancoDeDados,
     dialect: 'mysql',
+    dialectOptions: process.env.MYSQL_SOCKET ? { socketPath: process.env.MYSQL_SOCKET } : {},
     logging: false,
     timezone: '-03:00',
   },
