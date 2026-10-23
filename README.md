@@ -272,6 +272,71 @@ Também é possível informar `TEST_MYSQL_HOST`, `TEST_MYSQL_PORT`, `TEST_MYSQL_
 
 Na pasta `frontend`, execute `npm run build` e `npm run test:agendamentos`. Os testes Playwright usam API simulada e um servidor próprio na porta 3107. Cobrem lista, conflitos, preservação no login e na expiração de sessão, conclusão com extras e acessibilidade dos modais.
 
+## Filtros e paginação da agenda do salão
+
+A aba Próximos da Agenda oferece **Todos**, **Hoje**, **Amanhã** e **Próximos 7 dias**, com datas no fuso de São Paulo. A janela de sete dias inclui hoje e os seis dias seguintes. Os filtros valem para a data agendada, incluindo reagendamentos. Próximos mantém os agendamentos ativos a partir de agora; Histórico reúne horários passados e atendimentos realizados, cancelados ou com ausência, sem filtros de datas futuras. O período selecionado em Próximos é preservado ao alternar as abas; ambas preservam seu tamanho de página e sua página.
+
+`GET /api/salao/agendamentos` recebe `tipo` (`futuros`, padrão, ou `historico`), `periodo` (`todos`, padrão, `hoje`, `amanha` ou `7dias`), `pagina` (a partir de 1) e `porPagina` (10, padrão, 25 ou 50). Retorna `agendamentos`, `pagina`, `porPagina`, `total`, `totalPaginas`, `tipo` e `periodo`. Parâmetros inválidos retornam HTTP 400. A consulta é restrita ao salão autenticado, filtra e ordena antes de paginar, com desempate por ID. Próximos usa ordem crescente de horário e ID; Histórico usa ordem decrescente. Cada agendamento conta uma vez, mesmo com extras ou vários pagamentos. Extras e totais dos cartões são preservados.
+
+Mudar o período ou o tamanho da página retorna à primeira página. Concluir, cancelar, reagendar ou criar atualiza a lista mantendo os controles; se a última página deixar de existir, a consulta retorna a última página válida. Carregamento, erro com nova tentativa e lista vazia têm estados próprios. Publicar o backend antes do frontend; esta mudança não exige migração.
+
+A agenda do **cliente** também pagina Próximos horários e Histórico, com 10 registros por padrão e opções de 25 e 50. Cada lista preserva sua página e seu tamanho ao alternar. `GET /api/clientes/agendamentos/futuros` e `/historico` aceitam `pagina` e `porPagina` e retornam `agendamentos`, `pagina`, `porPagina`, `total` e `totalPaginas`; páginas além do fim são ajustadas. O Histórico aceita `localizar=<idAgendamento>` para abrir a página do atendimento indicado em uma notificação de avaliação. A busca respeita o cliente autenticado e retorna `localizado` para indicar se o atendimento foi encontrado. A consulta mantém os extras e o total em cada cartão, e ações como cancelamento e avaliação atualizam a página. Publicar o backend antes do frontend; não há migração.
+
+## Dashboard Premium e dados para BI
+
+O painel Premium possui três abas: **Geral**, com indicadores e destaques; **Detalhado**, com gráficos, profissionais e clientes; e **Analítico**, com tabela paginada e ordenável. Os filtros de período, filial, serviço e profissional são compartilhados. Clicar em um indicador abre o recorte correspondente no Analítico.
+
+No Analítico, **Visualizar por: Atendimento | Serviço** alterna a granularidade. **Atendimento** é a visão inicial, com os serviços agrupados em uma linha por atendimento. **Serviço** exibe uma linha por serviço reservado ou extra, identificando o tipo, o profissional e o valor daquele item; repetições do mesmo serviço permanecem separadas. Datas, cliente, status e pagamento continuam pertencendo ao atendimento. Trocar a visão mantém filtros e recorte e volta à primeira página, com ordenação por data agendada decrescente. A visão escolhida permanece ao alternar abas ou atualizar filtros.
+
+Na aba Geral, **Serviços extras realizados** conta cada serviço adicional dos atendimentos concluídos no período, inclusive os gratuitos, pela data da confirmação e respeitando os filtros. Mostra a comparação com o período anterior. Um atendimento com dois extras soma dois serviços extras, mantendo um único atendimento. O mesmo indicador aparece no PDF completo.
+
+Os três indicadores complementares também respeitam os filtros, comparam o período anterior e aparecem no PDF:
+
+- **Total de serviços realizados:** conta o serviço reservado e cada extra, inclusive os gratuitos, pela data da confirmação. Ao clicar, abre `realizados` na visão por serviço.
+- **Receita com serviços extras:** soma os valores efetivamente cobrados pelos extras realizados, pela data da confirmação. Ao clicar, abre `extras` na visão por serviço. O valor reservado não entra nessa receita.
+- **Taxa de comparecimento:** realizados ÷ (realizados + não compareceram) × 100, ambos pela **data agendada**. Cada atendimento conta uma vez, mesmo com vários extras. Cancelados e agendamentos ainda sem confirmação ficam fora. Realizados antigos sem data de confirmação entram nessa taxa pela data agendada. Sem base, exibe **—**; a comparação usa pontos percentuais. Ao clicar, abre `comparecimento` na visão por atendimento, mostrando os registros usados no cálculo.
+
+Ao clicar nesse indicador, o recorte `extras` mostra somente os atendimentos realizados com extras correspondentes aos filtros. Na visão por atendimento, a coluna **Extras** indica a quantidade e pode ser ordenada; o cabeçalho dos resultados informa o total de extras em todos os atendimentos do recorte, além da página aberta. Nesse recorte, serviços, profissionais, valores e exportações se referem somente aos itens adicionais.
+
+**Data agendada** representa o último horário reservado, incluindo reagendamentos. **Realizado em** é a data/hora da confirmação em “Realizado”, no fuso `America/Sao_Paulo`; não representa uma data manual de execução. Dados antigos sem realização registrada permanecem vazios.
+
+### Consulta e exportação
+
+- `GET /api/salao/indicadores/premium/analitico`: recebe `dataInicio`, `dataFim`, `idUnidade`, `idServico`, `idFuncionario`, `recorte`, `visualizarPor` (`atendimento`, padrão, ou `servico`), `pagina`, `porPagina`, `ordenarPor` e `direcao`. Retorna `agendamentos`, `pagina`, `porPagina`, `total`, `totalPaginas`, `totalAtendimentos`, `recorte` e `visualizarPor`. `total` conta as linhas da visão; `totalAtendimentos` conta os atendimentos distintos. Na visão por serviço, cada linha contém `idLinha`, `tipoItem` (`ORIGINAL` ou `EXTRA`), `idExtra`, `idServico` e `idFuncionario`. São permitidos 25 (padrão), 50 ou 100 registros por página, aplicados aos itens antes de responder. Ordenação padrão: `dataInicio desc`, com desempate por ID de atendimento decrescente, reservado antes dos extras e ID do extra crescente; ausências ficam por último.
+- Recortes: `todos` (cancelados pela data do cancelamento, demais pela data agendada), `agendamentos` (todos pela data agendada), `realizados` (pela confirmação), `extras` (realizados com extras correspondentes aos filtros, pela confirmação), `cancelados` (pelo cancelamento), `naoCompareceu` (pela data agendada), `comparecimento` (realizados e ausências pela data agendada) e `previstos` (ativos entre agora e os próximos 30 dias, independentemente do período geral). Cancelamentos sem data usam a data agendada. O resumo e sua comparação anterior retornam `quantidadeServicosExtras`, `quantidadeServicosRealizados`, `receitaServicosExtras`, `quantidadeComparecimentos`, `quantidadeNaoCompareceu` e `taxaComparecimento` (percentual numérico ou `null` quando não há base). Cada linha analítica retorna a quantidade de extras e a resposta inclui `totalServicosExtras` para todo o recorte.
+- Campos ordenáveis: `idAgendamento`, `dataInicio`, `dataRealizacao`, `cliente`, `contato`, `servico`, `quantidadeServicosExtras`, `unidade`, `profissional`, `status`, `valor`, `statusPagamento`, `motivoCancelamento` e `origemCancelamento`; `tipoItem` também é permitido na visão por serviço. Direções: `asc` e `desc`. Valores, profissionais e serviços são ordenados pelos itens individuais na visão por serviço. Parâmetros inválidos retornam HTTP 400; as consultas exigem acesso Premium e restringem os dados ao salão autenticado.
+- `GET /api/salao/indicadores/premium/analitico/exportar?formato=xlsx`: exporta um Excel com as abas Analítico, Filiais, Serviços e Profissionais. Inclui todos os registros do recorte e dos filtros, na ordenação escolhida, sem limite de páginas. A geração usa lotes de 500 agendamentos e uma leitura consistente entre os lotes. `formato=csv` (ou a ausência de formato) preserva a exportação CSV anterior para integrações existentes.
+- `GET /api/salao/indicadores/premium?incluirAnalise=false`: carrega os indicadores sem a lista integral. O comportamento anterior é mantido quando o parâmetro é omitido. O PDF solicita a lista completa sob demanda e imprime indicadores, gráficos e tabela, independentemente da aba, recorte local ou página aberta.
+
+### Importar o Excel em uma ferramenta de BI
+
+**Exportar para Excel**, na aba Analítico, gera um único `.xlsx` com quatro abas, cabeçalhos congelados e filtros nas colunas:
+
+- **Analítico:** uma linha por serviço reservado ou extra, com valores numéricos e identificadores como texto.
+- **Filiais:** `id_unidade`, `filial` e `ativo` das filiais vinculadas aos registros exportados.
+- **Serviços:** `id_servico`, `id_unidade`, `servico`, `valor_referencia`, `duracao_minutos` e `ativo` dos serviços presentes no Analítico.
+- **Profissionais:** `id_funcionario`, `id_unidade`, `profissional` e `ativo` dos profissionais presentes no Analítico.
+
+Relacione as abas por `id_unidade`, `id_servico` e `id_funcionario`. Os cadastros aparecem uma vez por ID, incluindo inativos vinculados ao histórico, e usam os nomes e dados atuais. Os nomes dos serviços e extras no Analítico preservam os dados históricos disponíveis. Somente os cadastros associados ao recorte são incluídos; filiais de vínculo dos cadastros também são incluídas para manter os relacionamentos, inclusive se um profissional mudou de filial.
+
+Datas permanecem como texto ISO 8601 com `-03:00`, valores são números com duas casas decimais, IDs e telefones são texto, e ausências ficam vazias. Não há títulos, subtotais ou gráficos misturados às linhas. Um recorte vazio gera as quatro abas apenas com cabeçalhos. O arquivo é preparado temporariamente no servidor e removido após o download; se uma aba exceder o limite de 1.048.576 linhas do Excel, a API pede um recorte menor em vez de truncar os dados.
+
+Cada linha é um serviço: o reservado (`tipo_item=ORIGINAL`) ou um extra (`tipo_item=EXTRA`). Os cabeçalhos são estáveis:
+
+```text
+id_agendamento;tipo_item;id_servico_adicional;id_usuario;id_cliente_salao;cliente;email;telefone;id_unidade;filial;id_servico;servico;id_funcionario;profissional;data_agendada;data_realizacao;data_cancelamento;status;status_pagamento;valor_item;motivo_cancelamento;detalhe_cancelamento;origem_cancelamento
+```
+
+Importe identificadores e telefone como texto. Os dois identificadores de cliente distinguem clientes da plataforma e clientes cadastrados pelo salão. O ID do extra fica vazio no serviço original. Para contar **atendimentos**, use a contagem distinta de `id_agendamento`; para calcular **receita realizada**, filtre `status=REALIZADO` e some `valor_item`. O status do pagamento é independente da realização. Não some quantidades de linhas como se fossem atendimentos e não há total do atendimento repetido nas linhas.
+
+Filtrar serviço/profissional exporta somente os itens correspondentes; os valores de cada extra pertencem ao serviço e ao profissional daquela linha. O Excel mantém uma linha por serviço nas duas visões. Na visão por atendimento, os serviços seguem agrupados pela ordem dos atendimentos; na visão por serviço, o arquivo acompanha a ordenação dos itens, incluindo o tipo, sem expandir novamente cada atendimento. A paginação da tela não limita a exportação. O PDF completo mantém a visão por atendimento.
+
+O CSV continua disponível pela API, com os mesmos campos do Analítico, UTF-8 com BOM, separador `;`, campos entre aspas e valores com ponto decimal. CSV não suporta múltiplas abas.
+
+### Publicação e verificação
+
+Esta melhoria não exige migração. Publique primeiro o backend com os novos endpoints e depois o frontend. Os comandos existentes `npm test` no backend e `npm run build` / `npm run test:agendamentos` no frontend incluem os testes do painel. A integração MySQL continua exigindo `TEST_MYSQL_SOCKET` ou `TEST_MYSQL_HOST` explícito e usa um banco exclusivo de testes.
+
 ## Como rodar VPS
 
 As instruções abaixo usam uma VPS Ubuntu/Debian com MySQL, Node.js 20.9 ou superior e npm instalados. O exemplo usa `agendeaki.seudominio.com` para o frontend e `api.agendeaki.seudominio.com` para a API; substitua pelos domínios configurados no DNS. Nginx e Certbot serão instalados na etapa de configuração do proxy.
