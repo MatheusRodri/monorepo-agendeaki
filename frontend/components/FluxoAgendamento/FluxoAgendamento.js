@@ -1,74 +1,100 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import DialogoAgendamento from '../DialogoAgendamento/DialogoAgendamento';
+import HorarioServico, { horarioDefinido, servicoRepetidoNaData } from './HorarioServico';
 import { requisitarApi } from '../../utils/api';
 import { limparSessao, obterTokenAcesso } from '../../utils/respostaApi';
 import { toastErro } from '../../utils/toast';
 
-function dataLocal(data = new Date()) {
-  const deslocamento = data.getTimezoneOffset() * 60000;
-  return new Date(data.getTime() - deslocamento).toISOString().slice(0, 10);
+const dinheiro = (valor) => `R$ ${Number(valor).toFixed(2).replace('.', ',')}`;
+const dataFormatada = (valor) => valor.split('-').reverse().join('/');
+function dataLocal(dias = 0) {
+  const partes = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).map(({ type, value }) => [type, value]));
+  const data = new Date(`${partes.year}-${partes.month}-${partes.day}T12:00:00Z`);
+  data.setUTCDate(data.getUTCDate() + dias);
+  return data.toISOString().slice(0, 10);
 }
-
-function caminhoAtual(slugSalao, slugFilial, selecao, retornoMapa) {
-  const parametros = new URLSearchParams();
-  if (selecao.idServico) parametros.set('servico', selecao.idServico);
-  if (selecao.idFuncionario) parametros.set('profissional', selecao.idFuncionario);
-  if (selecao.data) parametros.set('data', selecao.data);
-  if (selecao.horario) parametros.set('horario', selecao.horario);
-  if (retornoMapa !== '/cliente/inicio') parametros.set('retornoMapa', retornoMapa);
-  const consulta = parametros.toString();
-  return `/${slugSalao}/${slugFilial}${consulta ? `?${consulta}` : ''}`;
-}
-
-function normalizarLinkRetornoMapa(valor) {
-  if (!valor) return '/cliente/inicio';
+function normalizarRetorno(valor) {
   try {
-    const destino = new URL(valor, window.location.origin);
-    if (destino.origin !== window.location.origin || destino.pathname !== '/cliente/inicio') return '/cliente/inicio';
-    return `${destino.pathname}${destino.search}`;
-  } catch {
-    return '/cliente/inicio';
-  }
+    const destino = new URL(valor || '/cliente/inicio', window.location.origin);
+    if (destino.origin === window.location.origin && destino.pathname === '/cliente/inicio') return `${destino.pathname}${destino.search}`;
+  } catch {}
+  return '/cliente/inicio';
+}
+function novoItem(servico, salvo = {}) {
+  return {
+    chave: crypto.randomUUID(), idServico: String(servico.idServico), nome: servico.nome,
+    valor: Number(servico.valor), duracaoMinutos: servico.duracaoMinutos,
+    idFuncionario: 'qualquer', data: '', horario: '', fim: '', profissional: null, observacao: '',
+    ...salvo,
+  };
 }
 
 export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   const roteador = useRouter();
   const [pagina, definirPagina] = useState(null);
   const [retornoMapa, definirRetornoMapa] = useState('/cliente/inicio');
-  const [selecao, definirSelecao] = useState({ data: '', horario: '', idFuncionario: '', idServico: '' });
-  const [selecaoInicializada, definirSelecaoInicializada] = useState(false);
-  const [horarios, definirHorarios] = useState([]);
-  const [verificacaoData, definirVerificacaoData] = useState({ data: '', estado: 'livre' });
-  const [observacao, definirObservacao] = useState('');
+  const [lista, definirLista] = useState([]);
+  const [etapa, definirEtapa] = useState('servicos');
+  const [itemAtivo, definirItemAtivo] = useState(null);
+  const [inicializada, definirInicializada] = useState('');
   const [mensagem, definirMensagem] = useState('Carregando página de agendamento...');
   const [enviando, definirEnviando] = useState(false);
-  const [modalAberto, definirModalAberto] = useState(false);
-  const [profissionalConfirmacao, definirProfissionalConfirmacao] = useState(null);
+  const [revisao, definirRevisao] = useState(null);
   const [mensagemModal, definirMensagemModal] = useState('');
-  const [horarioConfirmacaoDisponivel, definirHorarioConfirmacaoDisponivel] = useState(true);
-  const [atribuicaoMudou, definirAtribuicaoMudou] = useState(false);
+  const [indiceConflito, definirIndiceConflito] = useState(null);
   const [confirmacaoFinal, definirConfirmacaoFinal] = useState(null);
   const [avaliacoes, definirAvaliacoes] = useState({ resumo: {}, servicos: [], avaliacoes: [], temMais: false });
   const [paginaAvaliacoes, definirPaginaAvaliacoes] = useState(1);
+  const focoPendente = useRef(null);
+  const chaveRascunho = `agendamentos:${slugSalao}:${slugFilial}`;
+  const dataMaxima = useMemo(() => dataLocal(60), []);
+  const total = lista.reduce((soma, item) => soma + Math.round(Number(item.valor) * 100), 0) / 100;
+  const definidos = lista.filter((item) => horarioDefinido(item) && !servicoRepetidoNaData(lista, item)).length;
+  const listaCompleta = lista.length > 0 && definidos === lista.length;
+  const idsSelecionados = new Set(lista.map((item) => String(item.idServico)));
 
   useEffect(() => {
+    let ativo = true;
+    definirPagina(null); definirRevisao(null); definirConfirmacaoFinal(null);
     const parametros = new URLSearchParams(window.location.search);
-    const novoRetornoMapa = normalizarLinkRetornoMapa(parametros.get('retornoMapa'));
-    definirRetornoMapa(novoRetornoMapa);
-    definirSelecao({
-      data: parametros.get('data') ?? '',
-      horario: parametros.get('horario') ?? '',
-      idFuncionario: parametros.get('profissional') ?? '',
-      idServico: parametros.get('servico') ?? '',
-    });
-    definirSelecaoInicializada(true);
-    requisitarApi(`/api/publico/agendamento/${slugSalao}/${slugFilial}`)
-      .then((dados) => { definirPagina(dados); definirMensagem(dados.disponivel ? '' : 'Esta filial está temporariamente sem serviços ou profissionais disponíveis.'); })
-      .catch((erro) => { definirMensagem('Não foi possível abrir a agenda. Atualize a página para tentar novamente.'); toastErro(erro.message); });
-  }, [slugFilial, slugSalao]);
+    definirRetornoMapa(normalizarRetorno(parametros.get('retornoMapa')));
+    let salvo;
+    try { salvo = JSON.parse(sessionStorage.getItem(chaveRascunho) || 'null'); } catch {}
+    requisitarApi(`/api/publico/agendamento/${slugSalao}/${slugFilial}`).then((dados) => {
+      if (!ativo) return;
+      const itens = (Array.isArray(salvo?.itens) ? salvo.itens : []).filter((item) => item && Number(item.idServico) > 0)
+        .map((item) => {
+          const servico = dados.servicos.find((opcao) => String(opcao.idServico) === String(item.idServico));
+          return novoItem(servico ?? item, { ...item, chave: item.chave || crypto.randomUUID(), idFuncionario: String(item.idFuncionario || 'qualquer'),
+            data: item.data || '', horario: item.horario || '', fim: item.fim || '', observacao: item.observacao || '',
+            ...(servico ? { nome: servico.nome, valor: Number(servico.valor), duracaoMinutos: servico.duracaoMinutos } : {}) });
+        });
+      // Restaura também um serviço em edição salvo pela versão anterior da tela.
+      const selecaoAnterior = salvo?.selecao;
+      const idInicial = selecaoAnterior?.idServico || parametros.get('servico');
+      const servicoInicial = dados.servicos.find((opcao) => String(opcao.idServico) === String(idInicial));
+      if (servicoInicial && !itens.some((item) => String(item.idServico) === String(idInicial))) {
+        itens.push(novoItem(servicoInicial, { data: selecaoAnterior?.data || parametros.get('data') || '',
+          idFuncionario: selecaoAnterior?.idFuncionario || parametros.get('profissional') || 'qualquer', observacao: salvo?.observacao || '' }));
+      }
+      const fase = salvo?.etapa === 'horarios' || (salvo?.etapa == null && itens.some(horarioDefinido)) ? 'horarios' : 'servicos';
+      const chaveAtiva = itens.some((item) => item.chave === salvo?.itemAtivo) ? salvo.itemAtivo
+        : itens[Number.isInteger(salvo?.indiceEdicao) ? salvo.indiceEdicao : -1]?.chave || itens.find((item) => !horarioDefinido(item) || servicoRepetidoNaData(itens, item))?.chave || null;
+      definirPagina(dados); definirLista(itens); definirEtapa(fase); definirItemAtivo(chaveAtiva);
+      definirMensagem(dados.disponivel ? '' : 'Esta filial está temporariamente sem serviços ou profissionais disponíveis.');
+      definirInicializada(chaveRascunho);
+    }).catch((erro) => { if (ativo) { definirMensagem('Não foi possível abrir a agenda. Atualize a página para tentar novamente.'); toastErro(erro.message); } });
+    return () => { ativo = false; };
+  }, [chaveRascunho, slugFilial, slugSalao]);
+
+  useEffect(() => {
+    if (inicializada !== chaveRascunho || confirmacaoFinal) return;
+    try { sessionStorage.setItem(chaveRascunho, JSON.stringify({ itens: lista, etapa, itemAtivo })); } catch {}
+  }, [chaveRascunho, confirmacaoFinal, etapa, inicializada, itemAtivo, lista]);
 
   useEffect(() => {
     if (!pagina?.filial?.idUnidade) return;
@@ -80,176 +106,107 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   }, [pagina?.filial?.idUnidade, paginaAvaliacoes]);
 
   useEffect(() => {
-    if (!selecaoInicializada) return;
-    const novoCaminho = caminhoAtual(slugSalao, slugFilial, selecao, retornoMapa);
-    const caminhoNavegador = `${window.location.pathname}${window.location.search}`;
-    if (novoCaminho !== caminhoNavegador) window.history.replaceState(null, '', novoCaminho);
-  }, [retornoMapa, selecao, selecaoInicializada, slugFilial, slugSalao]);
-
-  useEffect(() => {
-    if (!confirmacaoFinal) return undefined;
+    if (!confirmacaoFinal) return;
     const temporizador = window.setTimeout(() => roteador.push('/cliente/agendamentos'), 10000);
     return () => window.clearTimeout(temporizador);
   }, [confirmacaoFinal, roteador]);
 
-  const servico = useMemo(() => pagina?.servicos.find((item) => String(item.idServico) === String(selecao.idServico)), [pagina, selecao.idServico]);
-  const dataMaxima = useMemo(() => { const limite = new Date(); limite.setDate(limite.getDate() + 60); return dataLocal(limite); }, []);
-  const horarioSelecionado = horarios.find((item) => item.inicio === selecao.horario);
-
   useEffect(() => {
-    if (!selecao.data || !obterTokenAcesso('cliente')) return undefined;
-    let ativo = true;
-    definirVerificacaoData({ data: selecao.data, estado: 'verificando' });
-    requisitarApi('/api/clientes/agendamentos/verificar-data', { parametros: { data: selecao.data } })
-      .then(() => { if (ativo) definirVerificacaoData({ data: selecao.data, estado: 'livre' }); })
-      .catch((erro) => {
-        if (!ativo) return;
-        if (erro.codigo === 'LIMITE_AGENDAMENTO_DIARIO') {
-          definirVerificacaoData({ data: selecao.data, estado: 'bloqueada' });
-          definirSelecao((atual) => atual.data === selecao.data ? { ...atual, horario: '' } : atual);
-          toastErro(erro.message);
-        } else definirVerificacaoData({ data: selecao.data, estado: 'erro' });
-      });
-    return () => { ativo = false; };
-  }, [selecao.data]);
+    if (!focoPendente.current) return;
+    const destino = document.getElementById(focoPendente.current);
+    const controle = destino?.querySelector('select, input') ?? destino;
+    controle?.focus();
+    focoPendente.current = null;
+  }, [etapa, itemAtivo]);
 
-  useEffect(() => {
-    const idFuncionarioValido = selecao.idFuncionario === 'qualquer'
-      || servico?.profissionais.some((item) => String(item.idFuncionario) === String(selecao.idFuncionario));
-    if (!servico || !selecao.data || !idFuncionarioValido) { definirHorarios([]); return; }
-    const estadoData = verificacaoData.data === selecao.data ? verificacaoData.estado : 'verificando';
-    if (obterTokenAcesso('cliente') && ['verificando', 'bloqueada'].includes(estadoData)) {
-      definirHorarios([]);
-      definirMensagem(estadoData === 'bloqueada' ? 'Você já tem um agendamento ativo para este dia. Cancele-o ou escolha outra data.' : 'Verificando seus agendamentos nesta data...');
-      return;
-    }
-    let ativo = true;
-    definirMensagem('Consultando horários disponíveis...');
-    requisitarApi(`/api/publico/agendamento/${slugSalao}/${slugFilial}/horarios`, {
-      parametros: { data: selecao.data, idFuncionario: selecao.idFuncionario, idServico: selecao.idServico },
-    }).then((dados) => {
-      if (!ativo) return;
-      definirHorarios(dados.horarios);
-      definirMensagem(dados.horarios.length ? '' : 'Não há horários disponíveis nesta data. Escolha outro dia.');
-    }).catch((erro) => { if (ativo) { definirHorarios([]); definirMensagem(''); toastErro(erro.message); } });
-    return () => { ativo = false; };
-  }, [selecao.data, selecao.idFuncionario, selecao.idServico, servico, slugFilial, slugSalao, verificacaoData]);
-
-  function atualizarSelecao(alteracoes) {
-    definirSelecao((atual) => ({ ...atual, ...alteracoes }));
+  function alternarServico(servico) {
+    definirIndiceConflito(null);
+    if (idsSelecionados.has(String(servico.idServico))) {
+      definirLista((atuais) => atuais.filter((item) => String(item.idServico) !== String(servico.idServico)));
+    } else if (lista.length < 50) definirLista((atuais) => [...atuais, novoItem(servico)]);
   }
-
-  function iniciarConfirmacao(evento) {
-    evento.preventDefault();
-    if (!servico || !selecao.data || !selecao.horario || !selecao.idFuncionario) return;
-    const retorno = caminhoAtual(slugSalao, slugFilial, selecao, retornoMapa);
-    if (!obterTokenAcesso('cliente')) {
-      localStorage.setItem('retornoAgendamento', retorno);
-      roteador.push(`/cliente?retorno=${encodeURIComponent(retorno)}`);
-      return;
-    }
-
-    const profissional = horarioSelecionado?.profissionalSugerido;
-    if (!profissional) {
-      toastErro('Este horário não tem mais um profissional disponível. Escolha outro horário.');
-      return;
-    }
-    definirProfissionalConfirmacao(profissional);
-    definirMensagemModal('');
-    definirHorarioConfirmacaoDisponivel(true);
-    definirAtribuicaoMudou(false);
-    definirModalAberto(true);
+  function escolherHorarios() {
+    const primeiro = lista.find((item) => !horarioDefinido(item) || servicoRepetidoNaData(lista, item)) ?? lista[0];
+    focoPendente.current = `horario-${primeiro.chave}`;
+    definirEtapa('horarios');
+    definirItemAtivo(primeiro.chave);
   }
-
-  async function recarregarHorarioSelecionado() {
-    const dados = await requisitarApi(`/api/publico/agendamento/${slugSalao}/${slugFilial}/horarios`, {
-      parametros: { data: selecao.data, idFuncionario: selecao.idFuncionario, idServico: selecao.idServico },
-    });
-    definirHorarios(dados.horarios);
-    return dados.horarios.find((item) => item.inicio === selecao.horario) ?? null;
+  function alterarItem(chave, alteracoes) {
+    definirLista((atuais) => atuais.map((item) => item.chave === chave ? { ...item, ...alteracoes } : item));
+    definirIndiceConflito(null);
   }
-
-  async function confirmarAgendamento() {
-    if (!servico || !selecao.data || !selecao.horario || !profissionalConfirmacao || !horarioConfirmacaoDisponivel) return;
-    const retorno = caminhoAtual(slugSalao, slugFilial, selecao, retornoMapa);
-    definirEnviando(true);
-    definirMensagemModal('');
-    definirAtribuicaoMudou(false);
+  function removerItem(chave) {
+    const restantes = lista.filter((item) => item.chave !== chave);
+    definirLista(restantes); definirIndiceConflito(null);
+    if (!restantes.length) definirEtapa('servicos');
+    if (itemAtivo === chave) definirItemAtivo(restantes.find((item) => !horarioDefinido(item))?.chave ?? null);
+  }
+  function adicionarOutraData(item) {
+    if (lista.length >= 50) return;
+    const novo = novoItem(item, { idFuncionario: item.idFuncionario });
+    focoPendente.current = `horario-${novo.chave}`;
+    definirLista((atuais) => [...atuais, novo]); definirItemAtivo(novo.chave); definirIndiceConflito(null);
+  }
+  function concluirHorario(chave) {
+    const proximo = lista.find((item) => item.chave !== chave && (!horarioDefinido(item) || servicoRepetidoNaData(lista, item)));
+    focoPendente.current = proximo ? `horario-${proximo.chave}` : 'revisar-agendamentos';
+    definirItemAtivo(proximo?.chave ?? null);
+  }
+  function irParaLogin() {
+    const parametros = new URLSearchParams();
+    if (retornoMapa !== '/cliente/inicio') parametros.set('retornoMapa', retornoMapa);
+    const retorno = `/${slugSalao}/${slugFilial}${parametros.size ? `?${parametros}` : ''}`;
+    localStorage.setItem('retornoAgendamento', retorno);
+    roteador.push(`/cliente?retorno=${encodeURIComponent(retorno)}`);
+  }
+  async function consultarHorarios(item) {
+    const caminho = obterTokenAcesso('cliente') ? '/api/clientes/agendamentos/horarios' : `/api/publico/agendamento/${slugSalao}/${slugFilial}/horarios`;
+    return requisitarApi(caminho, { parametros: { data: item.data, idFuncionario: item.idFuncionario, idServico: item.idServico, idUnidade: pagina.filial.idUnidade } });
+  }
+  async function revisarLista() {
+    if (!listaCompleta || enviando) return;
+    if (!obterTokenAcesso('cliente')) { irParaLogin(); return; }
+    definirEnviando(true); definirMensagemModal(''); definirIndiceConflito(null);
+    let indiceVerificando = 0;
     try {
-      const resultado = await requisitarApi('/api/clientes/agendamentos', {
-        dados: {
-          dataHoraInicio: `${selecao.data}T${selecao.horario}:00`,
-          idFuncionario: Number(profissionalConfirmacao.idFuncionario),
-          idServico: Number(selecao.idServico),
-          idUnidade: pagina.filial.idUnidade,
-          observacao,
-        },
-        metodo: 'POST',
-      });
-      definirModalAberto(false);
-      definirConfirmacaoFinal({
-        data: selecao.data.split('-').reverse().join('/'),
-        filial: pagina.filial.nomeUnidade,
-        funcionario: resultado.nomeFuncionario || profissionalConfirmacao.nome,
-        horario: selecao.horario,
-        observacao: observacao.trim(),
-        sala: pagina.filial.nomeSalao,
-        servico: servico.nome,
-        valor: servico.valor.toFixed(2).replace('.', ','),
-      });
-      definirMensagem('');
-      localStorage.removeItem('retornoAgendamento');
-      definirHorarios((atuais) => atuais.filter((item) => item.inicio !== selecao.horario));
-      atualizarSelecao({ horario: '' });
-      definirObservacao('');
-      definirProfissionalConfirmacao(null);
-    } catch (erro) {
-      if (erro.status === 401) {
-        limparSessao('cliente'); localStorage.setItem('retornoAgendamento', retorno);
-        roteador.push(`/cliente?retorno=${encodeURIComponent(retorno)}`);
-      } else if (erro.codigo === 'LIMITE_AGENDAMENTO_DIARIO') {
-        definirMensagemModal(erro.message);
-        toastErro(erro.message);
-      } else if (erro.status === 409) {
-        try {
-          const horarioAtualizado = await recarregarHorarioSelecionado();
-          if (!horarioAtualizado) {
-            definirHorarioConfirmacaoDisponivel(false);
-            definirMensagemModal('Este horário acabou de ser reservado ou deixou de estar disponível. Altere a seleção para continuar.');
-          } else {
-            const novaAtribuicao = horarioAtualizado.profissionalSugerido;
-            definirHorarioConfirmacaoDisponivel(Boolean(novaAtribuicao));
-            if (novaAtribuicao && Number(novaAtribuicao.idFuncionario) !== Number(profissionalConfirmacao.idFuncionario)) {
-              definirProfissionalConfirmacao(novaAtribuicao);
-              definirAtribuicaoMudou(true);
-              definirMensagemModal(`A disponibilidade mudou. O profissional disponível agora é ${novaAtribuicao.nome}. Revise e confirme novamente.`);
-            } else {
-              definirMensagemModal(novaAtribuicao
-                ? 'A disponibilidade mudou durante a confirmação. Revise os dados e tente novamente.'
-                : 'Este horário não tem mais um profissional disponível. Altere a seleção para continuar.');
-            }
-          }
-        } catch (falhaAtualizacao) {
-          definirHorarioConfirmacaoDisponivel(true);
-          definirMensagemModal(falhaAtualizacao.message || 'Não foi possível atualizar a disponibilidade. Tente novamente.');
+      const atualizada = [];
+      let atribuicaoMudou = false;
+      for (let indice = 0; indice < lista.length; indice += 1) {
+        indiceVerificando = indice;
+        const item = lista[indice];
+        const dados = await consultarHorarios(item);
+        const horario = dados.horarios.find((opcao) => opcao.inicio === item.horario);
+        if (!horario || lista.some((outro, j) => indice !== j && outro.data === item.data && item.horario < outro.fim && horario.fim > outro.horario)) {
+          throw new Error(`O horário de ${item.nome} não está mais disponível. Escolha outro horário.`);
         }
-      } else toastErro(erro.message);
+        const profissional = horario.profissionais.find((p) => Number(p.idFuncionario) === Number(item.profissional.idFuncionario)) ?? horario.profissionalSugerido;
+        atribuicaoMudou ||= Number(profissional.idFuncionario) !== Number(item.profissional.idFuncionario);
+        atualizada.push({ ...item, fim: horario.fim, profissional, nome: dados.servico.nome, valor: dados.servico.valor, duracaoMinutos: dados.duracaoMinutos });
+      }
+      definirLista(atualizada); definirRevisao(atualizada);
+      if (atribuicaoMudou) definirMensagemModal('A disponibilidade mudou e houve nova atribuição de profissional. Revise a lista antes de confirmar.');
+    } catch (erro) {
+      definirRevisao(null); definirIndiceConflito(indiceVerificando); definirItemAtivo(lista[indiceVerificando]?.chave ?? null);
+      if (erro.status === 401) { limparSessao('cliente'); irParaLogin(); } else toastErro(erro.message);
     } finally { definirEnviando(false); }
   }
-
-  function alterarAgendamento() {
-    definirModalAberto(false);
-    definirMensagemModal('');
-    definirAtribuicaoMudou(false);
-  }
-
-  function cancelarAgendamento() {
-    definirModalAberto(false);
-    definirSelecao({ data: '', horario: '', idFuncionario: '', idServico: '' });
-    definirObservacao('');
-    definirProfissionalConfirmacao(null);
-    definirMensagemModal('');
-    definirMensagem('');
+  async function confirmarAgendamentos() {
+    if (!revisao || enviando) return;
+    definirEnviando(true);
+    try {
+      const resultado = await requisitarApi('/api/clientes/agendamentos/lote', { metodo: 'POST', dados: {
+        idUnidade: pagina.filial.idUnidade,
+        itens: revisao.map((item) => ({ idServico: Number(item.idServico), idFuncionario: item.profissional.idFuncionario, dataHoraInicio: `${item.data}T${item.horario}:00`, observacao: item.observacao })),
+      } });
+      definirConfirmacaoFinal(resultado.agendamentos); definirRevisao(null); definirLista([]);
+      sessionStorage.removeItem(chaveRascunho); localStorage.removeItem('retornoAgendamento');
+    } catch (erro) {
+      if (erro.status === 401) { limparSessao('cliente'); irParaLogin(); }
+      else if (erro.status === 409) {
+        definirRevisao(null); definirIndiceConflito(erro.indiceItem ?? null); definirItemAtivo(lista[erro.indiceItem]?.chave ?? null);
+        toastErro(`${erro.message} Nenhum serviço foi reservado. Revise os horários para confirmar novamente.`);
+      } else definirMensagemModal(erro.message);
+    } finally { definirEnviando(false); }
   }
 
   if (!pagina) return <main className="pagina-agendamento-publico"><p className="estado-lista">{mensagem}</p></main>;
@@ -257,21 +214,58 @@ export default function FluxoAgendamento({ slugFilial, slugSalao }) {
   return <main className="pagina-agendamento-publico">
     <header className="cabecalho-agendamento-publico"><Link className="marca" href="/"><span className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><Link className="botao-voltar-mapa" href={retornoMapa}>← Voltar ao mapa</Link></header>
     <section className="apresentacao-filial"><p className="sobretitulo">Agendamento online</p><h1>{filial.nomeSalao}</h1><p><strong>{filial.nomeUnidade}</strong> · {String(filial.categoria).toLowerCase()}</p><address>{filial.rua}, {filial.numero}{filial.complemento ? ` · ${filial.complemento}` : ''}<br />{filial.bairro}, {filial.municipio}/{filial.estado}{filial.telefone ? ` · ${filial.telefone}` : ''}{filial.email && <> · <a href={`mailto:${filial.email}`}>{filial.email}</a></>}</address></section>
-    <form className="fluxo-agendamento" onSubmit={iniciarConfirmacao}>
-      <Etapa numero="1" titulo="Escolha o serviço">
-        <div className="opcoes-agendamento">{pagina.servicos.map((item) => { const resumo = avaliacoes.servicos.find((avaliacao) => Number(avaliacao.idServico) === Number(item.idServico)); return <button className={String(item.idServico) === String(selecao.idServico) ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} key={item.idServico} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: '', idServico: String(item.idServico) })} type="button"><strong>{item.nome}</strong><span>{item.duracaoMinutos} min · R$ {item.valor.toFixed(2).replace('.', ',')}</span><small>{item.descricao || 'Um cuidado pensado para você.'}</small>{resumo && <small>★ {Number(resumo.mediaServico).toFixed(1)} · {resumo.quantidade} avaliações</small>}</button>; })}</div>
+    <div className="fluxo-agendamento">
+      <Etapa numero="1" titulo="Escolha seus serviços" acao={etapa === 'horarios' && <button className="link-etapa-agendamento" disabled={enviando} onClick={() => definirEtapa('servicos')} type="button">Alterar serviços</button>}>
+        {etapa === 'servicos' ? <>
+          <p className="etapa-agendamento__ajuda">Selecione um ou mais serviços para agendar.</p>
+          <div className="opcoes-agendamento">{pagina.servicos.map((item) => {
+            const selecionado = idsSelecionados.has(String(item.idServico));
+            const resumo = avaliacoes.servicos.find((avaliacao) => Number(avaliacao.idServico) === Number(item.idServico));
+            return <button aria-pressed={selecionado} className={`opcao-agendamento opcao-agendamento--servico${selecionado ? ' opcao-agendamento--ativa' : ''}`} disabled={!selecionado && lista.length >= 50} key={item.idServico} onClick={() => alternarServico(item)} type="button">
+              <span aria-hidden="true" className="opcao-agendamento__check">{selecionado ? '✓' : ''}</span>
+              <strong>{item.nome}</strong><span>{item.duracaoMinutos} min · {dinheiro(item.valor)}</span>
+              {item.descricao && <small>{item.descricao}</small>}
+              {resumo && <small>★ {Number(resumo.mediaServico).toFixed(1)} · {resumo.quantidade} avaliações</small>}
+            </button>;
+          })}</div>
+          <div className="rodape-selecao-servicos"><p aria-live="polite">{idsSelecionados.size ? `${idsSelecionados.size} serviço${idsSelecionados.size > 1 ? 's' : ''} selecionado${idsSelecionados.size > 1 ? 's' : ''}` : 'Escolha os serviços acima'}{lista.length > 0 && <strong>{dinheiro(total)}</strong>}</p><button className="botao-enviar" disabled={!lista.length} onClick={escolherHorarios} type="button">Escolher horários →</button></div>
+        </> : <p className="etapa-agendamento__ajuda">{pagina.servicos.filter((item) => idsSelecionados.has(String(item.idServico))).map((item) => item.nome).join(' · ')}</p>}
       </Etapa>
-      {servico && <Etapa numero="2" titulo="Escolha o profissional"><div className="opcoes-agendamento opcoes-agendamento--compactas"><button className={selecao.idFuncionario === 'qualquer' ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: 'qualquer' })} type="button"><strong>Sem preferência</strong><small>Mostraremos quem será atribuído antes de você confirmar.</small></button>{servico.profissionais.map((item) => <button className={String(item.idFuncionario) === String(selecao.idFuncionario) ? 'opcao-agendamento opcao-agendamento--ativa' : 'opcao-agendamento'} key={item.idFuncionario} onClick={() => atualizarSelecao({ data: '', horario: '', idFuncionario: String(item.idFuncionario) })} type="button"><strong>{item.nome}</strong></button>)}</div></Etapa>}
-      {selecao.idFuncionario && <Etapa numero="3" titulo="Escolha a data"><label className="campo-formulario campo-data-agendamento"><span>Data do atendimento</span><input max={dataMaxima} min={dataLocal()} onChange={(evento) => atualizarSelecao({ data: evento.target.value, horario: '' })} required type="date" value={selecao.data} /></label></Etapa>}
-      {selecao.data && <Etapa numero="4" titulo="Escolha o horário"><div className="grade-horarios">{horarios.map((item) => <button className={item.inicio === selecao.horario ? 'horario-disponivel horario-disponivel--ativo' : 'horario-disponivel'} key={item.inicio} onClick={() => atualizarSelecao({ horario: item.inicio })} type="button">{item.inicio}</button>)}</div>{mensagem && <p className="estado-lista">{mensagem}</p>}</Etapa>}
-      {selecao.horario && <Etapa numero="5" titulo="Revise e confirme"><div className="resumo-agendamento"><strong>{servico.nome}</strong><span>{selecao.data.split('-').reverse().join('/')} às {selecao.horario}</span><span>{servico.duracaoMinutos} min · R$ {servico.valor.toFixed(2).replace('.', ',')}</span></div><label className="campo-formulario"><span>Observação <small>Opcional</small></span><textarea maxLength="500" onChange={(evento) => definirObservacao(evento.target.value)} value={observacao} /></label><button className="botao-enviar" disabled={enviando} type="submit">{obterTokenAcesso('cliente') ? 'Finalizar agendamento' : 'Entrar para continuar'} →</button></Etapa>}
-    </form>
-    {modalAberto && <div className="modal-revisao-agendamento" role="presentation"><section aria-labelledby="titulo-revisao-agendamento" aria-modal="true" className="modal-revisao-agendamento__conteudo" role="dialog"><p className="sobretitulo">Confira antes de confirmar</p><h2 id="titulo-revisao-agendamento">Resumo do agendamento</h2><dl className="modal-revisao-agendamento__detalhes"><div><dt>Salão</dt><dd>{filial.nomeSalao}</dd></div><div><dt>Filial</dt><dd>{filial.nomeUnidade}</dd></div><div><dt>Serviço</dt><dd>{servico?.nome}</dd></div><div><dt>Profissional</dt><dd>{profissionalConfirmacao?.nome || 'Indisponível'}{selecao.idFuncionario === 'qualquer' && <small> atribuído automaticamente</small>}</dd></div><div><dt>Data e horário</dt><dd>{selecao.data.split('-').reverse().join('/')} às {selecao.horario}</dd></div><div><dt>Duração</dt><dd>{servico?.duracaoMinutos} min</dd></div><div><dt>Valor</dt><dd>R$ {servico?.valor.toFixed(2).replace('.', ',')}</dd></div>{observacao.trim() && <div><dt>Observação</dt><dd>{observacao.trim()}</dd></div>}</dl>{mensagemModal && <p className="modal-revisao-agendamento__mensagem" role="status">{mensagemModal}</p>}<div className="modal-revisao-agendamento__acoes"><button className="botao-secundario modal-revisao-agendamento__cancelar" disabled={enviando} onClick={cancelarAgendamento} type="button">Cancelar</button><button className="botao-secundario" disabled={enviando} onClick={alterarAgendamento} type="button">Alterar</button><button className="botao-enviar" disabled={enviando || !horarioConfirmacaoDisponivel || !profissionalConfirmacao} onClick={confirmarAgendamento} type="button">{enviando ? 'Confirmando...' : atribuicaoMudou ? 'Confirmar novo profissional' : 'Confirmar agendamento'}</button></div></section></div>}
-    {confirmacaoFinal && <div className="modal-revisao-agendamento" role="presentation"><section aria-labelledby="titulo-agendamento-confirmado" aria-modal="true" className="modal-revisao-agendamento__conteudo modal-revisao-agendamento__sucesso" role="dialog"><span aria-hidden="true" className="modal-revisao-agendamento__icone">✓</span><p className="sobretitulo">Tudo certo</p><h2 id="titulo-agendamento-confirmado">Agendamento confirmado!</h2><p className="modal-revisao-agendamento__texto">Sua reserva foi realizada. Você será levado aos seus agendamentos em alguns segundos.</p><dl className="modal-revisao-agendamento__detalhes"><div><dt>Salão</dt><dd>{confirmacaoFinal.sala}</dd></div><div><dt>Filial</dt><dd>{confirmacaoFinal.filial}</dd></div><div><dt>Serviço</dt><dd>{confirmacaoFinal.servico}</dd></div><div><dt>Profissional</dt><dd>{confirmacaoFinal.funcionario}</dd></div><div><dt>Data e horário</dt><dd>{confirmacaoFinal.data} às {confirmacaoFinal.horario}</dd></div><div><dt>Valor</dt><dd>R$ {confirmacaoFinal.valor}</dd></div>{confirmacaoFinal.observacao && <div><dt>Observação</dt><dd>{confirmacaoFinal.observacao}</dd></div>}</dl><button className="botao-enviar modal-revisao-agendamento__ir-agendamentos" onClick={() => roteador.push('/cliente/agendamentos')} type="button">Ir para meus agendamentos →</button></section></div>}
-    <section className="avaliacoes-publicas"><h2>Avaliações desta filial</h2><p>{avaliacoes.resumo.quantidade ? `★ ${Number(avaliacoes.resumo.mediaSalao).toFixed(1)} · ${avaliacoes.resumo.quantidade} avaliações` : 'Esta filial ainda não recebeu avaliações.'}</p><div className="lista-avaliacoes">{avaliacoes.avaliacoes.map((avaliacao) => <article className="cartao-avaliacao" key={avaliacao.idAvaliacao}><strong>{avaliacao.primeiroNome}</strong><small>{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(new Date(avaliacao.dataAvaliacao))} · {avaliacao.servico}</small><span>Filial {avaliacao.notaSalao} ★ · Serviço {avaliacao.notaServico} ★</span>{avaliacao.comentario && <p>{avaliacao.comentario}</p>}</article>)}</div>{avaliacoes.temMais && <button className="botao-secundario" onClick={() => definirPaginaAvaliacoes((atual) => atual + 1)} type="button">Ver mais avaliações</button>}</section>
-  </main>;
+      {etapa === 'horarios' && <>
+        <Etapa numero="2" titulo="Escolha os horários">
+          <p className="etapa-agendamento__ajuda">Defina a data e o profissional de cada serviço. Pode ser no mesmo dia ou em dias diferentes.</p>
+          <p className="progresso-horarios" aria-live="polite">{definidos} de {lista.length} serviço{lista.length > 1 ? 's' : ''} com horário definido</p>
+          <div className="servicos-selecionados">{lista.map((item, indice) => {
+            const aberto = itemAtivo === item.chave;
+            const repetido = servicoRepetidoNaData(lista, item);
+            const completo = horarioDefinido(item) && !repetido;
+            const servico = pagina.servicos.find((opcao) => String(opcao.idServico) === String(item.idServico));
+            return <article className={`servico-selecionado${aberto ? ' servico-selecionado--aberto' : ''}`} key={item.chave}>
+              <h3 className="servico-selecionado__titulo"><button aria-expanded={aberto} aria-controls={`horario-${item.chave}`} className="servico-selecionado__abrir" disabled={enviando} onClick={() => definirItemAtivo(aberto ? null : item.chave)} type="button">
+                <span aria-hidden="true" className={`servico-selecionado__numero${completo ? ' servico-selecionado__numero--pronto' : ''}`}>{completo ? '✓' : indice + 1}</span>
+                <span className="servico-selecionado__descricao"><strong>{item.nome}</strong><span>{completo ? `${dataFormatada(item.data)} · ${item.horario}–${item.fim} · ${item.profissional.nome}` : 'Escolha a data e o horário'}</span></span>
+                <span className="servico-selecionado__valor">{dinheiro(item.valor)}</span><span aria-hidden="true" className="servico-selecionado__seta">{aberto ? '−' : '+'}</span>
+              </button></h3>
+              <div className="servico-selecionado__conteudo" hidden={!aberto} id={`horario-${item.chave}`}>
+                {aberto && <HorarioServico item={item} itens={lista} servico={servico} idUnidade={filial.idUnidade} slugSalao={slugSalao} slugFilial={slugFilial} dataMinima={dataLocal()} dataMaxima={dataMaxima} aoAlterar={(alteracoes) => alterarItem(item.chave, alteracoes)} aoConcluir={() => concluirHorario(item.chave)} temProximo={lista.some((outro) => outro.chave !== item.chave && (!horarioDefinido(outro) || servicoRepetidoNaData(lista, outro)))} />}
+              </div>
+              {indiceConflito === indice && <p className="aviso-horario-servico servico-selecionado__aviso" role="alert">Revise este serviço antes de confirmar: a disponibilidade mudou.</p>}
+              <div className="servico-selecionado__acoes">{completo && <button className="link-etapa-agendamento" disabled={enviando || lista.length >= 50} onClick={() => adicionarOutraData(item)} type="button">+ Agendar em outro dia</button>}<button aria-label={`Remover serviço ${indice + 1}: ${item.nome}`} className="link-etapa-agendamento link-etapa-agendamento--remover" disabled={enviando} onClick={() => removerItem(item.chave)} type="button">Remover</button></div>
+            </article>;
+          })}</div>
+        </Etapa>
+        <section aria-labelledby="titulo-resumo-servicos" className="etapa-agendamento resumo-servicos-agendamento">
+          <div><h2 id="titulo-resumo-servicos">Resumo do agendamento</h2><p className="etapa-agendamento__ajuda">{lista.length} serviço{lista.length > 1 ? 's' : ''}{listaCompleta ? ' · Tudo pronto para revisar' : ' · Falta definir os horários'}</p></div>
+          <div className="resumo-servicos-agendamento__total"><span>Total</span><strong>{dinheiro(total)}</strong></div>
+          <button className="botao-enviar" disabled={enviando || !listaCompleta} id="revisar-agendamentos" onClick={revisarLista} type="button">{enviando ? 'Verificando horários...' : obterTokenAcesso('cliente') ? 'Revisar agendamentos' : 'Entrar para continuar'} →</button>
+        </section>
+      </>}
+    </div>
+    {revisao && <DialogoAgendamento tituloId="titulo-revisao-agendamento" retornoFocoId="revisar-agendamentos" aoFechar={() => definirRevisao(null)} ocupado={enviando} classe="modal-revisao-agendamento" classeConteudo="modal-revisao-agendamento__conteudo"><p className="sobretitulo">Confira antes de confirmar</p><h2 id="titulo-revisao-agendamento">Resumo dos agendamentos</h2><p>{filial.nomeSalao} · {filial.nomeUnidade}</p><ol>{revisao.map((item, indice) => <li className="resumo-agendamento" key={indice}><strong>{item.nome}</strong><span>{dataFormatada(item.data)} · {item.horario}–{item.fim}</span><span>{item.profissional.nome}{item.idFuncionario === 'qualquer' ? ' · atribuído automaticamente' : ''}</span><span>{dinheiro(item.valor)}</span>{item.observacao && <small>{item.observacao}</small>}</li>)}</ol><p><strong>Total: {dinheiro(total)}</strong></p>{mensagemModal && <p role="status">{mensagemModal}</p>}<div className="modal-revisao-agendamento__acoes"><button className="botao-secundario" disabled={enviando} onClick={() => definirRevisao(null)} type="button">Alterar lista</button><button className="botao-enviar" disabled={enviando} onClick={confirmarAgendamentos} type="button">{enviando ? 'Confirmando...' : 'Confirmar agendamentos'}</button></div></DialogoAgendamento>}
+    {confirmacaoFinal && <DialogoAgendamento tituloId="titulo-agendamento-confirmado" aoFechar={() => roteador.push('/cliente/agendamentos')} classe="modal-revisao-agendamento" classeConteudo="modal-revisao-agendamento__conteudo modal-revisao-agendamento__sucesso"><span aria-hidden="true" className="modal-revisao-agendamento__icone">✓</span><h2 id="titulo-agendamento-confirmado">Agendamentos confirmados!</h2><p>{confirmacaoFinal.length} serviço(s) reservado(s) em {filial.nomeUnidade}. Você será levado aos seus agendamentos em alguns segundos.</p><ul>{confirmacaoFinal.map((item) => <li key={item.idAgendamento}>{item.nomeServico} · {dataFormatada(item.dataInicioBanco.slice(0, 10))} às {item.dataInicioBanco.slice(11, 16)} · {item.nomeFuncionario} · {dinheiro(item.valorServico)}</li>)}</ul><button className="botao-enviar" onClick={() => roteador.push('/cliente/agendamentos')} type="button">Ir para meus agendamentos →</button></DialogoAgendamento>}
+    <section className="avaliacoes-publicas"><h2>Avaliações desta filial</h2><p>{avaliacoes.resumo.quantidade ? `★ ${Number(avaliacoes.resumo.mediaSalao).toFixed(1)} · ${avaliacoes.resumo.quantidade} avaliações` : 'Esta filial ainda não recebeu avaliações.'}</p><div className="lista-avaliacoes">{avaliacoes.avaliacoes.map((avaliacao) => <article className="cartao-avaliacao" key={avaliacao.idAvaliacao}><strong>{avaliacao.primeiroNome}</strong><small>{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(new Date(avaliacao.dataAvaliacao))} · {avaliacao.servico}</small><span>Filial {avaliacao.notaSalao} ★ · Serviço {avaliacao.notaServico} ★</span>{avaliacao.comentario && <p>{avaliacao.comentario}</p>}</article>)}</div>{avaliacoes.temMais && <button className="botao-secundario" onClick={() => definirPaginaAvaliacoes((atual) => atual + 1)} type="button">Ver mais avaliações</button>}</section>  </main>;
 }
 
-function Etapa({ children, numero, titulo }) {
-  return <section className="etapa-agendamento"><div className="etapa-agendamento__titulo"><span>{numero}</span><h2>{titulo}</h2></div>{children}</section>;
+function Etapa({ children, numero, titulo, acao }) {
+  return <section className="etapa-agendamento"><div className="etapa-agendamento__cabecalho"><div className="etapa-agendamento__titulo"><span>{numero}</span><h2>{titulo}</h2></div>{acao}</div>{children}</section>;
 }

@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next build",
+    "test:agendamentos": "playwright test --config=playwright.agendamentos.config.js",
     "test:a11y": "npm run build && playwright test"
   },
   "dependencies": {
