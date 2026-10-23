@@ -68,13 +68,13 @@ Para uma instalação nova, execute o script inicial:
 mysql -u root -p < database/script.sql
 ```
 
-O script cria o banco `tcc_salao` e suas tabelas. Para uma base existente, faça backup e aplique as migrações pendentes em `database/migracoes/`; não use o script inicial como substituto de uma migração.
+O script cria o banco `tccsalao` e suas tabelas. Se já houver uma base com outro nome, transfira os dados para `tccsalao` antes de reiniciar o backend com a configuração atualizada. Para uma base existente, faça backup e aplique as migrações pendentes em `database/migracoes/`; não use o script inicial como substituto de uma migração.
 
 Crie também o usuário local configurado no `backend/.env` (ou ajuste as variáveis para uma conta MySQL existente):
 
 ```sql
 CREATE USER 'agendeaki_user'@'localhost' IDENTIFIED BY 'SENHA_FORTE';
-GRANT ALL PRIVILEGES ON tcc_salao.* TO 'agendeaki_user'@'localhost';
+GRANT ALL PRIVILEGES ON tccsalao.* TO 'agendeaki_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
@@ -104,7 +104,7 @@ A remoção final apaga os documentos em texto simples da tabela. Revise também
 Em uma base existente, aplique a migração antes de publicar a versão que inclui `/admin`:
 
 ```bash
-mysql -u agendeaki_user -p tcc_salao < database/migracoes/2026-10-22-painel-administrativo.sql
+mysql -u agendeaki_user -p tccsalao < database/migracoes/2026-10-22-painel-administrativo.sql
 ```
 
 Em uma base nova, `database/script.sql` já cria o perfil e as tabelas de histórico.
@@ -233,6 +233,45 @@ Em uma base existente, aplique `database/migracoes/2026-10-09-notificacoes-push.
 
 O navegador e o sistema operacional precisam permitir notificações. Em produção, o site deve usar HTTPS; em desenvolvimento, `localhost` é aceito pelos navegadores.
 
+## Agendamento de vários serviços e serviços adicionais
+
+O cliente seleciona vários serviços na primeira etapa e depois escolhe profissional, data e horário para cada um, em cartões dentro do mesmo fluxo. A opção **Agendar em outro dia** permite repetir um serviço em datas diferentes. O mesmo serviço não pode ser reservado mais de uma vez por cliente no mesmo dia, mesmo com horários ou profissionais diferentes; reservas canceladas ou com ausência não impedem uma nova tentativa. A confirmação é integral: qualquer conflito impede a gravação de toda a lista. Os agendamentos confirmados continuam independentes para cancelar, reagendar, concluir e avaliar. A disponibilidade também considera os outros horários do cliente, inclusive em outras filiais. A lista em andamento fica no armazenamento de sessão do navegador, separada por filial, e é preservada durante o login.
+
+Ao clicar em **Realizado**, o salão pode incluir serviços adicionais do catálogo da filial, com profissional habilitado e valor cobrado ajustável. Os adicionais aparecem no histórico e na receita realizada, atribuídos a seus serviços e profissionais. Eles não alteram o horário reservado nem a ocupação estimada; a avaliação continua vinculada ao serviço original.
+
+### Atualizar uma instalação existente
+
+1. Aplique a migração aditiva antes de publicar a aplicação:
+
+   ```bash
+   mysql -u agendeaki_user -p tccsalao < database/migracoes/2026-10-23-servicos-adicionais.sql
+   ```
+
+2. Publique o backend, que mantém a criação individual e acrescenta a confirmação em lote.
+3. Gere e publique o frontend atualizado. A consulta antiga `/agendamentos/verificar-data` foi substituída por `/agendamentos/horarios`; atualize as duas aplicações na mesma janela de publicação.
+
+A migração cria a tabela de adicionais e a view de serviços para os relatórios. Pode ser reaplicada e não converte os agendamentos antigos. O esquema inicial já inclui essas estruturas. O usuário de banco da migração precisa de permissão para criar tabelas e views; o usuário da aplicação precisa consultar a view.
+
+### API
+
+- `GET /api/clientes/agendamentos/horarios`: recebe `idUnidade`, `idServico`, `idFuncionario` (ou `qualquer`) e `data`; retorna horários livres para o cliente autenticado.
+- `POST /api/clientes/agendamentos/lote`: recebe `{ idUnidade, itens: [{ idServico, idFuncionario, dataHoraInicio, observacao }] }`. Aceita de 1 a 50 itens com profissional confirmado. O início usa o formato local `YYYY-MM-DDTHH:mm:ss`, no fuso de São Paulo. Em caso de erro, retorna `mensagem`, `codigo` e, quando relacionado a um item, `indiceItem` começando em zero. O sucesso retorna `agendamentos` com os IDs e dados das reservas.
+- `PATCH /api/salao/agendamentos/:idAgendamento/confirmar-atendimento`: aceita a lista opcional `servicosAdicionais: [{ idServico, idFuncionario, valorCobrado }]`, com até 50 extras. A omissão de `valorCobrado` usa o preço cadastrado. Os valores aceitam até duas casas decimais e não podem ser negativos. Uma conclusão repetida retorna conflito, sem duplicar extras nem notificações.
+- As listagens de agendamentos acrescentam `servicosAdicionais` e `valorTotal`, mantendo `valor` como preço original da reserva.
+
+### Testes
+
+Na pasta `backend`, execute `npm test` para as validações unitárias. Os testes de integração são ignorados quando não há uma conexão explicitamente configurada. Para testar gravações, concorrência, reagendamento, conclusão e relatórios em uma instância MySQL de testes:
+
+```bash
+cd backend
+TEST_MYSQL_SOCKET=/caminho/da/instancia-de-testes/mysql.sock TEST_MYSQL_USER=root npm test
+```
+
+Também é possível informar `TEST_MYSQL_HOST`, `TEST_MYSQL_PORT`, `TEST_MYSQL_USER` e `TEST_MYSQL_PASSWORD`. A suíte cria e remove apenas um banco exclusivo chamado `agendeaki_agendamentos_test_<pid>`; use uma instância dedicada e um usuário com permissão para criar e remover esse banco. Ela carrega o esquema, reaplica a migração e simula a autenticação, sem chamar o Supabase ou enviar push. `MYSQL_SOCKET` é uma opção de conexão por socket também suportada pela aplicação.
+
+Na pasta `frontend`, execute `npm run build` e `npm run test:agendamentos`. Os testes Playwright usam API simulada e um servidor próprio na porta 3107. Cobrem lista, conflitos, preservação no login e na expiração de sessão, conclusão com extras e acessibilidade dos modais.
+
 ## Como rodar VPS
 
 As instruções abaixo usam uma VPS Ubuntu/Debian com MySQL, Node.js 20.9 ou superior e npm instalados. O exemplo usa `agendeaki.seudominio.com` para o frontend e `api.agendeaki.seudominio.com` para a API; substitua pelos domínios configurados no DNS. Nginx e Certbot serão instalados na etapa de configuração do proxy.
@@ -267,7 +306,7 @@ No MySQL, conceda acesso ao usuário que será configurado no `backend/.env`:
 
 ```sql
 CREATE USER 'agendeaki_user'@'localhost' IDENTIFIED BY 'SENHA_FORTE';
-GRANT ALL PRIVILEGES ON tcc_salao.* TO 'agendeaki_user'@'localhost';
+GRANT ALL PRIVILEGES ON tccsalao.* TO 'agendeaki_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
