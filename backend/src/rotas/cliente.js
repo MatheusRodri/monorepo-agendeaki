@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
-import { listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
+import { bloquearRecursosAgenda, criarTransacaoAgenda, listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
 import {
   criarNotificacaoCliente,
@@ -18,10 +18,10 @@ import {
   notificarSalaoDoAgendamento,
 } from '../servicos/notificacoesPush.js';
 
+import { criarReservasCliente, idValido, incluirServicosAdicionais } from '../servicos/agendamentos.js';
+
 const roteadorCliente = Router();
 const raiosPermitidos = [0, 1, 5, 10];
-const codigoLimiteAgendamentoDiario = 'LIMITE_AGENDAMENTO_DIARIO';
-const mensagemLimiteAgendamentoDiario = 'Você já tem um agendamento ativo para este dia. Cancele-o ou escolha outra data.';
 
 function extrairTokenAcesso(requisicao) {
   const cabecalhoAutorizacao = requisicao.headers.authorization;
@@ -63,69 +63,18 @@ async function obterClienteAutenticado(requisicao, resposta) {
   }
 }
 
-async function existeAgendamentoDiario({ idUsuario, dataInicioBanco, idAgendamentoIgnorado = null, transaction = null }) {
-  const dataLocal = String(dataInicioBanco).slice(0, 10);
-  const [ano, mes, dia] = dataLocal.split('-').map(Number);
-  const dataSeguinte = new Date(Date.UTC(ano, mes - 1, dia + 1)).toISOString().slice(0, 10);
-  const agendamentosNoDia = await bancoDeDados.query(
-    `SELECT id_agendamento FROM tb_agendamento
-     WHERE fk_usuario=:idUsuario AND cd_status='AGENDADO'
-       AND dt_inicio >= :inicioDia AND dt_inicio < :fimDia
-       AND (:idAgendamentoIgnorado IS NULL OR id_agendamento<>:idAgendamentoIgnorado)
-     LIMIT 1 ${transaction ? 'FOR UPDATE' : ''}`,
-    {
-      replacements: {
-        idUsuario,
-        inicioDia: `${dataLocal} 00:00:00`,
-        fimDia: `${dataSeguinte} 00:00:00`,
-        idAgendamentoIgnorado,
-      },
-      transaction,
-      type: QueryTypes.SELECT,
-    },
-  );
-  return agendamentosNoDia.length > 0;
-}
-
-async function bloquearAgendamentoDiario(opcoes) {
-  if (await existeAgendamentoDiario(opcoes)) {
-    throw Object.assign(new Error(mensagemLimiteAgendamentoDiario), {
-      codigo: codigoLimiteAgendamentoDiario,
-      status: 409,
-    });
-  }
-}
-
-async function verificarAgendamentoDiario(requisicao, resposta) {
+async function consultarHorariosAgendamento(requisicao, resposta) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
-  const data = String(requisicao.query.data ?? '');
-  const dataUtc = /^\d{4}-\d{2}-\d{2}$/.test(data) ? new Date(`${data}T00:00:00Z`) : null;
-  if (!dataUtc || Number.isNaN(dataUtc.getTime()) || dataUtc.toISOString().slice(0, 10) !== data) {
-    resposta.status(400).json({ mensagem: 'Informe uma data válida.' });
-    return;
+  const { data, idUnidade, idServico, idFuncionario } = requisicao.query;
+  if (![idUnidade, idServico].every(idValido) || (idFuncionario && idFuncionario !== 'qualquer' && !idValido(idFuncionario))) {
+    resposta.status(400).json({ mensagem: 'Informe filial, serviço e profissional válidos.' }); return;
   }
-  let idAgendamentoIgnorado = null;
-  if (requisicao.query.ignorarIdAgendamento != null) {
-    idAgendamentoIgnorado = Number(requisicao.query.ignorarIdAgendamento);
-    if (!Number.isSafeInteger(idAgendamentoIgnorado) || idAgendamentoIgnorado <= 0) {
-      resposta.status(400).json({ mensagem: 'Informe um agendamento válido.' });
-      return;
-    }
-    const agendamentos = await bancoDeDados.query(
-      "SELECT id_agendamento FROM tb_agendamento WHERE id_agendamento=:idAgendamento AND fk_usuario=:idUsuario AND cd_status='AGENDADO' LIMIT 1",
-      { replacements: { idAgendamento: idAgendamentoIgnorado, idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
-    );
-    if (!agendamentos.length) {
-      resposta.status(404).json({ mensagem: 'Agendamento não encontrado.' });
-      return;
-    }
-  }
-  if (await existeAgendamentoDiario({ idUsuario: cliente.idUsuario, dataInicioBanco: data, idAgendamentoIgnorado })) {
-    resposta.status(409).json({ mensagem: mensagemLimiteAgendamentoDiario, codigo: codigoLimiteAgendamentoDiario });
-    return;
-  }
-  resposta.status(200).json({ disponivel: true });
+  try {
+    resposta.json(await listarHorariosDisponiveis({ data: String(data ?? ''), idUnidade: Number(idUnidade),
+      idServico: Number(idServico), idFuncionario: !idFuncionario || idFuncionario === 'qualquer' ? null : Number(idFuncionario),
+      idUsuario: cliente.idUsuario }));
+  } catch (erro) { resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo }); }
 }
 
 async function localizarCidade(cidade) {
@@ -398,75 +347,27 @@ async function listarServicosSalao(requisicao, resposta) {
 }
 
 async function criarAgendamento(requisicao, resposta) {
+  return criarAgendamentosCliente(requisicao, resposta, false);
+}
+
+async function criarAgendamentoLote(requisicao, resposta) {
+  return criarAgendamentosCliente(requisicao, resposta, true);
+}
+
+async function criarAgendamentosCliente(requisicao, resposta, lote) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
-
-  const dadosAgendamento = requisicao.body ?? {};
-  const idUnidade = Number(dadosAgendamento.idUnidade);
-  const idServico = Number(dadosAgendamento.idServico);
-  const idFuncionario = dadosAgendamento.idFuncionario == null || dadosAgendamento.idFuncionario === ''
-    ? null
-    : Number(dadosAgendamento.idFuncionario);
-
-  if (![idUnidade, idServico].every(Number.isInteger) || (idFuncionario !== null && !Number.isInteger(idFuncionario))) {
-    resposta.status(400).json({ mensagem: 'Informe unidade, serviço, profissional e horário válidos.' });
-    return;
-  }
-
-  const transacao = await bancoDeDados.transaction();
-
+  const dados = requisicao.body ?? {};
   try {
-    await bancoDeDados.query(
-      'SELECT id_usuario FROM tb_usuario WHERE id_usuario=:idUsuario FOR UPDATE',
-      { replacements: { idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT },
-    );
-    const reserva = await resolverReserva({
-      dataHoraInicio: dadosAgendamento.dataHoraInicio,
-      idFuncionario,
-      idServico,
-      idUnidade,
-      transaction: transacao,
-    });
-    await bloquearAgendamentoDiario({ idUsuario: cliente.idUsuario, dataInicioBanco: reserva.dataInicioBanco, transaction: transacao });
-    const conflitos = await bancoDeDados.query(
-      `SELECT id_agendamento FROM tb_agendamento
-       WHERE fk_funcionario = :idFuncionario AND cd_status = 'AGENDADO'
-         AND dt_inicio < :dataFimBanco AND dt_fim > :dataInicioBanco FOR UPDATE`,
-      { replacements: reserva, transaction: transacao, type: QueryTypes.SELECT },
-    );
-    if (conflitos.length) { const erro = new Error('Este horário acabou de ser reservado. Escolha outro horário.'); erro.status = 409; throw erro; }
-
-    const [idAgendamentoCriado] = await bancoDeDados.query(
-      `INSERT INTO tb_agendamento (
-        fk_usuario, fk_unidade, fk_funcionario, fk_servico, dt_inicio, dt_fim,
-        nm_servico_agendado, vl_servico_agendado, nu_duracao_minutos, ds_observacao
-      ) VALUES (
-        :idUsuario, :idUnidade, :idFuncionario, :idServico, :dataInicioBanco, :dataFimBanco,
-        :nomeServico, :valorServico, :duracaoMinutos, :observacao
-      )`,
-      {
-        replacements: {
-          idUsuario: cliente.idUsuario,
-          idUnidade,
-          idFuncionario: reserva.idFuncionario,
-          idServico,
-          dataInicioBanco: reserva.dataInicioBanco,
-          dataFimBanco: reserva.dataFimBanco,
-          nomeServico: reserva.nomeServico,
-          valorServico: reserva.valorServico,
-          duracaoMinutos: reserva.duracaoMinutos,
-          observacao: dadosAgendamento.observacao?.trim() || null,
-        },
-        transaction: transacao,
-      },
-    );
-
-    await transacao.commit();
-    void notificarSalaoDoAgendamento(Number(idAgendamentoCriado), 'Novo agendamento', 'Um cliente acabou de agendar um horário.');
-    resposta.status(201).json({ mensagem: 'Agendamento realizado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, dataHoraFim: reserva.dataFimBanco, idFuncionario: reserva.idFuncionario, nomeFuncionario: reserva.nomeFuncionario });
+    const agendamentos = await criarReservasCliente({ idUsuario: cliente.idUsuario, idUnidade: dados.idUnidade,
+      itens: lote ? dados.itens : [{ ...dados, idFuncionario: dados.idFuncionario === '' ? null : dados.idFuncionario }], exigirProfissional: lote });
+    for (const item of agendamentos) void notificarSalaoDoAgendamento(item.idAgendamento, 'Novo agendamento', 'Um cliente acabou de agendar um horário.');
+    const primeiro = agendamentos[0];
+    resposta.status(201).json({ mensagem: lote ? 'Agendamentos confirmados com sucesso.' : 'Agendamento realizado com sucesso.',
+      agendamentos, dataHoraInicio: primeiro.dataInicioBanco, dataHoraFim: primeiro.dataFimBanco,
+      idFuncionario: primeiro.idFuncionario, nomeFuncionario: primeiro.nomeFuncionario });
   } catch (erro) {
-    await transacao.rollback();
-    resposta.status(erro.status ?? 500).json({ mensagem: erro.message, ...(erro.codigo ? { codigo: erro.codigo } : {}) });
+    resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo, indiceItem: erro.indiceItem });
   }
 }
 
@@ -506,7 +407,7 @@ async function listarAgendamentos(requisicao, resposta, tipoListagem) {
     { replacements: { idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
   );
 
-  resposta.status(200).json({ agendamentos });
+  resposta.status(200).json({ agendamentos: await incluirServicosAdicionais(agendamentos) });
 }
 
 async function consultarNotificacoesCliente(requisicao, resposta) {
@@ -699,6 +600,7 @@ async function listarHorariosReagendamento(requisicao, resposta) {
       idServico,
       idUnidade,
       ignorarIdAgendamento: idAgendamento,
+      idUsuario: cliente.idUsuario,
       duracaoMinutos: Number(agendamentos[0].idServico) === idServico
         ? Number(agendamentos[0].duracaoMinutos) : null,
     });
@@ -717,22 +619,19 @@ async function atualizarAgendamento(requisicao, resposta) {
     : Number(requisicao.body.idFuncionario);
   if (![idAgendamento, idUnidade, idServico].every(Number.isInteger) || (idFuncionario !== null && !Number.isInteger(idFuncionario))) { resposta.status(400).json({ mensagem: 'Informe um novo horário futuro, serviço e profissional válidos.' }); return; }
 
-  const transacao = await bancoDeDados.transaction();
+  const transacao = await criarTransacaoAgenda();
   try {
-    await bancoDeDados.query(
-      'SELECT id_usuario FROM tb_usuario WHERE id_usuario=:idUsuario FOR UPDATE',
-      { replacements: { idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT },
-    );
+    const [original] = await bancoDeDados.query('SELECT fk_unidade AS idUnidade FROM tb_agendamento WHERE id_agendamento=:idAgendamento AND fk_usuario=:idUsuario', { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT });
+    await bloquearRecursosAgenda({ idUsuario: cliente.idUsuario, idsUnidades: [idUnidade, ...(original ? [original.idUnidade] : [])], transaction: transacao });
     const agendamentos = await bancoDeDados.query(`SELECT id_agendamento AS idAgendamento, fk_servico AS idServicoOriginal, nm_servico_agendado AS nomeServico, vl_servico_agendado AS valorServico, nu_duracao_minutos AS duracaoMinutos FROM tb_agendamento WHERE id_agendamento = :idAgendamento AND fk_usuario = :idUsuario AND cd_status = 'AGENDADO' AND dt_inicio > NOW() LIMIT 1 FOR UPDATE`, { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT });
     if (!agendamentos.length) { const erro = new Error('Esse agendamento não pode mais ser alterado.'); erro.status = 404; throw erro; }
     const mesmoServico = Number(agendamentos[0].idServicoOriginal) === idServico;
-    const reserva = await resolverReserva({ dataHoraInicio: requisicao.body?.dataHoraInicio, idFuncionario, idServico, idUnidade, ignorarIdAgendamento: idAgendamento, duracaoMinutos: mesmoServico ? Number(agendamentos[0].duracaoMinutos) : null, transaction: transacao });
+    const reserva = await resolverReserva({ idUsuario: cliente.idUsuario, dataHoraInicio: requisicao.body?.dataHoraInicio, idFuncionario, idServico, idUnidade, ignorarIdAgendamento: idAgendamento, duracaoMinutos: mesmoServico ? Number(agendamentos[0].duracaoMinutos) : null, transaction: transacao });
     if (mesmoServico) {
       reserva.nomeServico = agendamentos[0].nomeServico;
       reserva.valorServico = Number(agendamentos[0].valorServico);
       reserva.duracaoMinutos = Number(agendamentos[0].duracaoMinutos);
     }
-    await bloquearAgendamentoDiario({ idUsuario: cliente.idUsuario, dataInicioBanco: reserva.dataInicioBanco, idAgendamentoIgnorado: idAgendamento, transaction: transacao });
     const conflitos = await bancoDeDados.query(
       `SELECT id_agendamento FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
        AND id_agendamento <> :idAgendamento AND cd_status='AGENDADO'
@@ -744,7 +643,7 @@ async function atualizarAgendamento(requisicao, resposta) {
     await transacao.commit();
     void notificarSalaoDoAgendamento(idAgendamento, 'Agendamento alterado', 'Um cliente alterou os dados de um horário marcado.');
     resposta.status(200).json({ mensagem: 'Agendamento atualizado com sucesso.' });
-  } catch (erro) { await transacao.rollback(); resposta.status(erro.status ?? 400).json({ mensagem: erro.message, ...(erro.codigo ? { codigo: erro.codigo } : {}) }); }
+  } catch (erro) { await transacao.rollback(); resposta.status(erro.status ?? 400).json({ mensagem: erro.message, codigo: erro.codigo }); }
 }
 
 async function excluirConta(requisicao, resposta) {
@@ -813,7 +712,8 @@ roteadorCliente.patch('/senha', alterarSenha);
 roteadorCliente.get('/sugestoes-saloes', sugerirSaloes);
 roteadorCliente.get('/saloes/:idUnidade/servicos', listarServicosSalao);
 roteadorCliente.post('/agendamentos', criarAgendamento);
-roteadorCliente.get('/agendamentos/verificar-data', verificarAgendamentoDiario);
+roteadorCliente.get('/agendamentos/horarios', consultarHorariosAgendamento);
+roteadorCliente.post('/agendamentos/lote', criarAgendamentoLote);
 roteadorCliente.post('/agendamentos/:idAgendamento/avaliacao', avaliarAgendamento);
 roteadorCliente.get('/agendamentos/:idAgendamento/horarios', listarHorariosReagendamento);
 roteadorCliente.patch('/agendamentos/:idAgendamento', atualizarAgendamento);

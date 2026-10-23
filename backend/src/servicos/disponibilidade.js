@@ -1,4 +1,4 @@
-import { QueryTypes } from 'sequelize';
+import { QueryTypes, Transaction } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 
 const FORMATO_DATA = /^\d{4}-\d{2}-\d{2}$/;
@@ -58,8 +58,70 @@ function paraBanco(dataHora) {
   return `${dataHora.slice(0, 10)} ${dataHora.slice(11, 16)}:00`;
 }
 
-function sobrepoe(inicioA, fimA, inicioB, fimB) {
+export function sobrepoe(inicioA, fimA, inicioB, fimB) {
   return inicioA < fimB && fimA > inicioB;
+}
+
+export function criarTransacaoAgenda() {
+  return bancoDeDados.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED });
+}
+
+// Todos os escritores seguem: filiais em ordem, cliente, profissionais, agendamento.
+// A filial serializa reservas sem preferência e bloqueios gerais. Travá-la antes do
+// cliente evita ciclos com as FKs das notificações de cancelamento dos bloqueios.
+export async function bloquearRecursosAgenda({ idUsuario = null, idClienteSalao = null, idsUnidades, transaction }) {
+  const unidades = [...new Set(idsUnidades.map(Number))].sort((a, b) => a - b);
+  for (const idUnidade of unidades) {
+    await bancoDeDados.query('SELECT id_unidade FROM tb_unidade WHERE id_unidade=:idUnidade FOR UPDATE', {
+      replacements: { idUnidade }, transaction, type: QueryTypes.SELECT,
+    });
+  }
+  if (idUsuario) await bancoDeDados.query('SELECT id_usuario FROM tb_usuario WHERE id_usuario=:idUsuario FOR UPDATE', {
+    replacements: { idUsuario }, transaction, type: QueryTypes.SELECT,
+  });
+  if (idClienteSalao) await bancoDeDados.query('SELECT id_cliente_salao FROM tb_cliente_salao WHERE id_cliente_salao=:idClienteSalao FOR UPDATE', {
+    replacements: { idClienteSalao }, transaction, type: QueryTypes.SELECT,
+  });
+  for (const idUnidade of unidades) {
+    await bancoDeDados.query('SELECT id_funcionario FROM tb_funcionario WHERE fk_unidade=:idUnidade ORDER BY id_funcionario FOR UPDATE', {
+      replacements: { idUnidade }, transaction, type: QueryTypes.SELECT,
+    });
+  }
+}
+
+export async function ocupacoesDoCliente({ data, idUsuario = null, idClienteSalao = null, ignorarIdAgendamento = null, transaction }) {
+  if (!idUsuario && !idClienteSalao) return [];
+  return bancoDeDados.query(`SELECT DATE_FORMAT(dt_inicio, '%Y-%m-%dT%H:%i:%s') AS inicio,
+    DATE_FORMAT(dt_fim, '%Y-%m-%dT%H:%i:%s') AS fim FROM tb_agendamento
+    WHERE ((:idUsuario IS NOT NULL AND fk_usuario=:idUsuario)
+      OR (:idClienteSalao IS NOT NULL AND fk_cliente_salao=:idClienteSalao))
+      AND cd_status='AGENDADO' AND dt_inicio < DATE_ADD(:data, INTERVAL 1 DAY)
+      AND dt_fim > CONCAT(:data, ' 00:00:00')
+      AND (:ignorarIdAgendamento IS NULL OR id_agendamento<>:ignorarIdAgendamento)`, {
+    replacements: { data, idUsuario, idClienteSalao, ignorarIdAgendamento }, transaction, type: QueryTypes.SELECT,
+  });
+}
+
+export async function validarConflitoCliente({ dataInicioBanco, dataFimBanco, idUsuario = null, idClienteSalao = null, ignorarIdAgendamento = null, transaction }) {
+  const ocupacoes = await ocupacoesDoCliente({ data: dataInicioBanco.slice(0, 10), idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
+  if (ocupacoes.some(({ inicio, fim }) => sobrepoe(dataInicioBanco.replace(' ', 'T'), dataFimBanco.replace(' ', 'T'), inicio, fim))) {
+    throw Object.assign(new Error('O cliente já tem um serviço reservado neste intervalo.'), { status: 409, codigo: 'CONFLITO_CLIENTE' });
+  }
+}
+
+export async function validarServicoNoDia({ data, idServico, idUsuario = null, idClienteSalao = null, ignorarIdAgendamento = null, transaction }) {
+  if (!idUsuario && !idClienteSalao) return;
+  const existentes = await bancoDeDados.query(`SELECT id_agendamento FROM tb_agendamento
+    WHERE fk_servico=:idServico AND cd_status IN ('AGENDADO','REALIZADO')
+      AND ((:idUsuario IS NOT NULL AND fk_usuario=:idUsuario)
+        OR (:idClienteSalao IS NOT NULL AND fk_cliente_salao=:idClienteSalao))
+      AND dt_inicio >= CONCAT(:data, ' 00:00:00') AND dt_inicio < DATE_ADD(:data, INTERVAL 1 DAY)
+      AND (:ignorarIdAgendamento IS NULL OR id_agendamento<>:ignorarIdAgendamento) LIMIT 1`, {
+    replacements: { data, idServico, idUsuario, idClienteSalao, ignorarIdAgendamento }, transaction, type: QueryTypes.SELECT,
+  });
+  if (existentes.length) throw Object.assign(new Error('Você já tem este serviço nesta data. Escolha outro dia.'), {
+    status: 409, codigo: 'SERVICO_REPETIDO_DIA',
+  });
 }
 
 function normalizarDataHora(valor) {
@@ -145,13 +207,14 @@ async function ocupacoesDoProfissional({ data, idFuncionario, idUnidade, ignorar
 }
 
 export async function listarHorariosDisponiveis({
-  data, idUnidade, idServico, idFuncionario = null, ignorarIdAgendamento = null, duracaoMinutos: duracaoPersonalizada = null, transaction,
+  data, idUnidade, idServico, idFuncionario = null, idUsuario = null, idClienteSalao = null, ignorarIdAgendamento = null, duracaoMinutos: duracaoPersonalizada = null, transaction,
 }) {
   if (!dataDentroDaJanela(data)) {
     const erro = new Error('Escolha uma data entre hoje e os próximos 60 dias.');
     erro.status = 400;
     throw erro;
   }
+  await validarServicoNoDia({ data, idServico, idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
   const contexto = await buscarContexto({ idFuncionario, idServico, idUnidade, transaction });
   if (!contexto.length) {
     const erro = new Error('O serviço ou profissional não está disponível nesta filial.');
@@ -162,6 +225,7 @@ export async function listarHorariosDisponiveis({
   const duracaoMinutos = Number(duracaoPersonalizada ?? contexto[0].duracaoMinutos);
   const agora = new Date();
   const horariosPorInicio = new Map();
+  const ocupacoesCliente = await ocupacoesDoCliente({ data, idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
 
   for (const profissional of contexto) {
     const [periodos, ocupacoes] = await Promise.all([
@@ -175,6 +239,7 @@ export async function listarHorariosDisponiveis({
         const inicioCompleto = `${data}T${inicio}:00`;
         const fimCompleto = `${data}T${fim}:00`;
         if (new Date(`${inicioCompleto}-03:00`) <= agora) continue;
+        if (ocupacoesCliente.some((ocupacao) => sobrepoe(inicioCompleto, fimCompleto, ocupacao.inicio, ocupacao.fim))) continue;
         if (ocupacoes.some((ocupacao) => sobrepoe(inicioCompleto, fimCompleto, ocupacao.inicio, ocupacao.fim))) continue;
         const existente = horariosPorInicio.get(inicio) ?? { fim, inicio, profissionais: [] };
         existente.profissionais.push({ idFuncionario: Number(profissional.idFuncionario), nome: profissional.nomeFuncionario });
@@ -202,7 +267,7 @@ export async function listarHorariosDisponiveis({
 }
 
 export async function resolverReserva({
-  dataHoraInicio, idUnidade, idServico, idFuncionario = null, ignorarIdAgendamento = null, duracaoMinutos = null, transaction,
+  dataHoraInicio, idUnidade, idServico, idFuncionario = null, idUsuario = null, idClienteSalao = null, ignorarIdAgendamento = null, duracaoMinutos = null, transaction,
 }) {
   const inicioNormalizado = normalizarDataHora(dataHoraInicio);
   if (!inicioNormalizado) {
@@ -213,6 +278,7 @@ export async function resolverReserva({
   const disponibilidade = await listarHorariosDisponiveis({
     data: inicioNormalizado.slice(0, 10), idFuncionario, idServico, idUnidade, ignorarIdAgendamento, duracaoMinutos, transaction,
   });
+  await validarServicoNoDia({ data: inicioNormalizado.slice(0, 10), idServico, idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
   const opcao = disponibilidade.horarios.find((item) => item.inicio === inicioNormalizado.slice(11, 16));
   if (!opcao) {
     const erro = new Error('Este horário não está mais disponível. Escolha outra opção.');
@@ -220,7 +286,7 @@ export async function resolverReserva({
     throw erro;
   }
   const profissional = opcao.profissionais.sort((a, b) => a.idFuncionario - b.idFuncionario)[0];
-  return {
+  const reserva = {
     dataFimBanco: paraBanco(`${inicioNormalizado.slice(0, 10)}T${opcao.fim}:00`),
     dataInicioBanco: paraBanco(inicioNormalizado),
     duracaoMinutos: disponibilidade.duracaoMinutos,
@@ -229,4 +295,6 @@ export async function resolverReserva({
     nomeServico: disponibilidade.servico.nome,
     valorServico: disponibilidade.servico.valor,
   };
+  await validarConflitoCliente({ ...reserva, idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
+  return reserva;
 }
