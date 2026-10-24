@@ -334,6 +334,13 @@
 
 .status-assinatura strong { color: var(--ameixa); }
 
+.status-assinatura__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+  max-width: 100%;
+}
+
 .status-assinatura p,
 .status-assinatura small {
   color: var(--texto-suave);
