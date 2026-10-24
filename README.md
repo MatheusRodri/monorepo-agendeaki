@@ -216,6 +216,8 @@ Deixe o terminal do Stripe CLI aberto enquanto testa. Copie o `whsec_...` exibid
 
 Em produção, configure no Dashboard Stripe o endpoint HTTPS `https://api.agendeaki.seudominio.com/api/webhooks/stripe` (substitua pelo seu domínio) para os mesmos eventos listados no comando acima.
 
+O cancelamento da renovação mantém o Premium até o fim do período vigente. Nesse intervalo, o botão **Reativar assinatura** chama `PATCH /api/salao/assinatura/reativar` para retomar a renovação com o mesmo plano e a mesma data de cobrança, seguindo o [fluxo de reativação do Stripe](https://docs.stripe.com/billing/subscriptions/cancel#stop-a-pending-cancellation). Após o encerramento, **Assinar novamente** inicia um novo checkout na mesma conta; os dados do salão são preservados e o teste grátis não é repetido quando já foi utilizado. O status é sincronizado com o Stripe antes de reativar ou iniciar outra contratação. Não é necessária uma migração de banco para esta mudança.
+
 ### 7. Notificações push (opcional)
 
 O envio usa Web Push com chaves VAPID. Gere um par com:
@@ -258,19 +260,6 @@ A migração cria a tabela de adicionais e a view de serviços para os relatóri
 - `POST /api/clientes/agendamentos/lote`: recebe `{ idUnidade, itens: [{ idServico, idFuncionario, dataHoraInicio, observacao }] }`. Aceita de 1 a 50 itens com profissional confirmado. O início usa o formato local `YYYY-MM-DDTHH:mm:ss`, no fuso de São Paulo. Em caso de erro, retorna `mensagem`, `codigo` e, quando relacionado a um item, `indiceItem` começando em zero. O sucesso retorna `agendamentos` com os IDs e dados das reservas.
 - `PATCH /api/salao/agendamentos/:idAgendamento/confirmar-atendimento`: aceita a lista opcional `servicosAdicionais: [{ idServico, idFuncionario, valorCobrado }]`, com até 50 extras. A omissão de `valorCobrado` usa o preço cadastrado. Os valores aceitam até duas casas decimais e não podem ser negativos. Uma conclusão repetida retorna conflito, sem duplicar extras nem notificações.
 - As listagens de agendamentos acrescentam `servicosAdicionais` e `valorTotal`, mantendo `valor` como preço original da reserva.
-
-### Testes
-
-Na pasta `backend`, execute `npm test` para as validações unitárias. Os testes de integração são ignorados quando não há uma conexão explicitamente configurada. Para testar gravações, concorrência, reagendamento, conclusão e relatórios em uma instância MySQL de testes:
-
-```bash
-cd backend
-TEST_MYSQL_SOCKET=/caminho/da/instancia-de-testes/mysql.sock TEST_MYSQL_USER=root npm test
-```
-
-Também é possível informar `TEST_MYSQL_HOST`, `TEST_MYSQL_PORT`, `TEST_MYSQL_USER` e `TEST_MYSQL_PASSWORD`. A suíte cria e remove apenas um banco exclusivo chamado `agendeaki_agendamentos_test_<pid>`; use uma instância dedicada e um usuário com permissão para criar e remover esse banco. Ela carrega o esquema, reaplica a migração e simula a autenticação, sem chamar o Supabase ou enviar push. `MYSQL_SOCKET` é uma opção de conexão por socket também suportada pela aplicação.
-
-Na pasta `frontend`, execute `npm run build` e `npm run test:agendamentos`. Os testes Playwright usam API simulada e um servidor próprio na porta 3107. Cobrem lista, conflitos, preservação no login e na expiração de sessão, conclusão com extras e acessibilidade dos modais.
 
 ## Filtros e paginação da agenda do salão
 
@@ -335,7 +324,7 @@ O CSV continua disponível pela API, com os mesmos campos do Analítico, UTF-8 c
 
 ### Publicação e verificação
 
-Esta melhoria não exige migração. Publique primeiro o backend com os novos endpoints e depois o frontend. Os comandos existentes `npm test` no backend e `npm run build` / `npm run test:agendamentos` no frontend incluem os testes do painel. A integração MySQL continua exigindo `TEST_MYSQL_SOCKET` ou `TEST_MYSQL_HOST` explícito e usa um banco exclusivo de testes.
+Esta melhoria não exige migração. Publique primeiro o backend com os novos endpoints e depois o frontend. Na pasta `frontend`, execute `npm run build` antes da publicação.
 
 ## Como rodar VPS
 
