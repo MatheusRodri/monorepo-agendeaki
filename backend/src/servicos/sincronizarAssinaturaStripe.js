@@ -8,10 +8,9 @@ function dataStripe(timestamp) {
 }
 
 export function mapearStatusStripe(assinatura) {
-  if (assinatura.cancel_at_period_end) return 'CANCELAMENTO_AGENDADO';
   switch (assinatura.status) {
-    case 'trialing': return 'EM_TESTE';
-    case 'active': return 'AUTORIZADA';
+    case 'trialing': return assinatura.cancel_at_period_end ? 'CANCELAMENTO_AGENDADO' : 'EM_TESTE';
+    case 'active': return assinatura.cancel_at_period_end ? 'CANCELAMENTO_AGENDADO' : 'AUTORIZADA';
     case 'paused': return 'PAUSADA';
     case 'past_due':
     case 'unpaid': return 'PAGAMENTO_PENDENTE';
@@ -76,7 +75,14 @@ export async function sincronizarAssinaturaStripe(idAssinaturaStripe, idCheckout
          vl_assinatura=:valor, st_teste_gratis=:testeGratis,
          dt_inicio=COALESCE(dt_inicio, :dataInicio),
          dt_proxima_cobranca=COALESCE(:proximaCobranca, dt_proxima_cobranca),
-         dt_cancelamento=CASE WHEN :dataCancelamento IS NULL THEN dt_cancelamento ELSE COALESCE(dt_cancelamento, :dataCancelamento) END,
+         dt_cancelamento_solicitado=CASE
+           WHEN :status = 'CANCELAMENTO_AGENDADO' THEN COALESCE(dt_cancelamento_solicitado, NOW())
+           WHEN :status IN ('AUTORIZADA', 'EM_TESTE') THEN NULL
+           ELSE dt_cancelamento_solicitado END,
+         dt_cancelamento=CASE
+           WHEN :status IN ('AUTORIZADA', 'EM_TESTE') THEN NULL
+           WHEN :dataCancelamento IS NULL THEN dt_cancelamento
+           ELSE COALESCE(dt_cancelamento, :dataCancelamento) END,
          dt_atualizacao=NOW()
      WHERE id_assinatura_salao=:idAssinatura`,
     {

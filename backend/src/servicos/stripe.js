@@ -97,6 +97,17 @@ export async function cancelarAssinaturaStripe(idAssinatura) {
   return obterClienteStripe().subscriptions.update(idAssinatura, { cancel_at_period_end: true });
 }
 
+export async function reativarAssinaturaStripe(idAssinatura) {
+  const stripe = obterClienteStripe();
+  const assinatura = await stripe.subscriptions.retrieve(idAssinatura);
+  const fimPeriodo = assinatura.items?.data?.[0]?.current_period_end ?? assinatura.current_period_end;
+  if (!['active', 'trialing'].includes(assinatura.status) || !fimPeriodo || fimPeriodo * 1000 <= Date.now()) {
+    throw Object.assign(new Error('Esta assinatura não pode mais ser reativada. Atualize o status e escolha “Assinar novamente”.'), { status: 409 });
+  }
+  if (!assinatura.cancel_at_period_end) return assinatura;
+  return stripe.subscriptions.update(idAssinatura, { cancel_at_period_end: false, proration_behavior: 'none' });
+}
+
 export async function atualizarPeriodicidadeStripe(idAssinatura, periodicidade) {
   const stripe = obterClienteStripe();
   const novoPreco = await validarPrecoStripe(periodicidade);
