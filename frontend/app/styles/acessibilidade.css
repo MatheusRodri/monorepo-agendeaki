@@ -68,6 +68,17 @@ html[data-alto-contraste='ativo'] body :not(img):not(svg):not(path):not(canvas):
   color: #000 !important;
   text-shadow: none !important;
 }
+html[data-alto-contraste='ativo'] .apresentacao,
+html[data-alto-contraste='ativo'] .pagina-autenticacao__painel,
+html[data-alto-contraste='ativo'] .perfil-profissional__foto {
+  background-image: none !important;
+}
+html[data-alto-contraste='ativo'] .perfil-profissional__foto {
+  border: 1px solid #000;
+}
+html[data-alto-contraste='ativo'] .apresentacao::before {
+  display: none;
+}
 html[data-alto-contraste='ativo'] a { color: #00008b !important; text-decoration: underline !important; }
 html[data-alto-contraste='ativo'] button,
 html[data-alto-contraste='ativo'] input,

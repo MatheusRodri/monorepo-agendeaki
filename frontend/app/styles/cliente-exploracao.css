@@ -497,7 +497,7 @@
 .busca-exploracao > div > button[type='submit'] {
   background: var(--coral);
   border: 0;
-  color: #241a25;
+  color: var(--fundo);
 }
 
 .busca-exploracao > div > button[type='submit']:hover {

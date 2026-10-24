@@ -58,10 +58,16 @@
   width: 31px;
 }
 
-.navegacao-principal {
+.cabecalho__acoes {
+  align-items: center;
   display: flex;
   gap: 2rem;
-  margin-left: 5rem;
+}
+
+.navegacao-principal {
+  align-items: center;
+  display: flex;
+  gap: 2rem;
 }
 
 .navegacao-principal a {
