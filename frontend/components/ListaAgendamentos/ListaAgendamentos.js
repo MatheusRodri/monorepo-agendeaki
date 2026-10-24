@@ -169,7 +169,7 @@ export default function ListaAgendamentos() {
       <form className="formulario-agendamento modal-agendamento__conteudo modal-avaliacao__conteudo" onSubmit={enviarAvaliacao}>
         <button aria-label="Fechar" className="modal-agendamento__fechar" disabled={enviando} onClick={() => definirAvaliacao(null)} type="button">×</button>
         <h2 id="titulo-avaliacao">Avaliar atendimento</h2>
-        <ClassificacaoEstrelas campo="notaSalao" rotulo="Nota da filial" valor={avaliacao.notaSalao} desabilitado={enviando} aoMudar={(nota) => definirAvaliacao((atual) => ({ ...atual, notaSalao: nota }))} />
+        <ClassificacaoEstrelas campo="notaSalao" rotulo="Nota da unidade" valor={avaliacao.notaSalao} desabilitado={enviando} aoMudar={(nota) => definirAvaliacao((atual) => ({ ...atual, notaSalao: nota }))} />
         <ClassificacaoEstrelas campo="notaServico" rotulo="Nota do serviço" valor={avaliacao.notaServico} desabilitado={enviando} aoMudar={(nota) => definirAvaliacao((atual) => ({ ...atual, notaServico: nota }))} />
         <label className="campo-formulario"><span>Comentário <small>Opcional</small></span><textarea maxLength="500" onChange={(evento) => definirAvaliacao((atual) => ({ ...atual, comentario: evento.target.value }))} value={avaliacao.comentario} /></label>
         <button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Publicando...' : 'Publicar avaliação'} →</button>

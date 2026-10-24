@@ -137,7 +137,7 @@ export async function consultarAnalitico(consulta) {
 export const colunasExportacao = [
   ['id_agendamento', 'idAgendamento'], ['tipo_item', 'tipoItem'], ['id_servico_adicional', 'idExtra'],
   ['id_usuario', 'idUsuario'], ['id_cliente_salao', 'idClienteSalao'], ['cliente', 'cliente'], ['email', 'email'], ['telefone', 'telefone'],
-  ['id_unidade', 'idUnidade'], ['filial', 'unidade'], ['id_servico', 'idServico'], ['servico', 'nomeServico'],
+  ['id_unidade', 'idUnidade'], ['unidade', 'unidade'], ['id_servico', 'idServico'], ['servico', 'nomeServico'],
   ['id_funcionario', 'idFuncionario'], ['profissional', 'nomeFuncionario'], ['data_agendada', 'dataInicio'],
   ['data_realizacao', 'dataRealizacao'], ['data_cancelamento', 'dataCancelamento'], ['status', 'status'],
   ['status_pagamento', 'statusPagamento'], ['valor_item', 'valorItem'], ['motivo_cancelamento', 'motivoCancelamento'],

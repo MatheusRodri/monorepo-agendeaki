@@ -69,7 +69,7 @@ async function consultarHorariosAgendamento(requisicao, resposta) {
   if (!cliente) return;
   const { data, idUnidade, idServico, idFuncionario } = requisicao.query;
   if (![idUnidade, idServico].every(idValido) || (idFuncionario && idFuncionario !== 'qualquer' && !idValido(idFuncionario))) {
-    resposta.status(400).json({ mensagem: 'Informe filial, serviço e profissional válidos.' }); return;
+    resposta.status(400).json({ mensagem: 'Informe unidade, serviço e profissional válidos.' }); return;
   }
   try {
     resposta.json(await listarHorariosDisponiveis({ data: String(data ?? ''), idUnidade: Number(idUnidade),
@@ -567,7 +567,7 @@ async function listarHorariosReagendamento(requisicao, resposta) {
   const idServico = Number(requisicao.query.idServico);
   const idUnidade = Number(requisicao.query.idUnidade);
   if (!Number.isInteger(idServico) || !Number.isInteger(idUnidade) || (idFuncionario !== null && !Number.isInteger(idFuncionario))) {
-    resposta.status(400).json({ mensagem: 'Informe serviço, filial e profissional válidos.' }); return;
+    resposta.status(400).json({ mensagem: 'Informe serviço, unidade e profissional válidos.' }); return;
   }
   try {
     const disponibilidade = await listarHorariosDisponiveis({

@@ -8,7 +8,7 @@ export function idValido(valor) {
 
 export function validarItensReserva(idUnidade, itens, exigirProfissional = true) {
   if (!idValido(idUnidade) || !Array.isArray(itens) || !itens.length || itens.length > 50) {
-    throw Object.assign(new Error('Informe a filial e entre 1 e 50 serviços.'), { status: 400, codigo: 'LISTA_INVALIDA' });
+    throw Object.assign(new Error('Informe a unidade e entre 1 e 50 serviços.'), { status: 400, codigo: 'LISTA_INVALIDA' });
   }
   const servicosPorDia = new Set();
   itens.forEach((item, indiceItem) => {
@@ -84,7 +84,7 @@ export async function salvarServicosAdicionais({ idAgendamento, idUnidade, servi
         AND s.st_ativo=TRUE AND f.st_ativo=TRUE`, {
       replacements: { idServico: Number(item.idServico), idFuncionario: Number(item.idFuncionario), idUnidade }, transaction, type: QueryTypes.SELECT,
     });
-    if (!servico) throw Object.assign(new Error('O serviço extra ou profissional não está disponível nesta filial.'), { status: 400 });
+    if (!servico) throw Object.assign(new Error('O serviço extra ou profissional não está disponível nesta unidade.'), { status: 400 });
     const valorCobrado = valorMonetario(item.valorCobrado ?? servico.valorReferencia);
     await bancoDeDados.query(`INSERT INTO tb_agendamento_servico_adicional
       (fk_agendamento, fk_servico, fk_funcionario, nm_servico, nm_funcionario, vl_referencia, vl_cobrado, nu_duracao_minutos)

@@ -2,7 +2,7 @@
 
 export const colunasAnalitico = [
   ['idAgendamento', '#'], ['dataInicio', 'Data agendada'], ['dataRealizacao', 'Realizado em'],
-  ['cliente', 'Cliente'], ['contato', 'Contato'], ['servico', 'Serviço'], ['quantidadeServicosExtras', 'Extras'], ['unidade', 'Filial'],
+  ['cliente', 'Cliente'], ['contato', 'Contato'], ['servico', 'Serviço'], ['quantidadeServicosExtras', 'Extras'], ['unidade', 'Unidade'],
   ['profissional', 'Profissional'], ['status', 'Status'], ['valor', 'Valor'], ['statusPagamento', 'Pagamento'],
   ['motivoCancelamento', 'Motivo do cancelamento'], ['origemCancelamento', 'Cancelado por'],
 ];

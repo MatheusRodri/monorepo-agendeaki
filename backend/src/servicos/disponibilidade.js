@@ -217,7 +217,7 @@ export async function listarHorariosDisponiveis({
   await validarServicoNoDia({ data, idServico, idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
   const contexto = await buscarContexto({ idFuncionario, idServico, idUnidade, transaction });
   if (!contexto.length) {
-    const erro = new Error('O serviço ou profissional não está disponível nesta filial.');
+    const erro = new Error('O serviço ou profissional não está disponível nesta unidade.');
     erro.status = 404;
     throw erro;
   }

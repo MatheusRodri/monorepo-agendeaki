@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-const etapas = ['Serviço', 'Filial', 'Valor e duração'];
+const etapas = ['Serviço', 'Unidade', 'Valor e duração'];
 const duracoes = [30, 45, 60, 90, 120];
 
 export default function FormularioServico({ filiais = [], servico, enviarFormulario, aoCancelar }) {
@@ -57,14 +57,14 @@ export default function FormularioServico({ filiais = [], servico, enviarFormula
     </ol>
     <div className="profissional-etapa">
       <p className="profissional-etapa__indicador">Etapa {etapa} de 3</p>
-      <h2 ref={tituloEtapa} tabIndex={-1}>{['Qual serviço você oferece?', 'Em qual filial estará disponível?', 'Qual é o valor e a duração?'][etapa - 1]}</h2>
+      <h2 ref={tituloEtapa} tabIndex={-1}>{['Qual serviço você oferece?', 'Em qual unidade estará disponível?', 'Qual é o valor e a duração?'][etapa - 1]}</h2>
       {etapa === 1 && <div className="formulario-servico__campos formulario-servico__campos--identidade">
         <label className="campo-formulario"><span>Nome do serviço</span><input disabled={salvando} maxLength={120} onChange={(evento) => definirNome(evento.target.value)} placeholder="Digite o nome do serviço" required value={nome} /></label>
         <label className="campo-formulario"><span>Descrição <small>Opcional</small></span><input disabled={salvando} onChange={(evento) => definirDescricao(evento.target.value)} placeholder="Conte um pouco sobre o serviço" value={descricao} /></label>
       </div>}
       {etapa === 2 && <>
-        <label className="campo-formulario"><span>Filial</span><select disabled={salvando} onChange={(evento) => definirIdUnidade(evento.target.value)} required value={idUnidade}><option value="">Selecione uma filial</option>{filiais.map((item) => <option key={item.idUnidade} value={item.idUnidade}>{item.nome}</option>)}</select></label>
-        <p className="profissional-ajuda">O serviço ficará disponível para agendamento nesta filial.</p>
+        <label className="campo-formulario"><span>Unidade</span><select disabled={salvando} onChange={(evento) => definirIdUnidade(evento.target.value)} required value={idUnidade}><option value="">Selecione uma unidade</option>{filiais.map((item) => <option key={item.idUnidade} value={item.idUnidade}>{item.nome}</option>)}</select></label>
+        <p className="profissional-ajuda">O serviço ficará disponível para agendamento nesta unidade.</p>
       </>}
       {etapa === 3 && <div className="formulario-servico__campos">
         <label className="campo-formulario"><span>Valor (R$)</span><input disabled={salvando} inputMode="decimal" min="0" onChange={(evento) => definirValor(evento.target.value)} placeholder="0,00" required step="0.01" type="number" value={valor} /></label>

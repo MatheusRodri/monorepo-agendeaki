@@ -82,14 +82,14 @@ async function consultarEnderecoLegado(requisicao, resposta) {
      WHERE u.id_unidade = :idUnidade AND u.st_ativo = TRUE AND s.st_ativo = TRUE LIMIT 1`,
     { replacements: { idUnidade: Number(requisicao.params.idUnidade) }, type: QueryTypes.SELECT },
   );
-  if (!filiais.length) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  if (!filiais.length) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
   resposta.status(200).json({ caminho: `/${filiais[0].slugSalao}/${filiais[0].slugFilial}` });
 }
 
 async function consultarAvaliacoes(requisicao, resposta) {
   const idUnidade = Number(requisicao.params.idUnidade);
   if (!Number.isSafeInteger(idUnidade) || idUnidade <= 0) {
-    resposta.status(400).json({ mensagem: 'Filial inválida.' }); return;
+    resposta.status(400).json({ mensagem: 'Unidade inválida.' }); return;
   }
   const pagina = Math.max(1, Math.min(1000, Number.parseInt(requisicao.query.pagina, 10) || 1));
   const filiais = await bancoDeDados.query(
@@ -97,7 +97,7 @@ async function consultarAvaliacoes(requisicao, resposta) {
      WHERE u.id_unidade=:idUnidade AND u.st_ativo=TRUE AND s.st_ativo=TRUE LIMIT 1`,
     { replacements: { idUnidade }, type: QueryTypes.SELECT },
   );
-  if (!filiais.length) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  if (!filiais.length) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
   const [resumo] = await bancoDeDados.query(
     `SELECT COUNT(*) AS quantidade, ROUND(AVG(nu_nota_salao),1) AS mediaSalao
      FROM tb_avaliacao WHERE fk_unidade=:idUnidade`,

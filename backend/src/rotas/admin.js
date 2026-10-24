@@ -301,8 +301,8 @@ roteadorAdmin.get('/unidades', async (requisicao, resposta) => {
                  INNER JOIN tb_salao s ON s.id_salao=un.fk_salao WHERE 1=1 ${filtro}`,
     });
   } catch (erro) {
-    console.error('[Admin] Falha ao listar filiais.', { mensagem: erro.message });
-    resposta.status(500).json({ mensagem: 'Não foi possível carregar as filiais.' });
+    console.error('[Admin] Falha ao listar unidades.', { mensagem: erro.message });
+    resposta.status(500).json({ mensagem: 'Não foi possível carregar as unidades.' });
   }
 });
 

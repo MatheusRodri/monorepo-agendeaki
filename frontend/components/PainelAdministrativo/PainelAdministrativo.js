@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { requisitarApi } from '../../utils/api';
 import { armazenarSessao, limparSessao, obterTokenAcesso } from '../../utils/respostaApi';
 
-const secoes = [['dashboard', 'Visão geral'], ['clientes', 'Clientes'], ['saloes', 'Salões'], ['unidades', 'Filiais'], ['assinaturas', 'Assinaturas']];
+const secoes = [['dashboard', 'Visão geral'], ['clientes', 'Clientes'], ['saloes', 'Salões'], ['unidades', 'Unidades'], ['assinaturas', 'Assinaturas']];
 const dinheiro = (valor) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(valor ?? 0));
 const data = (valor) => valor ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(new Date(valor)) : '—';
 
@@ -145,7 +145,7 @@ function Lista({ secao, dados, pagina, definirPagina }) {
   const configs = {
     clientes: { vazio: 'Nenhum cliente encontrado.', colunas: [['nome', 'Cliente'], ['email', 'E-mail'], ['ativo', 'Situação', 'ativo'], ['criadoEm', 'Cadastro', 'data']] },
     saloes: { vazio: 'Nenhum salão encontrado.', colunas: [['nome', 'Salão'], ['responsavel', 'Responsável'], ['emailResponsavel', 'E-mail'], ['unidadesAtivas', 'Unidades'], ['ativo', 'Situação', 'ativo'], ['criadoEm', 'Cadastro', 'data']] },
-    unidades: { vazio: 'Nenhuma filial encontrada.', colunas: [['nome', 'Filial'], ['salao', 'Salão'], ['endereco', 'Endereço'], ['cidade', 'Cidade'], ['categoria', 'Categoria', 'categoria'], ['ativo', 'Situação', 'ativo'], ['criadoEm', 'Cadastro', 'data']] },
+    unidades: { vazio: 'Nenhuma unidade encontrada.', colunas: [['nome', 'Unidade'], ['salao', 'Salão'], ['endereco', 'Endereço'], ['cidade', 'Cidade'], ['categoria', 'Categoria', 'categoria'], ['ativo', 'Situação', 'ativo'], ['criadoEm', 'Cadastro', 'data']] },
     assinaturas: { vazio: 'Nenhuma assinatura encontrada.', colunas: [['salao', 'Salão'], ['emailResponsavel', 'E-mail'], ['periodicidade', 'Plano', 'periodicidade'], ['status', 'Situação', 'status'], ['valor', 'Valor', 'dinheiro'], ['atualizadoEm', 'Atualizada', 'data']] },
   };
   const config = configs[secao];

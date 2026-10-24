@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 
-const etapas = ['Nome', 'Filial', 'Serviços'];
+const etapas = ['Nome', 'Unidade', 'Serviços'];
 
 export default function FormularioProfissional({ filiais = [], servicos = [], profissional, enviarFormulario, aoCancelar }) {
   const [etapa, definirEtapa] = useState(1);
@@ -60,11 +60,11 @@ export default function FormularioProfissional({ filiais = [], servicos = [], pr
     </ol>
     <div className="profissional-etapa">
       <p className="profissional-etapa__indicador">Etapa {etapa} de 3</p>
-      <h2 ref={tituloEtapa} tabIndex={-1}>{['Quem é o profissional?', 'Em qual filial vai atender?', 'Quais serviços realiza?'][etapa - 1]}</h2>
+      <h2 ref={tituloEtapa} tabIndex={-1}>{['Quem é o profissional?', 'Em qual unidade vai atender?', 'Quais serviços realiza?'][etapa - 1]}</h2>
       {etapa === 1 && <label className="campo-formulario"><span>Nome do profissional</span><input autoComplete="name" disabled={salvando} maxLength={120} onChange={(evento) => definirNome(evento.target.value)} placeholder="Digite o nome" required value={nome} /></label>}
       {etapa === 2 && <>
-        <label className="campo-formulario"><span>Filial</span><select disabled={salvando} onChange={(evento) => trocarFilial(evento.target.value)} required value={idUnidade}><option value="">Selecione uma filial</option>{filiais.map((item) => <option key={item.idUnidade} value={item.idUnidade}>{item.nome}</option>)}</select></label>
-        <p className="profissional-ajuda">Na próxima etapa, escolha os serviços disponíveis nesta filial.</p>
+        <label className="campo-formulario"><span>Unidade</span><select disabled={salvando} onChange={(evento) => trocarFilial(evento.target.value)} required value={idUnidade}><option value="">Selecione uma unidade</option>{filiais.map((item) => <option key={item.idUnidade} value={item.idUnidade}>{item.nome}</option>)}</select></label>
+        <p className="profissional-ajuda">Na próxima etapa, escolha os serviços disponíveis nesta unidade.</p>
       </>}
       {etapa === 3 && <>
         <fieldset className="profissional-servicos" disabled={salvando}>
@@ -77,7 +77,7 @@ export default function FormularioProfissional({ filiais = [], servicos = [], pr
             </label>)}
           </div>
         </fieldset>
-        {!servicosFilial.length && <p className="profissional-ajuda">Esta filial ainda não tem serviços ativos. <Link href="/salao/servicos">Cadastrar serviços</Link></p>}
+        {!servicosFilial.length && <p className="profissional-ajuda">Esta unidade ainda não tem serviços ativos. <Link href="/salao/servicos">Cadastrar serviços</Link></p>}
         <p className="profissional-selecao" role="status">{selecionados.length ? `${selecionados.length} serviço${selecionados.length === 1 ? '' : 's'} selecionado${selecionados.length === 1 ? '' : 's'}` : 'Selecione ao menos um serviço para salvar.'}</p>
       </>}
     </div>
