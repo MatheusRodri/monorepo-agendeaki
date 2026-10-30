@@ -64,7 +64,21 @@
     flex-direction: column;
   }
 
+  .opcoes-premium section {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .opcoes-premium section > div {
+    flex: none;
+  }
+
+  .opcoes-premium section > button {
+    max-width: 100%;
+    white-space: normal;
+  }
+
   .opcoes-premium .botao-enviar {
-    width: auto;
+    width: min(220px, 100%);
   }
 }

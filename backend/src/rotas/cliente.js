@@ -193,7 +193,7 @@ async function listarSaloesProximos(requisicao, resposta) {
             u.nu_latitude AS latitude,
             u.nu_longitude AS longitude,
             CASE WHEN ass.cd_status IN ('AUTORIZADA', 'EM_TESTE')
-              OR (ass.cd_status IN ('CANCELADA', 'CANCELAMENTO_AGENDADO')
+              OR (ass.cd_status = 'CANCELAMENTO_AGENDADO'
                   AND ass.dt_proxima_cobranca > NOW())
               THEN TRUE ELSE FALSE END AS proAtivo,
             COALESCE(av.quantidade, 0) AS quantidadeAvaliacoes,

@@ -227,6 +227,8 @@ CREATE TABLE IF NOT EXISTS tb_assinatura_salao (
   id_assinatura_provedor VARCHAR(150) NULL,
   id_checkout_provedor VARCHAR(150) NULL,
   ds_referencia_externa CHAR(36) NOT NULL,
+  js_parametros_checkout JSON NULL,
+  dt_tentativa_checkout DATETIME NULL,
 
   dt_inicio DATETIME NULL,
   dt_proxima_cobranca DATETIME NULL,

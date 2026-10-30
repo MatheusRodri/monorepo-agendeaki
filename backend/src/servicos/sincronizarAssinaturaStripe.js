@@ -60,7 +60,7 @@ export async function sincronizarAssinaturaStripe(idAssinaturaStripe, idCheckout
   const timestampProximaCobranca = dadosStripe.status === 'trialing'
     ? (dadosStripe.trial_end ?? fimPeriodoAtual)
     : (fimPeriodoAtual ?? dadosStripe.trial_end);
-  const proximaCobranca = checkoutNaoPago ? null : dataStripe(timestampProximaCobranca);
+  const proximaCobranca = checkoutNaoPago || status === 'CANCELADA' ? null : dataStripe(timestampProximaCobranca);
   const dataCancelamento = status === 'CANCELADA' ? new Date() : null;
   const idCliente = typeof dadosStripe.customer === 'string' ? dadosStripe.customer : dadosStripe.customer?.id;
   const idPreco = dadosStripe.items?.data?.[0]?.price?.id ?? null;
@@ -71,10 +71,10 @@ export async function sincronizarAssinaturaStripe(idAssinaturaStripe, idCheckout
          id_assinatura_provedor=:idAssinaturaStripe, id_preco_provedor=COALESCE(:idPreco, id_preco_provedor),
          id_checkout_provedor=COALESCE(:idCheckout, id_checkout_provedor),
          cd_status=:status, cd_periodicidade=:periodicidade,
-         cd_periodicidade_pendente=CASE WHEN cd_periodicidade_pendente=:periodicidade THEN NULL ELSE cd_periodicidade_pendente END,
+         cd_periodicidade_pendente=CASE WHEN :status IN ('CANCELADA','CANCELAMENTO_AGENDADO') OR cd_periodicidade_pendente=:periodicidade THEN NULL ELSE cd_periodicidade_pendente END,
          vl_assinatura=:valor, st_teste_gratis=:testeGratis,
          dt_inicio=COALESCE(dt_inicio, :dataInicio),
-         dt_proxima_cobranca=COALESCE(:proximaCobranca, dt_proxima_cobranca),
+         dt_proxima_cobranca=:proximaCobranca,
          dt_cancelamento_solicitado=CASE
            WHEN :status = 'CANCELAMENTO_AGENDADO' THEN COALESCE(dt_cancelamento_solicitado, NOW())
            WHEN :status IN ('AUTORIZADA', 'EM_TESTE') THEN NULL
@@ -84,7 +84,7 @@ export async function sincronizarAssinaturaStripe(idAssinaturaStripe, idCheckout
            WHEN :dataCancelamento IS NULL THEN dt_cancelamento
            ELSE COALESCE(dt_cancelamento, :dataCancelamento) END,
          dt_atualizacao=NOW()
-     WHERE id_assinatura_salao=:idAssinatura`,
+     WHERE id_assinatura_salao=:idAssinatura AND (cd_status <> 'CANCELADA' OR :status = 'CANCELADA')`,
     {
       replacements: {
         dataCancelamento,
@@ -118,8 +118,8 @@ export async function sincronizarEventoStripe(evento) {
     if (!referencia) return false;
     const [resultado] = await bancoDeDados.query(
       `UPDATE tb_assinatura_salao
-       SET cd_status='CANCELADA', dt_cancelamento=COALESCE(dt_cancelamento, NOW()), dt_atualizacao=NOW()
-       WHERE ds_referencia_externa=:referencia AND cd_status='PENDENTE' AND id_checkout_provedor=:idCheckout`,
+       SET cd_status='CANCELADA', id_checkout_provedor=:idCheckout, dt_cancelamento=COALESCE(dt_cancelamento, NOW()), dt_atualizacao=NOW()
+       WHERE ds_referencia_externa=:referencia AND cd_status='PENDENTE' AND (id_checkout_provedor IS NULL OR id_checkout_provedor=:idCheckout)`,
       { replacements: { referencia, idCheckout: recurso.id } },
     );
     return Boolean(resultado?.affectedRows);

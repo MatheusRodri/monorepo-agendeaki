@@ -71,7 +71,7 @@ async function salaoTemAcessoPremium(idSalao) {
   const assinatura = assinaturas[0];
   if (!assinatura) return false;
   if (['AUTORIZADA', 'EM_TESTE'].includes(assinatura.status)) return true;
-  return ['CANCELADA', 'CANCELAMENTO_AGENDADO'].includes(assinatura.status)
+  return assinatura.status === 'CANCELAMENTO_AGENDADO'
     && assinatura.dataFim && new Date(assinatura.dataFim) > new Date();
 }
 

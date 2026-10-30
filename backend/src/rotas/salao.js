@@ -1,13 +1,12 @@
+import { reservarContratacao, finalizarCheckout, cancelarRecursosContratacao, recuperarCheckout } from '../servicos/contratacoes.js';
 import { autenticarRequisicao } from '../servicos/autorizacaoUsuarios.js';
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
-import { randomUUID } from 'crypto';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { cnpjValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
 import { decifrarDocumento, prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
-import { ativarAssinaturaPremium } from '../servicos/assinaturas.js';
-import { atualizarPeriodicidadeStripe, cancelarAssinaturaStripe, cancelarCheckoutStripe, criarCheckoutAssinatura, obterDadosPlanoPremium, obterOfertaPremium, obterPrecoStripe, consultarCheckoutStripe, reativarAssinaturaStripe } from '../servicos/stripe.js';
+import { atualizarPeriodicidadeStripe, obterOfertaPremium, consultarCheckoutStripe, reativarAssinaturaStripe, encerrarAssinaturaStripe } from '../servicos/stripe.js';
 import { sincronizarAssinaturaStripe } from '../servicos/sincronizarAssinaturaStripe.js';
 import { criarSlugSalaoUnico, criarSlugUnidadeUnico } from '../servicos/slugs.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, obterPendenciasUsuario, registrarAceitePendente } from '../servicos/usuarios.js';
@@ -18,6 +17,7 @@ import { consultarAnalitico, consultarLinhasAnaliticas, contagemServicosExtrasSq
 import { exportarAnaliticoExcel } from '../servicos/dashboardExcel.js';
 import { salvarServicosAdicionais } from '../servicos/agendamentos.js';
 import { consultarAgendaSalao, normalizarConsultaAgenda } from '../servicos/agendaSalao.js';
+import { assinaturaTemAcessoPremium, obterAcessoPremiumSalao } from '../servicos/acessoPremium.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -1680,18 +1680,13 @@ async function analiticoPremium(requisicao, resposta, exportar = false) {
 
 function resumoAssinatura(assinatura) {
   if (!assinatura) return { plano: 'BASICO', status: 'BASICO', temAcessoPremium: false, podeReativar: false };
-  const dataFimAcesso = assinatura.dataProximaCobranca ? new Date(assinatura.dataProximaCobranca) : null;
-  const canceladaComCicloVigente = ['CANCELADA', 'CANCELAMENTO_AGENDADO'].includes(assinatura.status)
-    && dataFimAcesso && dataFimAcesso > new Date();
-  const temAcessoPremium = ['AUTORIZADA', 'EM_TESTE'].includes(assinatura.status) || canceladaComCicloVigente;
+  const temAcessoPremium = assinaturaTemAcessoPremium(assinatura);
   const podeReativar = assinatura.status === 'CANCELAMENTO_AGENDADO' && Boolean(temAcessoPremium)
     && assinatura.provedor === 'STRIPE' && Boolean(assinatura.idAssinaturaProvedor);
-  return { ...assinatura, plano: temAcessoPremium ? 'PREMIUM' : 'BASICO', temAcessoPremium: Boolean(temAcessoPremium), podeReativar };
+  const { parametrosCheckout, criadaEm, ...publica } = assinatura;
+  return { ...publica, plano: temAcessoPremium ? 'PREMIUM' : 'BASICO', temAcessoPremium: Boolean(temAcessoPremium), podeReativar };
 }
 
-function assinaturaBloqueiaNovaContratacao(assinatura) {
-  return ['PENDENTE', 'PAUSADA', 'PAGAMENTO_PENDENTE', 'CANCELAMENTO_AGENDADO'].includes(assinatura?.status);
-}
 
 async function obterAssinaturaSalao(idSalao) {
   const assinaturas = await bancoDeDados.query(
@@ -1700,7 +1695,7 @@ async function obterAssinaturaSalao(idSalao) {
             vl_assinatura AS valor, st_teste_gratis AS testeGratis,
             ds_provedor AS provedor, id_preco_provedor AS idPrecoProvedor,
             id_assinatura_provedor AS idAssinaturaProvedor, id_checkout_provedor AS idCheckoutProvedor,
-            dt_inicio AS dataInicio,
+            dt_inicio AS dataInicio, js_parametros_checkout AS parametrosCheckout, dt_criacao AS criadaEm,
             dt_proxima_cobranca AS dataProximaCobranca, dt_cancelamento_solicitado AS dataCancelamentoSolicitado
      FROM tb_assinatura_salao WHERE fk_salao=:idSalao
      ORDER BY dt_criacao DESC, id_assinatura_salao DESC LIMIT 1`,
@@ -1712,6 +1707,10 @@ async function obterAssinaturaSalao(idSalao) {
 async function obterAssinaturaSalaoAtualizada(idSalao) {
   const assinatura = await obterAssinaturaSalao(idSalao);
   if (assinatura?.provedor !== 'STRIPE') return assinatura;
+  if (assinatura.status === 'PENDENTE' && !assinatura.idCheckoutProvedor && assinatura.parametrosCheckout) {
+    const checkout = await recuperarCheckout({ idAssinatura: assinatura.idAssinatura, parametros: assinatura.parametrosCheckout, criadaEm: assinatura.criadaEm });
+    assinatura.idCheckoutProvedor = checkout.id;
+  }
   if (assinatura.idAssinaturaProvedor) {
     const sincronizada = await sincronizarAssinaturaStripe(assinatura.idAssinaturaProvedor, assinatura.idCheckoutProvedor);
     if (!sincronizada) throw new Error('Não foi possível associar a assinatura do Stripe ao salão.');
@@ -1757,15 +1756,8 @@ async function ativarAssinaturaTeste(requisicao, resposta) {
 
   const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
   try {
-    const atual = await obterAssinaturaSalaoAtualizada(salao.idSalao);
-    if (resumoAssinatura(atual).temAcessoPremium) { resposta.status(409).json({ mensagem: 'Seu salão já possui uma assinatura Premium ativa.' }); return; }
-    if (assinaturaBloqueiaNovaContratacao(atual)) { resposta.status(409).json({ mensagem: 'Já existe uma assinatura em andamento. Atualize o status ou resolva essa assinatura antes de iniciar outra contratação.' }); return; }
-    const plano = obterDadosPlanoPremium(periodicidade);
-    const assinatura = await ativarAssinaturaPremium({
-      idSalao: salao.idSalao,
-      periodicidade,
-      valor: plano.valor,
-    });
+    await reservarContratacao({ idSalao: salao.idSalao, periodicidade, local: true });
+    const assinatura = await obterAssinaturaSalao(salao.idSalao);
     resposta.status(200).json({ mensagem: 'Premium ativado para teste.', assinatura: resumoAssinatura(assinatura) });
   } catch (erro) {
     console.error('[Assinatura] Falha ao ativar Premium para teste.', { mensagem: erro.message, periodicidade, idSalao: salao.idSalao });
@@ -1775,82 +1767,40 @@ async function ativarAssinaturaTeste(requisicao, resposta) {
 
 async function iniciarCheckoutAssinatura(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre seu salão antes de contratar o Premium.' }); return; }
-  const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
-  let referenciaExterna = null;
-  let idCheckoutStripe = null;
-  let cancelamentoCheckoutFalhou = false;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   try {
-    const atual = await obterAssinaturaSalaoAtualizada(salao.idSalao);
-    if (resumoAssinatura(atual).temAcessoPremium) { resposta.status(409).json({ mensagem: 'Seu salão já possui uma assinatura Premium ativa.' }); return; }
-    if (assinaturaBloqueiaNovaContratacao(atual)) { resposta.status(409).json({ mensagem: 'Já existe uma assinatura em andamento. Atualize o status ou resolva essa assinatura antes de iniciar outra contratação.' }); return; }
-    const dadosPlano = obterDadosPlanoPremium(periodicidade);
-    const saloes = await bancoDeDados.query('SELECT st_teste_premium_utilizado AS testeUtilizado FROM tb_salao WHERE id_salao=:idSalao LIMIT 1', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT });
-    const testeGratis = !saloes[0]?.testeUtilizado;
-    referenciaExterna = randomUUID();
-    await bancoDeDados.query(
-      `INSERT INTO tb_assinatura_salao (fk_salao, cd_periodicidade, cd_status, vl_assinatura, st_teste_gratis, ds_provedor, id_preco_provedor, ds_referencia_externa)
-       VALUES (:idSalao, :periodicidade, 'PENDENTE', :valor, :testeGratis, 'STRIPE', :idPreco, :referenciaExterna)`,
-      { replacements: { idSalao: salao.idSalao, periodicidade, valor: dadosPlano.valor, testeGratis, idPreco: obterPrecoStripe(periodicidade), referenciaExterna } },
-    );
-    const checkout = await criarCheckoutAssinatura({
-      emailPagador: salao.emailConta,
-      periodicidade,
-      referenciaExterna,
-      testeGratis,
-      urlRetorno: `${(process.env.FRONTEND_URL ?? 'http://localhost:3000').replace(/\/$/, '')}/salao/assinatura?checkout=retorno`,
-    });
-    if (!checkout.id || !checkout.url) throw new Error('O Stripe não retornou um link de checkout.');
-    idCheckoutStripe = String(checkout.id);
-    await bancoDeDados.query('UPDATE tb_assinatura_salao SET id_checkout_provedor=:idCheckout WHERE ds_referencia_externa=:referenciaExterna', { replacements: { idCheckout: idCheckoutStripe, referenciaExterna } });
-    resposta.status(201).json({ checkoutUrl: checkout.url });
+    const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
+    const registro = await reservarContratacao({ idSalao: salao.idSalao, periodicidade, emailPagador: salao.emailConta });
+    const checkout = await finalizarCheckout(registro, salao.idSalao);
+    resposta.status(registro.nova ? 201 : 200).json({ checkoutUrl: checkout.url });
   } catch (erro) {
-    if (idCheckoutStripe) {
-      try { await cancelarCheckoutStripe(idCheckoutStripe); }
-      catch (erroCancelamento) {
-        cancelamentoCheckoutFalhou = true;
-        console.error('[Assinatura] Não foi possível encerrar um checkout órfão no Stripe.', { mensagem: erroCancelamento.message });
-      }
-    }
-    if (referenciaExterna && !cancelamentoCheckoutFalhou) await bancoDeDados.query("UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW() WHERE ds_referencia_externa=:referenciaExterna AND cd_status='PENDENTE'", { replacements: { referenciaExterna } });
-    console.error('[Assinatura] Falha ao iniciar checkout.', { mensagem: erro.message, periodicidade, idSalao: salao.idSalao });
-    resposta.status(400).json({ mensagem: erro.message });
+    resposta.status(erro.status ?? 502).json({ mensagem: erro.status ? erro.message : 'Não foi possível confirmar a criação do checkout. Atualize o status antes de tentar novamente.', codigo: erro.codigo });
   }
 }
 
 async function cancelarAssinatura(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const assinatura = await obterAssinaturaSalao(salao.idSalao);
-  const checkoutPendente = assinatura?.status === 'PENDENTE';
-  const assinaturaTesteLocal = assinatura?.idPrecoProvedor === 'ATIVACAO_TESTE' && !assinatura.idAssinaturaProvedor;
-  if (assinaturaTesteLocal) {
-    await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_proxima_cobranca=NULL, dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
-    resposta.status(200).json({ mensagem: 'Assinatura local de teste encerrada. Agora você pode contratar pelo Stripe.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
-    return;
-  }
-  if (checkoutPendente && assinatura?.idCheckoutProvedor) {
-    try {
-      const resultado = await cancelarCheckoutStripe(assinatura.idCheckoutProvedor);
-      if (resultado.object === 'subscription') {
-        await sincronizarAssinaturaStripe(resultado.id, assinatura.idCheckoutProvedor);
-        resposta.status(200).json({ mensagem: 'A renovação foi cancelada. O acesso Premium continua até o fim do período vigente.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
-      } else {
-        await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
-        resposta.status(200).json({ mensagem: 'Checkout pendente cancelado. Você já pode iniciar uma nova contratação.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
-      }
-    } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
-    return;
-  }
-  if (!assinatura?.idAssinaturaProvedor || assinatura.provedor !== 'STRIPE' || (!checkoutPendente && !resumoAssinatura(assinatura).temAcessoPremium)) { resposta.status(404).json({ mensagem: 'Não há uma assinatura Premium ativa no Stripe ou checkout pendente para cancelar.' }); return; }
+  const salao = await obterSalaoAdministrador(administrador.idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   try {
-    const dadosCancelamento = await cancelarAssinaturaStripe(assinatura.idAssinaturaProvedor);
-    const fimPeriodo = dadosCancelamento.items?.data?.[0]?.current_period_end ?? dadosCancelamento.current_period_end;
-    const dataFimPeriodo = fimPeriodo ? new Date(fimPeriodo * 1000) : assinatura.dataProximaCobranca;
-    await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELAMENTO_AGENDADO', dt_cancelamento_solicitado=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
-    if (dataFimPeriodo) await bancoDeDados.query('UPDATE tb_assinatura_salao SET dt_proxima_cobranca=:dataFimPeriodo WHERE id_assinatura_salao=:idAssinatura', { replacements: { dataFimPeriodo, idAssinatura: assinatura.idAssinatura } });
-    resposta.status(200).json({ mensagem: 'Cancelamento solicitado. O acesso Premium continua até o fim do período já pago.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
-  } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
+    const [registro] = await bancoDeDados.query(`SELECT id_assinatura_salao AS idAssinatura,
+      id_assinatura_provedor AS idAssinaturaProvedor, id_checkout_provedor AS idCheckout,
+      js_parametros_checkout AS parametros, dt_criacao AS criadaEm, ds_provedor AS provedor
+      FROM tb_assinatura_salao WHERE fk_salao=:idSalao ORDER BY id_assinatura_salao DESC LIMIT 1`, {
+      replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT,
+    });
+    if (!registro) { resposta.status(404).json({ mensagem: 'Não há assinatura para cancelar.' }); return; }
+    const resultado = registro.provedor === 'STRIPE' ? await cancelarRecursosContratacao(registro) : {};
+    if (resultado.idAssinatura) await sincronizarAssinaturaStripe(resultado.idAssinatura);
+    else await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELADA',
+      dt_proxima_cobranca=NULL, cd_periodicidade_pendente=NULL, dt_cancelamento=COALESCE(dt_cancelamento,NOW())
+      WHERE id_assinatura_salao=:id`, { replacements: { id: registro.idAssinatura } });
+    const assinatura = await obterAssinaturaSalao(salao.idSalao);
+    resposta.json({ mensagem: assinatura.status === 'CANCELAMENTO_AGENDADO'
+      ? 'Renovação cancelada. O Premium continua até o fim do ciclo vigente.'
+      : 'Assinatura encerrada imediatamente, sem reembolso automático.', assinatura: resumoAssinatura(assinatura) });
+  } catch (erro) { resposta.status(erro.status ?? 502).json({ mensagem: erro.status ? erro.message : 'Não foi possível confirmar o cancelamento no Stripe.', codigo: erro.codigo }); }
 }
 
 async function reativarAssinatura(requisicao, resposta) {

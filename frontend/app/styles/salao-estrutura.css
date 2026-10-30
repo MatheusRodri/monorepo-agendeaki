@@ -320,6 +320,13 @@
   width: min(190px, 100%);
 }
 
+.opcoes-premium .botao-secundario:disabled {
+  border-color: var(--borda);
+  color: var(--ameixa);
+  cursor: not-allowed;
+  opacity: .55;
+}
+
 .status-assinatura {
   align-items: center;
   background: var(--creme);

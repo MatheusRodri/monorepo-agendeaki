@@ -542,6 +542,7 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
   }
 
   async function alterarPeriodicidade(periodicidade) {
+    if (enviando || renovacaoCancelada || assinatura?.periodicidadePendente || assinatura?.periodicidade === periodicidade) return;
     definirEnviando(periodicidade);
     try {
       const resultado = await requisitar('/assinatura/periodicidade', { method: 'PATCH', body: JSON.stringify({ periodicidade }) });
@@ -578,7 +579,7 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
     <p className="descricao-assinatura">O Básico mantém sua operação organizada. Com o Premium, você terá recursos avançados assim que forem lançados.</p>
 
     {assinaturaPendente && <section className="status-assinatura"><div><strong>Checkout em andamento</strong><p>Se você já concluiu o checkout, aguarde a confirmação do Stripe e atualize o status.</p></div><button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button><button className="botao-secundario" disabled={Boolean(enviando)} onClick={cancelarCheckoutPendente} type="button">{enviando === 'cancelar-pendente' ? 'Cancelando...' : 'Cancelar checkout'}</button></section>}
-    {assinaturaComProblema && <section className="status-assinatura"><div><strong>{assinatura.status === 'PAUSADA' ? 'Assinatura pausada' : 'Pagamento pendente'}</strong><p>Verifique a forma de pagamento da assinatura Stripe antes de tentar novamente.</p></div><button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button></section>}
+    {assinaturaComProblema && <section className="status-assinatura"><div><strong>{assinatura.status === 'PAUSADA' ? 'Assinatura pausada' : 'Pagamento pendente'}</strong><p>Verifique a forma de pagamento da assinatura Stripe antes de tentar novamente.</p></div><button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button><button className="botao-secundario" disabled={Boolean(enviando)} onClick={cancelar}>Encerrar assinatura agora</button></section>}
     {encerramentoPendente && <section className="status-assinatura"><div><strong>Encerramento em confirmação</strong><p>Seu período Premium terminou. Aguarde a confirmação do encerramento para assinar novamente e atualize o status abaixo.</p></div><button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button></section>}
     {premiumAtivo && <section className="status-assinatura">
       <div>
@@ -589,7 +590,6 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
       <div className="status-assinatura__acoes">
         {podeReativar && <button className="botao-secundario" disabled={Boolean(enviando)} onClick={reativar} type="button">{enviando === 'reativar' ? 'Reativando...' : 'Reativar assinatura'}</button>}
         {!renovacaoCancelada && <button className="botao-secundario" disabled={Boolean(enviando)} onClick={cancelar} type="button">{enviando === 'cancelar' ? 'Cancelando...' : 'Cancelar renovação'}</button>}
-        {renovacaoCancelada && <button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button>}
       </div>
     </section>}
     {assinaturaEncerrada && <section className="status-assinatura"><div><strong>Seu período Premium terminou</strong><p>Escolha um plano abaixo para assinar novamente com esta conta. Suas unidades, profissionais, serviços e histórico continuam salvos. O Premium será liberado após a confirmação da contratação.</p></div><button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button></section>}
@@ -598,11 +598,12 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
       <article className="cartao-plano cartao-plano--premium"><p className="sobretitulo">{premium.nome ?? 'Premium'}</p><h2>Para acompanhar cada resultado.</h2><p className="titulo-recursos-premium">Incluído no plano</p><ul className="lista-recursos-premium">{recursosPremium.map((recurso) => <li key={recurso.nome}><div><span>{recurso.nome}</span></div>{recurso.descricao && <small>{recurso.descricao}</small>}</li>)}</ul>
         {!premiumAtivo && dados.testeGratisDisponivel !== false && <p className="teste-plano">{premium.testeGratisDias ?? 7} dias grátis para testar</p>}
         <div className="opcoes-premium">{opcoesPremium.map((opcao) => {
-          const selecionada = assinatura?.periodicidade === opcao.periodicidade || assinatura?.periodicidadePendente === opcao.periodicidade;
+          const planoAtual = assinatura?.periodicidade === opcao.periodicidade;
+          const trocaAgendada = assinatura?.periodicidadePendente === opcao.periodicidade;
           return <section key={opcao.periodicidade}>
             <div><strong>R$ {Number(opcao.valor).toFixed(2).replace('.', ',')}</strong><span>por {opcao.periodicidade === 'ANUAL' ? 'ano' : 'mês'}</span></div>
             {premiumAtivo
-              ? <button className="botao-secundario" disabled={selecionada || renovacaoCancelada || Boolean(assinatura?.periodicidadePendente) || Boolean(enviando)} onClick={() => alterarPeriodicidade(opcao.periodicidade)} type="button">{selecionada ? 'Selecionado' : enviando === opcao.periodicidade ? 'Salvando...' : 'Escolher'}</button>
+              ? <button className="botao-secundario" disabled={planoAtual || trocaAgendada || renovacaoCancelada || Boolean(assinatura?.periodicidadePendente) || Boolean(enviando)} onClick={() => alterarPeriodicidade(opcao.periodicidade)} type="button">{planoAtual ? 'Plano atual' : trocaAgendada ? 'Troca agendada' : enviando === opcao.periodicidade ? 'Salvando...' : 'Escolher'}</button>
               : <button className="botao-enviar" disabled={contratacaoBloqueada || Boolean(enviando)} onClick={() => assinar(opcao.periodicidade)} type="button">{enviando === opcao.periodicidade ? (modoTeste ? 'Ativando...' : 'Abrindo checkout...') : modoTeste ? 'Ativar Premium para teste' : assinaturaEncerrada ? 'Assinar novamente' : 'Assinar com Stripe'}</button>}
           </section>;
         })}</div>
