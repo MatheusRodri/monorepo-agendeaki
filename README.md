@@ -336,6 +336,8 @@ Faça backup, interrompa gravações e compare o esquema existente com a versão
 - **Painel administrativo:** aplique `2026-10-22-painel-administrativo.sql` quando pendente. Sessões administrativas revogáveis e operações persistentes de exclusão também precisam das estruturas atuais de `database/script.sql`; os arquivos de migração legados não cobrem todas as diferenças de versões antigas.
 - **Serviços adicionais:** aplique `2026-10-23-servicos-adicionais.sql` antes da atualização das aplicações. A migração também cria a view utilizada pelos relatórios.
 - **Promoções:** aplique `2026-10-29-promocoes-servicos.sql` uma vez, antes do back-end e do front-end que utilizam promoções.
+- **Métricas de promoções e ajustes de valor:** aplique `2026-10-30-historico-precos-promocoes.sql` uma vez, depois das migrações de serviços adicionais e promoções, antes de publicar o backend e o frontend. Registros antigos mantêm seus valores e aparecem como “Não informado”; as novas reservas e os extras passam a preservar o histórico de preços.
+- **Observação dos ajustes de extras:** aplique `2026-10-30-observacao-ajuste-extras.sql` uma vez antes de publicar o backend e o frontend. O campo é opcional, aceita até 500 caracteres e registra o motivo do desconto adicional ou acréscimo. A observação fica disponível no histórico do salão, no Analítico e nas exportações CSV e Excel.
 - **Liberação de avaliações:** aplique `2026-10-30-liberacao-avaliacoes.sql` uma vez, antes de publicar o back-end. A migração preserva o histórico sem reenviar notificações antigas.
 
 Instalações novas já recebem essas estruturas pelo `database/script.sql` e não devem executar as migrações adicionais.
