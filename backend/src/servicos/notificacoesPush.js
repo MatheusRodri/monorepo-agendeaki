@@ -2,6 +2,10 @@ import webpush from 'web-push';
 import { createHash, randomUUID } from 'node:crypto';
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
+import { horarioBanco } from './regrasTemporaisAgendamento.js';
+
+export const notificacaoClienteDisponivelSql = `(n.cd_tipo<>'AVALIACAO' OR
+  (a.cd_status='REALIZADO' AND a.dt_fim<=:agora AND COALESCE(n.dt_disponivel_em,a.dt_fim)<=:agora))`;
 
 let vapidConfigurado = false;
 
@@ -123,37 +127,40 @@ export async function consultarInscricaoPushCliente(idUsuario, endpoint) {
   return inscricoes[0]?.idVinculo ?? null;
 }
 
-export async function criarNotificacaoCliente(idUsuario, idAgendamento, { tipo = 'AVALIACAO', titulo, mensagem, link }, transaction) {
+export async function criarNotificacaoCliente(idUsuario, idAgendamento, { tipo = 'AVALIACAO', titulo, mensagem, link, disponivelEm = null }, transaction) {
   const [idNotificacao] = await bancoDeDados.query(
-    `INSERT INTO tb_notificacao_cliente (fk_usuario, fk_agendamento, cd_tipo, nm_titulo, ds_mensagem, ds_link)
-     VALUES (:idUsuario, :idAgendamento, :tipo, :titulo, :mensagem, :link)`,
-    { replacements: { idUsuario, idAgendamento, tipo, titulo, mensagem, link }, transaction },
+    `INSERT INTO tb_notificacao_cliente (fk_usuario, fk_agendamento, cd_tipo, nm_titulo, ds_mensagem, ds_link, dt_disponivel_em)
+     VALUES (:idUsuario, :idAgendamento, :tipo, :titulo, :mensagem, :link, :disponivelEm)`,
+    { replacements: { idUsuario, idAgendamento, tipo, titulo, mensagem, link, disponivelEm }, transaction },
   );
   return Number(idNotificacao) || null;
 }
 
 export async function listarNotificacoesCliente(idUsuario) {
+  const agora = horarioBanco();
   const [notificacoes, contagem] = await Promise.all([
     bancoDeDados.query(
       `SELECT n.id_notificacao AS id, n.fk_agendamento AS idAgendamento,
               n.cd_tipo AS tipo, n.nm_titulo AS titulo, n.ds_mensagem AS mensagem, n.ds_link AS link,
               CASE WHEN n.st_lida=TRUE OR (n.cd_tipo='AVALIACAO' AND av.id_avaliacao IS NOT NULL) THEN TRUE ELSE FALSE END AS lida,
-              n.dt_criacao AS criadaEm,
-              a.cd_status AS statusAgendamento, av.id_avaliacao AS idAvaliacao
+              CASE WHEN n.cd_tipo='AVALIACAO' THEN GREATEST(n.dt_criacao,COALESCE(n.dt_disponivel_em,a.dt_fim)) ELSE n.dt_criacao END AS criadaEm,
+              a.cd_status AS statusAgendamento, av.id_avaliacao AS idAvaliacao,
+              a.dt_fim AS dataHoraFim,
+              CASE WHEN a.cd_status='REALIZADO' AND a.dt_fim<=:agora AND av.id_avaliacao IS NULL THEN TRUE ELSE FALSE END AS podeAvaliar
        FROM tb_notificacao_cliente n
        INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
        LEFT JOIN tb_avaliacao av ON av.fk_agendamento=a.id_agendamento
-       WHERE n.fk_usuario=:idUsuario
-       ORDER BY n.dt_criacao DESC, n.id_notificacao DESC LIMIT 50`,
-      { replacements: { idUsuario }, type: QueryTypes.SELECT },
+       WHERE n.fk_usuario=:idUsuario AND ${notificacaoClienteDisponivelSql}
+       ORDER BY criadaEm DESC, n.id_notificacao DESC LIMIT 50`,
+      { replacements: { idUsuario, agora }, type: QueryTypes.SELECT },
     ),
     bancoDeDados.query(
       `SELECT COUNT(*) AS quantidade FROM tb_notificacao_cliente n
        INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
        LEFT JOIN tb_avaliacao av ON av.fk_agendamento=a.id_agendamento
-       WHERE n.fk_usuario=:idUsuario AND n.st_lida=FALSE
+       WHERE n.fk_usuario=:idUsuario AND n.st_lida=FALSE AND ${notificacaoClienteDisponivelSql}
          AND (n.cd_tipo<>'AVALIACAO' OR (a.cd_status='REALIZADO' AND av.id_avaliacao IS NULL))`,
-      { replacements: { idUsuario }, type: QueryTypes.SELECT },
+      { replacements: { idUsuario, agora }, type: QueryTypes.SELECT },
     ),
   ]);
   return { notificacoes, naoLidas: Number(contagem[0]?.quantidade ?? 0) };
@@ -161,16 +168,19 @@ export async function listarNotificacoesCliente(idUsuario) {
 
 export async function marcarNotificacaoClienteLida(idUsuario, idNotificacao) {
   const [resultado] = await bancoDeDados.query(
-    'UPDATE tb_notificacao_cliente SET st_lida=TRUE WHERE id_notificacao=:idNotificacao AND fk_usuario=:idUsuario AND st_lida=FALSE',
-    { replacements: { idNotificacao, idUsuario } },
+    `UPDATE tb_notificacao_cliente n INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
+     SET n.st_lida=TRUE WHERE n.id_notificacao=:idNotificacao AND n.fk_usuario=:idUsuario AND n.st_lida=FALSE
+       AND ${notificacaoClienteDisponivelSql}`,
+    { replacements: { idNotificacao, idUsuario, agora: horarioBanco() } },
   );
   return Number(resultado?.affectedRows ?? 0) > 0;
 }
 
 export async function marcarTodasNotificacoesClienteLidas(idUsuario) {
   await bancoDeDados.query(
-    'UPDATE tb_notificacao_cliente SET st_lida=TRUE WHERE fk_usuario=:idUsuario AND st_lida=FALSE',
-    { replacements: { idUsuario } },
+    `UPDATE tb_notificacao_cliente n INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
+     SET n.st_lida=TRUE WHERE n.fk_usuario=:idUsuario AND n.st_lida=FALSE AND ${notificacaoClienteDisponivelSql}`,
+    { replacements: { idUsuario, agora: horarioBanco() } },
   );
 }
 
@@ -178,7 +188,7 @@ export async function enviarNotificacaoPushCliente(idUsuario, titulo, mensagem, 
   try {
     if (!configurarVapid()) {
       console.warn('[Notificações push] VAPID não configurado; aviso de cliente não enviado.', { idUsuario, titulo });
-      return;
+      return true;
     }
     const inscricoes = await bancoDeDados.query(
       `SELECT i.ds_endpoint AS endpoint, i.ds_chave_publica AS p256dh, i.ds_chave_auth AS auth,
@@ -186,12 +196,14 @@ export async function enviarNotificacaoPushCliente(idUsuario, titulo, mensagem, 
         FROM tb_inscricao_notificacao_cliente i INNER JOIN tb_usuario u ON u.id_usuario=i.fk_usuario WHERE i.fk_usuario=:idUsuario`,
       { replacements: { idUsuario }, type: QueryTypes.SELECT },
     );
-    if (!inscricoes.length) return;
+    if (!inscricoes.length) return true;
+    let enviado = true;
     await Promise.all(inscricoes.map(async (inscricao) => {
       try {
         await webpush.sendNotification(
           { endpoint: inscricao.endpoint, keys: { p256dh: inscricao.p256dh, auth: inscricao.auth } },
           JSON.stringify(montarAvisoPush(inscricao, 'cliente', idNotificacao)),
+          { timeout: 10000 },
         );
       } catch (erro) {
         if ([404, 410].includes(erro.statusCode)) {
@@ -200,11 +212,14 @@ export async function enviarNotificacaoPushCliente(idUsuario, titulo, mensagem, 
           });
         } else {
           console.error('[Notificações push] Falha ao enviar aviso ao cliente.', { idUsuario, status: erro.statusCode, mensagem: erro.message });
+          enviado = false;
         }
       }
     }));
+    return enviado;
   } catch (erro) {
     console.error('[Notificações push] Falha ao consultar dispositivos do cliente.', { idUsuario, mensagem: erro.message });
+    return false;
   }
 }
 

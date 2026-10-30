@@ -21,6 +21,7 @@ import { salvarServicosAdicionais } from '../servicos/agendamentos.js';
 import { consultarAgendaSalao, normalizarConsultaAgenda } from '../servicos/agendaSalao.js';
 import { assinaturaTemAcessoPremium, obterAcessoPremiumSalao } from '../servicos/acessoPremium.js';
 import { apresentarServico, camposPromocaoSql, lerPromocao, normalizarValorServico, resolverPromocaoEdicao } from '../servicos/promocoesServicos.js';
+import { podeConcluirAgendamento } from '../servicos/regrasTemporaisAgendamento.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -1145,7 +1146,6 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
   const idAgendamento = Number(requisicao.params.idAgendamento);
   if (!Number.isSafeInteger(idAgendamento) || idAgendamento <= 0) { resposta.status(400).json({ mensagem: 'Agendamento inválido.' }); return; }
   const transacao = await criarTransacaoAgenda();
-  let dadosNotificacao = null;
   try {
     const [contexto] = await bancoDeDados.query(`SELECT a.fk_unidade AS idUnidade,
       a.fk_usuario AS idUsuario, a.fk_cliente_salao AS idClienteSalao
@@ -1155,7 +1155,7 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
     });
     if (!contexto) throw Object.assign(new Error('Agendamento não encontrado.'), { status: 404 });
     await bloquearRecursosAgenda({ ...contexto, idsUnidades: [contexto.idUnidade], transaction: transacao });
-    const [agendamento] = await bancoDeDados.query(`SELECT cd_status AS status, dt_inicio AS dataHoraInicio,
+    const [agendamento] = await bancoDeDados.query(`SELECT cd_status AS status, dt_inicio AS dataHoraInicio, dt_fim AS dataHoraFim,
       nm_servico_agendado AS servico, fk_unidade AS idUnidade FROM tb_agendamento
       WHERE id_agendamento=:idAgendamento FOR UPDATE`, {
       replacements: { idAgendamento }, transaction: transacao, type: QueryTypes.SELECT,
@@ -1163,6 +1163,9 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
     if (agendamento.status !== 'AGENDADO') throw Object.assign(new Error('Este agendamento já recebeu um resultado.'), { status: 409 });
     // Revalidar a unidade após os locks, inclusive se houve reagendamento concorrente.
     if (Number(agendamento.idUnidade) !== Number(contexto.idUnidade)) throw Object.assign(new Error('O agendamento foi alterado. Atualize a agenda.'), { status: 409 });
+    if (status === 'REALIZADO' && !podeConcluirAgendamento(agendamento)) {
+      throw Object.assign(new Error('O atendimento só pode ser marcado como realizado a partir de 00h do dia anterior ao agendamento, no horário de São Paulo.'), { status: 409 });
+    }
     if (status === 'NAO_COMPARECEU' && new Date(agendamento.dataHoraInicio) > new Date()) {
       throw Object.assign(new Error('A ausência só pode ser registrada após o horário agendado.'), { status: 409 });
     }
@@ -1175,15 +1178,15 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
       const titulo = 'Como foi seu atendimento?';
       const mensagem = `Seu atendimento de ${agendamento.servico} foi marcado como realizado. Avalie sua experiência.`;
       const link = `/cliente/agendamentos?avaliar=${idAgendamento}`;
-      const idNotificacao = await criarNotificacaoCliente(contexto.idUsuario, idAgendamento, { titulo, mensagem, link }, transacao);
-      dadosNotificacao = { idUsuario: contexto.idUsuario, idNotificacao, titulo, mensagem, link };
+      await criarNotificacaoCliente(contexto.idUsuario, idAgendamento, {
+        titulo, mensagem, link, disponivelEm: agendamento.dataHoraFim,
+      }, transacao);
     }
     await transacao.commit();
   } catch (erro) {
     await transacao.rollback();
     resposta.status(erro.status ?? 500).json({ mensagem: erro.message }); return;
   }
-  if (dadosNotificacao) void enviarNotificacaoPushCliente(dadosNotificacao.idUsuario, dadosNotificacao.titulo, dadosNotificacao.mensagem, dadosNotificacao.idNotificacao, dadosNotificacao.link);
   resposta.status(200).json({ mensagem: status === 'REALIZADO' ? 'Atendimento confirmado como realizado.' : 'Ausência registrada.' });
 }
 

@@ -23,6 +23,8 @@ import {
 
 import { criarReservasCliente, idValido } from '../servicos/agendamentos.js';
 import { consultarAgendamentosCliente, normalizarPaginacaoCliente } from '../servicos/listagemAgendamentosCliente.js';
+import { horarioBanco, podeAvaliarAgendamento } from '../servicos/regrasTemporaisAgendamento.js';
+import { notificacaoClienteDisponivelSql } from '../servicos/notificacoesPush.js';
 
 const roteadorCliente = Router();
 const raiosPermitidos = [0, 1, 5, 10];
@@ -383,8 +385,10 @@ async function marcarNotificacaoClienteComoLida(requisicao, resposta) {
   const atualizada = await marcarNotificacaoClienteLida(cliente.idUsuario, idNotificacao);
   if (!atualizada) {
     const existentes = await bancoDeDados.query(
-      'SELECT id_notificacao FROM tb_notificacao_cliente WHERE id_notificacao=:idNotificacao AND fk_usuario=:idUsuario LIMIT 1',
-      { replacements: { idNotificacao, idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
+      `SELECT n.id_notificacao FROM tb_notificacao_cliente n
+       INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
+       WHERE n.id_notificacao=:idNotificacao AND n.fk_usuario=:idUsuario AND ${notificacaoClienteDisponivelSql} LIMIT 1`,
+      { replacements: { idNotificacao, idUsuario: cliente.idUsuario, agora: horarioBanco() }, type: QueryTypes.SELECT },
     );
     if (!existentes.length) {
       resposta.status(404).json({ mensagem: 'Notificação não encontrada.' });
@@ -403,16 +407,19 @@ async function marcarNotificacaoAgendamentoClienteComoLida(requisicao, resposta)
     return;
   }
   const [resultado] = await bancoDeDados.query(
-    `UPDATE tb_notificacao_cliente SET st_lida=TRUE
-     WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento
-       AND cd_tipo='AVALIACAO' AND st_lida=FALSE`,
-    { replacements: { idUsuario: cliente.idUsuario, idAgendamento } },
+    `UPDATE tb_notificacao_cliente n
+     INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
+     SET n.st_lida=TRUE WHERE n.fk_usuario=:idUsuario AND n.fk_agendamento=:idAgendamento
+       AND n.cd_tipo='AVALIACAO' AND n.st_lida=FALSE AND ${notificacaoClienteDisponivelSql}`,
+    { replacements: { idUsuario: cliente.idUsuario, idAgendamento, agora: horarioBanco() } },
   );
   if (!resultado.affectedRows) {
     const existentes = await bancoDeDados.query(
-      `SELECT id_notificacao FROM tb_notificacao_cliente
-       WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento AND cd_tipo='AVALIACAO' LIMIT 1`,
-      { replacements: { idUsuario: cliente.idUsuario, idAgendamento }, type: QueryTypes.SELECT },
+      `SELECT n.id_notificacao FROM tb_notificacao_cliente n
+       INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
+       WHERE n.fk_usuario=:idUsuario AND n.fk_agendamento=:idAgendamento AND n.cd_tipo='AVALIACAO'
+         AND ${notificacaoClienteDisponivelSql} LIMIT 1`,
+      { replacements: { idUsuario: cliente.idUsuario, idAgendamento, agora: horarioBanco() }, type: QueryTypes.SELECT },
     );
     if (!existentes.length) {
       resposta.status(404).json({ mensagem: 'Notificação não encontrada.' });
@@ -496,7 +503,7 @@ async function avaliarAgendamento(requisicao, resposta) {
   }
   const agendamentos = await bancoDeDados.query(
     `SELECT id_agendamento AS idAgendamento, fk_unidade AS idUnidade, fk_servico AS idServico,
-            cd_status AS status FROM tb_agendamento
+            cd_status AS status, dt_fim AS dataHoraFim FROM tb_agendamento
      WHERE id_agendamento=:idAgendamento AND fk_usuario=:idUsuario LIMIT 1`,
     { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
   );
@@ -504,6 +511,10 @@ async function avaliarAgendamento(requisicao, resposta) {
   if (!agendamento) { resposta.status(404).json({ mensagem: 'Agendamento não encontrado.' }); return; }
   if (agendamento.status !== 'REALIZADO') {
     resposta.status(409).json({ mensagem: 'A avaliação fica disponível após o atendimento ser marcado como realizado.' });
+    return;
+  }
+  if (!podeAvaliarAgendamento(agendamento)) {
+    resposta.status(409).json({ mensagem: 'A avaliação fica disponível a partir do término previsto do atendimento, no horário de São Paulo.' });
     return;
   }
   try {

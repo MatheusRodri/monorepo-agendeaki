@@ -1,6 +1,7 @@
 import { QueryTypes, Transaction } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { incluirServicosAdicionais } from './agendamentos.js';
+import { liberacaoConclusao, podeConcluirAgendamento } from './regrasTemporaisAgendamento.js';
 
 const erroConsulta = (mensagem) => Object.assign(new Error(mensagem), { status: 400 });
 function deslocarData(data, dias) {
@@ -61,7 +62,12 @@ export async function consultarAgendaSalao(idSalao, consulta) {
       replacements: { ...replacements, limite: consulta.porPagina, offset: (pagina - 1) * consulta.porPagina },
       type: QueryTypes.SELECT, transaction,
     });
-    return { agendamentos: await incluirServicosAdicionais(agendamentos, { transaction }),
+    const agora = new Date();
+    const comPermissoes = agendamentos.map((agendamento) => ({ ...agendamento,
+      podeConcluir: podeConcluirAgendamento(agendamento, agora),
+      conclusaoDisponivelEm: liberacaoConclusao(agendamento.dataHoraInicio),
+    }));
+    return { agendamentos: await incluirServicosAdicionais(comPermissoes, { transaction }),
       pagina, porPagina: consulta.porPagina, total, totalPaginas, tipo: consulta.tipo, periodo: consulta.periodo };
   });
 }

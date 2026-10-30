@@ -1,6 +1,7 @@
 import { QueryTypes, Transaction } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { incluirServicosAdicionais } from './agendamentos.js';
+import { podeAvaliarAgendamento } from './regrasTemporaisAgendamento.js';
 
 const erroConsulta = () => Object.assign(new Error('Paginação inválida.'), { status: 400 });
 
@@ -55,7 +56,6 @@ export async function consultarAgendamentosCliente(idUsuario, tipoListagem, cons
       a.vl_servico_agendado AS valor, a.ds_observacao AS observacao,
       a.ds_motivo_cancelamento AS motivoCancelamento, a.cd_status AS status,
       av.id_avaliacao AS idAvaliacao,
-      CASE WHEN a.cd_status='REALIZADO' AND av.id_avaliacao IS NULL THEN TRUE ELSE FALSE END AS podeAvaliar,
       f.nm_funcionario AS profissional, s.nm_salao AS salao, u.nm_unidade AS unidade,
       u.ds_municipio AS municipio
       FROM tb_agendamento a INNER JOIN tb_funcionario f ON f.id_funcionario = a.fk_funcionario
@@ -67,7 +67,9 @@ export async function consultarAgendamentosCliente(idUsuario, tipoListagem, cons
       replacements: { ...replacements, limite: consulta.porPagina, offset: (pagina - 1) * consulta.porPagina },
       type: QueryTypes.SELECT, transaction,
     });
-    return { agendamentos: await incluirServicosAdicionais(agendamentos, { transaction }),
+    const agora = new Date();
+    const comPermissoes = agendamentos.map((agendamento) => ({ ...agendamento, podeAvaliar: podeAvaliarAgendamento(agendamento, agora) }));
+    return { agendamentos: await incluirServicosAdicionais(comPermissoes, { transaction }),
       pagina, porPagina: consulta.porPagina, total, totalPaginas, localizado };
   });
 }

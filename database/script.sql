@@ -895,9 +895,13 @@ CREATE TABLE IF NOT EXISTS tb_notificacao_cliente (
   ds_mensagem VARCHAR(300) NOT NULL,
   ds_link VARCHAR(255) NOT NULL,
   st_lida BOOLEAN NOT NULL DEFAULT FALSE,
+  dt_disponivel_em DATETIME NULL,
+  dt_push_processado DATETIME NULL,
+  dt_push_reservado DATETIME NULL,
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id_notificacao),
   INDEX idx_notificacao_cliente_agendamento (fk_agendamento),
+  INDEX idx_notificacao_cliente_push (cd_tipo, dt_push_processado, dt_disponivel_em),
   INDEX idx_notificacao_cliente_usuario_nao_lida (fk_usuario, st_lida, dt_criacao),
   CONSTRAINT fk_notificacao_cliente_usuario FOREIGN KEY (fk_usuario)
     REFERENCES tb_usuario (id_usuario) ON DELETE CASCADE ON UPDATE CASCADE,
