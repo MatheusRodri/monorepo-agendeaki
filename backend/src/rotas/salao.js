@@ -1,3 +1,4 @@
+import { comporMotivo } from '../servicos/metricasAgenda.js';
 import { iniciarExclusaoSalao } from '../servicos/exclusaoContaSalao.js';
 import { consultarExclusao } from '../servicos/usuarios.js';
 import { reservarContratacao, finalizarCheckout, cancelarRecursosContratacao, recuperarCheckout } from '../servicos/contratacoes.js';
@@ -855,7 +856,7 @@ async function criarBloqueio(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Selecione o motivo do bloqueio e descreva o motivo quando escolher “Outro”.' }); return;
   }
   if (detalheMotivo.length > 200) { resposta.status(400).json({ mensagem: 'O detalhe do motivo deve ter até 200 caracteres.' }); return; }
-  const motivo = `${motivosCancelamento[codigoMotivo]}${detalheMotivo ? `: ${detalheMotivo}` : ''}`;
+  const motivo = comporMotivo(codigoMotivo, detalheMotivo, motivosCancelamento);
   const transacao = await criarTransacaoAgenda();
   const notificacoes = [];
   try {
@@ -1144,7 +1145,7 @@ async function cancelarAgendamentoSalao(requisicao, resposta) {
   if (detalheMotivo.length > 200) {
     resposta.status(400).json({ mensagem: 'O detalhe do motivo deve ter até 200 caracteres.' }); return;
   }
-  const motivo = `${motivosCancelamento[codigoMotivo]}${detalheMotivo ? `: ${detalheMotivo}` : ''}`;
+  const motivo = comporMotivo(codigoMotivo, detalheMotivo, motivosCancelamento);
 
   const transacao = await bancoDeDados.transaction();
   let dadosNotificacao = null;
