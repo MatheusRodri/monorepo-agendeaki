@@ -124,17 +124,26 @@
   background: #342638;
 }
 
-.modal-conta h2,
+.modal-conta > section h2,
 .secao-configuracoes h2 {
   color: var(--ameixa);
   font-family: 'Playfair Display', Georgia, serif;
   margin: .35rem 0 .65rem;
 }
 
-.modal-conta p:not(.sobretitulo),
+.modal-conta > section p:not(.sobretitulo),
 .secao-configuracoes > p {
   color: var(--texto-suave);
   line-height: 1.5;
+}
+
+.modal-conta .aceite-documentos {
+  grid-column: 1 / -1;
+  margin: .4rem 0 1rem;
+}
+
+.modal-conta__nome-salao {
+  grid-column: 1 / -1;
 }
 
 .secao-configuracoes {
@@ -497,7 +506,7 @@
 .busca-exploracao > div > button[type='submit'] {
   background: var(--coral);
   border: 0;
-  color: #241a25;
+  color: var(--fundo);
 }
 
 .busca-exploracao > div > button[type='submit']:hover {

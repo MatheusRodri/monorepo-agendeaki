@@ -1,10 +1,13 @@
+import { autenticarRequisicao } from '../servicos/autorizacaoUsuarios.js';
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
 import { bloquearRecursosAgenda, criarTransacaoAgenda, listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
-import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { obterAcessoPremiumSalao } from '../servicos/acessoPremium.js';
+import { apresentarServico, camposPromocaoSql } from '../servicos/promocoesServicos.js';
+import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, obterPendenciasUsuario, registrarAceitePendente } from '../servicos/usuarios.js';
 import {
   criarNotificacaoCliente,
   consultarInscricaoPushCliente,
@@ -20,6 +23,8 @@ import {
 
 import { criarReservasCliente, idValido } from '../servicos/agendamentos.js';
 import { consultarAgendamentosCliente, normalizarPaginacaoCliente } from '../servicos/listagemAgendamentosCliente.js';
+import { horarioBanco, podeAvaliarAgendamento } from '../servicos/regrasTemporaisAgendamento.js';
+import { notificacaoClienteDisponivelSql } from '../servicos/notificacoesPush.js';
 
 const roteadorCliente = Router();
 const raiosPermitidos = [0, 1, 5, 10];
@@ -30,38 +35,7 @@ function extrairTokenAcesso(requisicao) {
 }
 
 async function obterClienteAutenticado(requisicao, resposta) {
-  const tokenAcesso = extrairTokenAcesso(requisicao);
-
-  if (!tokenAcesso) {
-    resposta.status(401).json({ mensagem: 'Informe o token de acesso.' });
-    return null;
-  }
-
-  try {
-    const clienteSupabase = obterClienteSupabase(tokenAcesso);
-    const { data: dadosUsuario, error: erroUsuario } = await clienteSupabase.auth.getUser(tokenAcesso);
-
-    if (erroUsuario || !dadosUsuario.user) {
-      resposta.status(401).json({ mensagem: 'A sessão informada é inválida ou expirou.' });
-      return null;
-    }
-
-    if (dadosUsuario.user.user_metadata?.perfil !== 'CLIENTE') {
-      resposta.status(403).json({ mensagem: 'Esta área é exclusiva para clientes.' });
-      return null;
-    }
-
-    const cliente = await sincronizarUsuario({
-      email: dadosUsuario.user.email,
-      idAutenticacaoExterna: dadosUsuario.user.id,
-      nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email,
-      perfil: 'CLIENTE',
-    });
-    return { ...cliente, idAutenticacaoExterna: dadosUsuario.user.id };
-  } catch (erro) {
-    resposta.status(500).json({ mensagem: erro.message });
-    return null;
-  }
+  return autenticarRequisicao(requisicao, resposta, 'CLIENTE');
 }
 
 async function consultarHorariosAgendamento(requisicao, resposta) {
@@ -69,7 +43,7 @@ async function consultarHorariosAgendamento(requisicao, resposta) {
   if (!cliente) return;
   const { data, idUnidade, idServico, idFuncionario } = requisicao.query;
   if (![idUnidade, idServico].every(idValido) || (idFuncionario && idFuncionario !== 'qualquer' && !idValido(idFuncionario))) {
-    resposta.status(400).json({ mensagem: 'Informe filial, serviço e profissional válidos.' }); return;
+    resposta.status(400).json({ mensagem: 'Informe unidade, serviço e profissional válidos.' }); return;
   }
   try {
     resposta.json(await listarHorariosDisponiveis({ data: String(data ?? ''), idUnidade: Number(idUnidade),
@@ -124,11 +98,8 @@ async function obterCoordenadas(requisicao) {
 async function consultarPerfil(requisicao, resposta) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
-  const perfil = await obterDadosCadastraisUsuario(cliente.idUsuario);
-  resposta.status(200).json({
-    perfil,
-    cadastroIncompleto: !perfil?.dataNascimento || !perfil?.telefone,
-  });
+  const pendencias = await obterPendenciasUsuario(cliente.idUsuario, 'CLIENTE');
+  resposta.status(200).json({ perfil: pendencias.dadosCadastrais, ...pendencias });
 }
 
 async function atualizarPerfil(requisicao, resposta) {
@@ -140,10 +111,14 @@ async function atualizarPerfil(requisicao, resposta) {
   if (![10, 11].includes(telefoneNormalizado.length)) { resposta.status(400).json({ mensagem: 'Informe um telefone válido.' }); return; }
   if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Você precisa ter pelo menos 18 anos.' }); return; }
   try {
-    const perfil = await atualizarDadosCadastraisUsuario(cliente.idUsuario, { dataNascimento, nome, telefone: telefoneNormalizado });
+    await bancoDeDados.transaction(async (transaction) => {
+      await registrarAceitePendente(cliente.idUsuario, requisicao.body?.aceitouDocumentos, transaction);
+      await atualizarDadosCadastraisUsuario(cliente.idUsuario, { dataNascimento, nome, telefone: telefoneNormalizado, transaction });
+    });
+    const perfil = await obterDadosCadastraisUsuario(cliente.idUsuario);
     resposta.status(200).json({ mensagem: 'Informações da conta atualizadas.', perfil, cadastroIncompleto: false });
   } catch (erro) {
-    resposta.status(400).json({ mensagem: 'Não foi possível atualizar suas informações.' });
+    resposta.status(erro.status ?? 400).json({ mensagem: erro.status ? erro.message : 'Não foi possível atualizar suas informações.', codigo: erro.codigo });
   }
 }
 
@@ -174,6 +149,8 @@ function agruparServicos(linhasServicos) {
         nome: linhaServico.nome,
         descricao: linhaServico.descricao,
         valor: Number(linhaServico.valor),
+        valorOriginal: linhaServico.valorOriginal,
+        promocaoAtiva: linhaServico.promocaoAtiva,
         duracaoMinutos: linhaServico.duracaoMinutos,
         profissionais: [],
       });
@@ -222,7 +199,7 @@ async function listarSaloesProximos(requisicao, resposta) {
             u.nu_latitude AS latitude,
             u.nu_longitude AS longitude,
             CASE WHEN ass.cd_status IN ('AUTORIZADA', 'EM_TESTE')
-              OR (ass.cd_status IN ('CANCELADA', 'CANCELAMENTO_AGENDADO')
+              OR (ass.cd_status = 'CANCELAMENTO_AGENDADO'
                   AND ass.dt_proxima_cobranca > NOW())
               THEN TRUE ELSE FALSE END AS proAtivo,
             COALESCE(av.quantidade, 0) AS quantidadeAvaliacoes,
@@ -333,10 +310,12 @@ async function listarServicosSalao(requisicao, resposta) {
             s.nm_servico AS nome,
             s.ds_servico AS descricao,
             s.vl_servico AS valor,
+            u.fk_salao AS idSalao, ${camposPromocaoSql('s')},
             s.nu_duracao_minutos AS duracaoMinutos,
             f.id_funcionario AS idFuncionario,
             f.nm_funcionario AS nomeFuncionario
      FROM tb_servico s
+     INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade
      LEFT JOIN tb_funcionario_servico fs ON fs.fk_servico = s.id_servico
      LEFT JOIN tb_funcionario f ON f.id_funcionario = fs.fk_funcionario AND f.st_ativo = TRUE
      WHERE s.fk_unidade = :idUnidade AND s.st_ativo = TRUE
@@ -344,7 +323,10 @@ async function listarServicosSalao(requisicao, resposta) {
     { replacements: { idUnidade }, type: QueryTypes.SELECT },
   );
 
-  resposta.status(200).json({ idUnidade, servicos: agruparServicos(linhasServicos) });
+  const premiumAtivo = linhasServicos.length ? await obterAcessoPremiumSalao(linhasServicos[0].idSalao) : false;
+  const agora = new Date();
+  resposta.status(200).json({ idUnidade,
+    servicos: agruparServicos(linhasServicos.map((linha) => apresentarServico(linha, premiumAtivo, false, agora))) });
 }
 
 async function criarAgendamento(requisicao, resposta) {
@@ -403,8 +385,10 @@ async function marcarNotificacaoClienteComoLida(requisicao, resposta) {
   const atualizada = await marcarNotificacaoClienteLida(cliente.idUsuario, idNotificacao);
   if (!atualizada) {
     const existentes = await bancoDeDados.query(
-      'SELECT id_notificacao FROM tb_notificacao_cliente WHERE id_notificacao=:idNotificacao AND fk_usuario=:idUsuario LIMIT 1',
-      { replacements: { idNotificacao, idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
+      `SELECT n.id_notificacao FROM tb_notificacao_cliente n
+       INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
+       WHERE n.id_notificacao=:idNotificacao AND n.fk_usuario=:idUsuario AND ${notificacaoClienteDisponivelSql} LIMIT 1`,
+      { replacements: { idNotificacao, idUsuario: cliente.idUsuario, agora: horarioBanco() }, type: QueryTypes.SELECT },
     );
     if (!existentes.length) {
       resposta.status(404).json({ mensagem: 'Notificação não encontrada.' });
@@ -423,16 +407,19 @@ async function marcarNotificacaoAgendamentoClienteComoLida(requisicao, resposta)
     return;
   }
   const [resultado] = await bancoDeDados.query(
-    `UPDATE tb_notificacao_cliente SET st_lida=TRUE
-     WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento
-       AND cd_tipo='AVALIACAO' AND st_lida=FALSE`,
-    { replacements: { idUsuario: cliente.idUsuario, idAgendamento } },
+    `UPDATE tb_notificacao_cliente n
+     INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
+     SET n.st_lida=TRUE WHERE n.fk_usuario=:idUsuario AND n.fk_agendamento=:idAgendamento
+       AND n.cd_tipo='AVALIACAO' AND n.st_lida=FALSE AND ${notificacaoClienteDisponivelSql}`,
+    { replacements: { idUsuario: cliente.idUsuario, idAgendamento, agora: horarioBanco() } },
   );
   if (!resultado.affectedRows) {
     const existentes = await bancoDeDados.query(
-      `SELECT id_notificacao FROM tb_notificacao_cliente
-       WHERE fk_usuario=:idUsuario AND fk_agendamento=:idAgendamento AND cd_tipo='AVALIACAO' LIMIT 1`,
-      { replacements: { idUsuario: cliente.idUsuario, idAgendamento }, type: QueryTypes.SELECT },
+      `SELECT n.id_notificacao FROM tb_notificacao_cliente n
+       INNER JOIN tb_agendamento a ON a.id_agendamento=n.fk_agendamento AND a.fk_usuario=n.fk_usuario
+       WHERE n.fk_usuario=:idUsuario AND n.fk_agendamento=:idAgendamento AND n.cd_tipo='AVALIACAO'
+         AND ${notificacaoClienteDisponivelSql} LIMIT 1`,
+      { replacements: { idUsuario: cliente.idUsuario, idAgendamento, agora: horarioBanco() }, type: QueryTypes.SELECT },
     );
     if (!existentes.length) {
       resposta.status(404).json({ mensagem: 'Notificação não encontrada.' });
@@ -477,14 +464,15 @@ async function salvarInscricaoNotificacoesCliente(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Inscrição de notificações inválida.' });
     return;
   }
-  await salvarInscricaoPushCliente(cliente.idUsuario, inscricao);
-  resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.' });
+  const idVinculo = await salvarInscricaoPushCliente(cliente.idUsuario, inscricao);
+  resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.', idVinculo, destinatarioId: cliente.idAutenticacaoExterna, audience: 'cliente' });
 }
 
 async function consultarInscricaoNotificacoesCliente(requisicao, resposta) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
-  resposta.status(200).json({ ativa: await consultarInscricaoPushCliente(cliente.idUsuario, String(requisicao.query.endpoint ?? '')) });
+  const idVinculo = await consultarInscricaoPushCliente(cliente.idUsuario, String(requisicao.query.endpoint ?? ''));
+  resposta.json({ ativa: Boolean(idVinculo), idVinculo, destinatarioId: cliente.idAutenticacaoExterna, audience: 'cliente' });
 }
 
 async function excluirInscricaoNotificacoesCliente(requisicao, resposta) {
@@ -495,7 +483,7 @@ async function excluirInscricaoNotificacoesCliente(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Informe o dispositivo a desativar.' });
     return;
   }
-  await removerInscricaoPushCliente(cliente.idUsuario, endpoint);
+  await removerInscricaoPushCliente(cliente.idUsuario, endpoint, requisicao.body?.idVinculo ?? '');
   resposta.status(200).json({ mensagem: 'Notificações desativadas neste dispositivo.' });
 }
 
@@ -515,7 +503,7 @@ async function avaliarAgendamento(requisicao, resposta) {
   }
   const agendamentos = await bancoDeDados.query(
     `SELECT id_agendamento AS idAgendamento, fk_unidade AS idUnidade, fk_servico AS idServico,
-            cd_status AS status FROM tb_agendamento
+            cd_status AS status, dt_fim AS dataHoraFim FROM tb_agendamento
      WHERE id_agendamento=:idAgendamento AND fk_usuario=:idUsuario LIMIT 1`,
     { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, type: QueryTypes.SELECT },
   );
@@ -523,6 +511,10 @@ async function avaliarAgendamento(requisicao, resposta) {
   if (!agendamento) { resposta.status(404).json({ mensagem: 'Agendamento não encontrado.' }); return; }
   if (agendamento.status !== 'REALIZADO') {
     resposta.status(409).json({ mensagem: 'A avaliação fica disponível após o atendimento ser marcado como realizado.' });
+    return;
+  }
+  if (!podeAvaliarAgendamento(agendamento)) {
+    resposta.status(409).json({ mensagem: 'A avaliação fica disponível a partir do término previsto do atendimento, no horário de São Paulo.' });
     return;
   }
   try {
@@ -567,7 +559,7 @@ async function listarHorariosReagendamento(requisicao, resposta) {
   const idServico = Number(requisicao.query.idServico);
   const idUnidade = Number(requisicao.query.idUnidade);
   if (!Number.isInteger(idServico) || !Number.isInteger(idUnidade) || (idFuncionario !== null && !Number.isInteger(idFuncionario))) {
-    resposta.status(400).json({ mensagem: 'Informe serviço, filial e profissional válidos.' }); return;
+    resposta.status(400).json({ mensagem: 'Informe serviço, unidade e profissional válidos.' }); return;
   }
   try {
     const disponibilidade = await listarHorariosDisponiveis({

@@ -36,6 +36,8 @@ function criarErroApi(causa) {
   );
   erro.status = causa.response?.status;
   erro.codigo = causa.response?.data?.codigo;
+  erro.etapa = causa.response?.data?.etapa;
+  erro.cobrancaEncerrada = causa.response?.data?.cobrancaEncerrada;
   erro.indiceItem = causa.response?.data?.indiceItem;
   return erro;
 }
@@ -59,6 +61,10 @@ async function enviarRequisicao(caminho, { dados, metodo = 'GET', parametros, to
   } catch (causa) {
     if (typeof Blob !== 'undefined' && causa.response?.data instanceof Blob && causa.response.data.type.includes('json')) {
       try { causa.response.data = JSON.parse(await causa.response.data.text()); } catch {}
+    }
+    if (causa.response?.data?.codigo === 'CADASTRO_INCOMPLETO' && typeof window !== 'undefined') {
+      const perfil = obterPerfilDaRota(caminho);
+      window.location.assign(perfil === 'salao' ? '/salao' : '/cliente');
     }
     throw criarErroApi(causa);
   }

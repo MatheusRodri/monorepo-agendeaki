@@ -1,71 +1,22 @@
 import { Router } from 'express';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { compararSeguramente, sessoesAdmin } from '../servicos/sessoesAdmin.js';
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 
 const roteadorAdmin = Router();
-const duracaoSessaoSegundos = 8 * 60 * 60;
-
 function tokenBearer(requisicao) {
   const cabecalho = requisicao.headers.authorization;
   return cabecalho?.startsWith('Bearer ') ? cabecalho.slice(7) : null;
 }
 
-function compararSeguramente(valorRecebido, valorEsperado) {
-  const recebido = Buffer.from(String(valorRecebido));
-  const esperado = Buffer.from(String(valorEsperado));
-  return recebido.length === esperado.length && timingSafeEqual(recebido, esperado);
-}
-
-function segredoSessaoConfigurado() {
-  const segredo = process.env.ADMIN_SESSION_SECRET;
-  return segredo && Buffer.byteLength(segredo) >= 32 ? segredo : null;
-}
-
-function assinar(payload, segredo) {
-  return createHmac('sha256', segredo).update(payload).digest('base64url');
-}
-
-function criarTokenAdmin(email, segredo) {
-  const agora = Math.floor(Date.now() / 1000);
-  const payload = Buffer.from(JSON.stringify({
-    sub: 'ADMIN_AGENDEAKI',
-    email,
-    iat: agora,
-    exp: agora + duracaoSessaoSegundos,
-  })).toString('base64url');
-  return `${payload}.${assinar(payload, segredo)}`;
-}
-
-function validarTokenAdmin(token) {
-  const segredo = segredoSessaoConfigurado();
-  if (!segredo || typeof token !== 'string') return null;
-  const partes = token.split('.');
-  if (partes.length !== 2) return null;
-  const [payload, assinatura] = partes;
-  const assinaturaEsperada = assinar(payload, segredo);
-  if (!compararSeguramente(assinatura, assinaturaEsperada)) return null;
-  try {
-    const sessao = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (sessao.sub !== 'ADMIN_AGENDEAKI' || !sessao.email || !Number.isFinite(sessao.exp) || sessao.exp <= Date.now() / 1000) return null;
-    return { email: sessao.email };
-  } catch {
-    return null;
-  }
-}
-
 async function obterAdmin(requisicao, resposta) {
-  const token = tokenBearer(requisicao);
-  if (!token) {
-    resposta.status(401).json({ mensagem: 'Informe o token de acesso.' });
-    return null;
+  try {
+    const sessao = await sessoesAdmin.validar(tokenBearer(requisicao));
+    if (!sessao) { resposta.status(401).json({ mensagem: 'A sessão administrativa é inválida ou expirou. Entre novamente.' }); return null; }
+    return { nome: process.env.ADMIN_NAME?.trim() || 'Administrador', email: sessao.email };
+  } catch {
+    resposta.status(503).json({ mensagem: 'Não foi possível validar a sessão administrativa agora.' }); return null;
   }
-  const sessao = validarTokenAdmin(token);
-  if (!sessao) {
-    resposta.status(401).json({ mensagem: 'A sessão administrativa é inválida ou expirou. Entre novamente.' });
-    return null;
-  }
-  return { nome: process.env.ADMIN_NAME?.trim() || 'Administrador', email: sessao.email };
 }
 
 function periodo12Meses() {
@@ -170,11 +121,11 @@ async function responderLista(resposta, { consulta, replacements, contagem, repl
   resposta.status(200).json({ itens, pagina, limite, total, totalPaginas: Math.ceil(total / limite) });
 }
 
-roteadorAdmin.post('/login', (requisicao, resposta) => {
+roteadorAdmin.post('/login', async (requisicao, resposta) => {
   const emailConfigurado = process.env.ADMIN_EMAIL?.trim();
   const senhaConfigurada = process.env.ADMIN_PASSWORD;
-  const segredo = segredoSessaoConfigurado();
-  if (!emailConfigurado || !senhaConfigurada || !segredo) {
+  const configurado = sessoesAdmin.configurado();
+  if (!configurado) {
     resposta.status(503).json({ mensagem: 'O acesso administrativo ainda não foi configurado no backend.' });
     return;
   }
@@ -188,14 +139,22 @@ roteadorAdmin.post('/login', (requisicao, resposta) => {
   }
 
   const email = emailConfigurado;
+  let tokenAcesso;
+  try { tokenAcesso = await sessoesAdmin.criar(email); }
+  catch { resposta.status(503).json({ mensagem: 'Não foi possível iniciar a sessão administrativa.' }); return; }
   resposta.status(200).json({
-    tokenAcesso: criarTokenAdmin(email, segredo),
+    tokenAcesso,
     tokenAtualizacao: null,
     usuario: { nome: process.env.ADMIN_NAME?.trim() || 'Administrador', email },
   });
 });
 
-roteadorAdmin.post('/logout', (_requisicao, resposta) => resposta.status(200).json({ mensagem: 'Sessão encerrada.' }));
+roteadorAdmin.post('/logout', async (requisicao, resposta) => {
+  try {
+    if (!await sessoesAdmin.revogar(tokenBearer(requisicao))) { resposta.status(401).json({ mensagem: 'Sessão inválida ou expirada.' }); return; }
+    resposta.status(200).json({ mensagem: 'Sessão encerrada.' });
+  } catch { resposta.status(503).json({ mensagem: 'Não foi possível confirmar o encerramento da sessão.' }); }
+});
 
 roteadorAdmin.get('/perfil', async (requisicao, resposta) => {
   const admin = await obterAdmin(requisicao, resposta);
@@ -301,8 +260,8 @@ roteadorAdmin.get('/unidades', async (requisicao, resposta) => {
                  INNER JOIN tb_salao s ON s.id_salao=un.fk_salao WHERE 1=1 ${filtro}`,
     });
   } catch (erro) {
-    console.error('[Admin] Falha ao listar filiais.', { mensagem: erro.message });
-    resposta.status(500).json({ mensagem: 'Não foi possível carregar as filiais.' });
+    console.error('[Admin] Falha ao listar unidades.', { mensagem: erro.message });
+    resposta.status(500).json({ mensagem: 'Não foi possível carregar as unidades.' });
   }
 });
 

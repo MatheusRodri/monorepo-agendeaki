@@ -31,11 +31,12 @@ function TabelaClientesInativos({ clientes }) {
 }
 
 function DistribuicaoStatus({ resumo }) {
+  const distribuicao = resumo.distribuicaoStatus ?? {};
   const itens = [
-    ['Realizados', Number(resumo.quantidadeAgendamentosRealizados ?? 0)],
-    ['Marcados', Number(resumo.quantidadeAgendamentosMarcados ?? 0)],
-    ['Cancelados', Number(resumo.quantidadeAgendamentosCancelados ?? 0)],
-    ['Não presentes', Number(resumo.quantidadeNaoCompareceu ?? 0)],
+    ['Realizados', Number(distribuicao.realizados ?? 0)],
+    ['Marcados', Number(distribuicao.marcados ?? 0)],
+    ['Cancelados', Number(distribuicao.cancelados ?? 0)],
+    ['Não presentes', Number(distribuicao.naoCompareceu ?? 0)],
   ];
   const total = Math.max(Number(resumo.quantidadeAgendamentosTotal ?? 0), 1);
   return <div className="dashboard-premium__status">{itens.map(([rotulo, quantidade]) => <div key={rotulo}><span>{rotulo}</span><div><i style={{ width: `${(quantidade / total) * 100}%` }} /></div><b>{quantidade}</b></div>)}</div>;

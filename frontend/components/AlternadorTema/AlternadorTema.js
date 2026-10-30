@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 
 export default function AlternadorTema() {
   const [temaEscuro, definirTemaEscuro] = useState(false);
-  const [destino, definirDestino] = useState(null);
+  const [destino, definirDestino] = useState(undefined);
 
   useEffect(() => {
     const temaSalvo = localStorage.getItem('tema-agendeaki');
@@ -52,5 +52,6 @@ export default function AlternadorTema() {
     </button>
   );
 
+  if (destino === undefined) return null;
   return destino ? createPortal(botao, destino) : botao;
 }

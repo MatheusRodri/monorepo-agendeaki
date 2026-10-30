@@ -29,10 +29,13 @@ export default function PaginaInicial() {
             <span>agende<span>aki</span></span>
           </a>
 
-          <nav aria-label="Navegação principal" className="navegacao-principal">
-            <a href="#como-funciona">Como funciona</a>
-            <a href="#para-saloes">Para salões</a>
-          </nav>
+          <div className="cabecalho__acoes">
+            <nav aria-label="Navegação principal" className="navegacao-principal">
+              <a href="#como-funciona">Como funciona</a>
+              <a href="#para-saloes">Para salões</a>
+            </nav>
+            <span data-alternador-tema-destino />
+          </div>
 
         </header>
 

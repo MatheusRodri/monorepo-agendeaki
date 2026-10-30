@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
 import { requisitarApi } from '../../utils/api';
 import { toastErro } from '../../utils/toast';
+import PrecoServico from '../PrecoServico/PrecoServico';
 
 export default function ServicosSalao({ idUnidade }) {
   const [servicos, definirServicos] = useState([]);
@@ -36,7 +37,7 @@ export default function ServicosSalao({ idUnidade }) {
           {servicos.map((servico) => (
             <article className="cartao-servico" key={servico.idServico}>
               <span className="cartao-servico__icone">✦</span><div><h2>{servico.nome}</h2><p>{servico.descricao || 'Um cuidado pensado para você.'}</p></div>
-              <div className="cartao-servico__rodape"><span><strong>R$ {servico.valor.toFixed(2).replace('.', ',')}</strong><small>{servico.duracaoMinutos} min</small></span>{servico.profissionais.length ? <div className="profissionais-servico">{servico.profissionais.map((profissional) => <Link href={`/cliente/agendamento?idUnidade=${idUnidade}&idServico=${servico.idServico}&idFuncionario=${profissional.idFuncionario}`} key={profissional.idFuncionario}>Agendar com {profissional.nome} →</Link>)}</div> : <small>Nenhum profissional disponível.</small>}</div>
+              <div className="cartao-servico__rodape"><span><PrecoServico {...servico} /><small>{servico.duracaoMinutos} min</small></span>{servico.profissionais.length ? <div className="profissionais-servico">{servico.profissionais.map((profissional) => <Link href={`/cliente/agendamento?idUnidade=${idUnidade}&idServico=${servico.idServico}&idFuncionario=${profissional.idFuncionario}`} key={profissional.idFuncionario}>Agendar com {profissional.nome} →</Link>)}</div> : <small>Nenhum profissional disponível.</small>}</div>
             </article>
           ))}
         </div>

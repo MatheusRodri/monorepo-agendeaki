@@ -87,7 +87,7 @@ export default function CentralNotificacoesCliente() {
             <div className="central-notificacao__acoes">
               {avaliada
                 ? <Link href="/cliente/agendamentos">Ver meus agendamentos</Link>
-                : <button className="botao-acao-notificacao" disabled={processando} onClick={() => abrirNotificacao(notificacao)} type="button">{conviteAvaliacao ? 'Avaliar atendimento' : notificacao.tipo === 'CANCELAMENTO' ? 'Ver agendamento' : 'Ver novo horário'}</button>}
+                : <button className="botao-acao-notificacao" disabled={processando} onClick={() => abrirNotificacao(notificacao)} type="button">{conviteAvaliacao ? (notificacao.podeAvaliar ? 'Avaliar atendimento' : 'Ver agendamento') : notificacao.tipo === 'CANCELAMENTO' ? 'Ver agendamento' : 'Ver novo horário'}</button>}
             </div>
           </article>;
         })}

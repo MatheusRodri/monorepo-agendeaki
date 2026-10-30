@@ -1,11 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { dataParaExibicao, dataParaIso, formatarCnpj, formatarData, formatarTelefone } from '../../utils/formatadores';
 import { requisitarApi } from '../../utils/api';
 import { toastErro } from '../../utils/toast';
+import ModalDocumentoLegal from '../ModalDocumentoLegal/ModalDocumentoLegal';
 
-export default function ModalCompletarPerfil({ aoConcluir, cadastroIncompleto = true, dadosCadastrais, nomeSalao: nomeSalaoInicial = '', perfil, salaoIncompleto = false, rotaApi, tokenAcesso }) {
+export default function ModalCompletarPerfil({ aoConcluir, aceiteDocumentosPendente = false, cadastroIncompleto = true, dadosCadastrais, nomeSalao: nomeSalaoInicial = '', perfil, salaoIncompleto = false, rotaApi, tokenAcesso }) {
+  const [aceitouDocumentos, definirAceitouDocumentos] = useState(false);
+  const [documentoAberto, definirDocumentoAberto] = useState(null);
+  const [documentosLegais, definirDocumentosLegais] = useState(null);
+  const [carregandoDocumentos, definirCarregandoDocumentos] = useState(false);
+  const [erroDocumentos, definirErroDocumentos] = useState('');
   const salao = rotaApi === 'salao';
   const [dados, definirDados] = useState({
     nome: dadosCadastrais?.nome ?? perfil?.nome ?? '',
@@ -15,6 +21,22 @@ export default function ModalCompletarPerfil({ aoConcluir, cadastroIncompleto = 
   });
   const [nomeSalao, definirNomeSalao] = useState(nomeSalaoInicial);
   const [enviando, definirEnviando] = useState(false);
+
+  async function abrirDocumento(tipo) {
+    definirDocumentoAberto(tipo);
+    if (documentosLegais || carregandoDocumentos) return;
+    definirCarregandoDocumentos(true);
+    definirErroDocumentos('');
+    try {
+      definirDocumentosLegais(await requisitarApi('/api/documentos-legais'));
+    } catch (erro) {
+      definirErroDocumentos(erro.message);
+    } finally {
+      definirCarregandoDocumentos(false);
+    }
+  }
+
+  const fecharDocumento = useCallback(() => definirDocumentoAberto(null), []);
 
   function alterarCampo(evento) {
     const { name, value } = evento.target;
@@ -30,7 +52,7 @@ export default function ModalCompletarPerfil({ aoConcluir, cadastroIncompleto = 
     try {
       if (cadastroIncompleto) {
         await requisitarApi(`/api/${salao ? 'salao' : 'clientes'}/perfil`, {
-          dados: { ...dados, ...(salao ? { tipoDocumento: 'CNPJ' } : {}), dataNascimento: dataParaIso(dados.dataNascimento) },
+          dados: { ...dados, aceitouDocumentos, ...(salao ? { tipoDocumento: 'CNPJ' } : {}), dataNascimento: dataParaIso(dados.dataNascimento) },
           metodo: 'PATCH',
           tokenAcesso,
         });
@@ -73,8 +95,9 @@ export default function ModalCompletarPerfil({ aoConcluir, cadastroIncompleto = 
         <label className="campo-formulario"><span>Data de nascimento</span><input inputMode="numeric" maxLength="10" name="dataNascimento" onChange={alterarCampo} placeholder="DD/MM/AAAA" required value={dados.dataNascimento} /></label>
         {salao && <label className="campo-formulario"><span>CNPJ da empresa</span><input autoComplete="organization" name="documento" onChange={alterarCampo} placeholder="AA.AAA.AAA/AAAA-00" required value={dados.documento} /></label>}
       </>}
-      {salao && salaoIncompleto && <label className="campo-formulario"><span>Nome do salão</span><input autoComplete="organization" maxLength="120" onChange={(evento) => definirNomeSalao(evento.target.value)} required value={nomeSalao} /></label>}
+      {salao && salaoIncompleto && <label className="campo-formulario modal-conta__nome-salao"><span>Nome do salão</span><input autoComplete="organization" maxLength="120" onChange={(evento) => definirNomeSalao(evento.target.value)} required value={nomeSalao} /></label>}
+      {aceiteDocumentosPendente && <label className="aceite-documentos"><input checked={aceitouDocumentos} onChange={(evento) => definirAceitouDocumentos(evento.target.checked)} required type="checkbox" /><span>Li e aceito os <button onClick={() => abrirDocumento('termosDeUso')} type="button">Termos de Uso</button> e a <button onClick={() => abrirDocumento('politicaPrivacidade')} type="button">Política de Privacidade</button>.</span></label>}
       <button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Salvando...' : salaoIncompleto ? 'Recuperar e continuar' : 'Salvar e continuar'} →</button>
     </form>
-  </section></div>;
+  </section>{documentoAberto && <ModalDocumentoLegal aoFechar={fecharDocumento} carregando={carregandoDocumentos} documento={documentosLegais?.[documentoAberto]} erro={erroDocumentos} onRetry={() => abrirDocumento(documentoAberto)} tipo={documentoAberto} />}</div>;
 }

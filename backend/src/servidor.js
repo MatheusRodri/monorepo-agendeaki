@@ -9,6 +9,7 @@ import roteadorPublico from './rotas/publico.js';
 import roteadorSalao from './rotas/salao.js';
 import roteadorWebhooks from './rotas/webhooks.js';
 import { validarChavesDocumentos } from './servicos/documentosProtegidos.js';
+import { iniciarProcessadorConvites } from './servicos/convitesAvaliacao.js';
 
 const aplicacao = express();
 const porta = Number(process.env.PORT ?? 3001);
@@ -64,9 +65,11 @@ async function iniciarServidor() {
     await bancoDeDados.authenticate();
     console.log('Conexão com o banco de dados validada com sucesso.');
 
-    aplicacao.listen(porta, () => {
+    const servidor = aplicacao.listen(porta, () => {
       console.log(`Servidor disponível em http://localhost:${porta}`);
     });
+    const pararConvites = iniciarProcessadorConvites();
+    servidor.once('close', pararConvites);
   } catch (erro) {
     console.error('Não foi possível iniciar o servidor.');
     console.error(erro.message);

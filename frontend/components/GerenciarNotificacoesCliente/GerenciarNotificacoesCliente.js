@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { desativarNotificacoes, registrarVinculoPush } from '../../utils/notificacoesDispositivo';
 import { requisitarApi } from '../../utils/api';
 import { toastAviso, toastErro, toastSucesso } from '../../utils/toast';
 
@@ -20,7 +21,7 @@ export default function GerenciarNotificacoesCliente() {
     navigator.serviceWorker.ready
       .then((registro) => registro.pushManager.getSubscription())
       .then((inscricao) => requisitarApi(`/api/clientes/notificacoes/inscricao?endpoint=${encodeURIComponent(inscricao?.endpoint ?? '')}`))
-      .then((resultado) => { if (ativo) definirAtiva(Boolean(resultado.ativa)); })
+      .then(async (resultado) => { if (ativo) { if (resultado.ativa) await registrarVinculoPush(resultado); definirAtiva(Boolean(resultado.ativa)); } })
       .catch((erro) => { if (ativo) toastErro(erro.message); })
       .finally(() => { if (ativo) definirProcessando(false); });
     return () => { ativo = false; };
@@ -32,10 +33,7 @@ export default function GerenciarNotificacoesCliente() {
       const registro = await navigator.serviceWorker.ready;
       let inscricao = await registro.pushManager.getSubscription();
       if (ativa) {
-        if (inscricao) {
-          await requisitarApi('/api/clientes/notificacoes/inscricao', { metodo: 'DELETE', dados: { endpoint: inscricao.endpoint } });
-          await inscricao.unsubscribe();
-        }
+        await desativarNotificacoes('cliente');
         definirAtiva(false);
         toastSucesso('Notificações desativadas neste dispositivo.');
         return;
@@ -47,7 +45,8 @@ export default function GerenciarNotificacoesCliente() {
       const chaveBase64 = chavePublica.replace(/-/g, '+').replace(/_/g, '/');
       const chave = Uint8Array.from(atob(chaveBase64 + '='.repeat((4 - (chaveBase64.length % 4)) % 4)), (caractere) => caractere.charCodeAt(0));
       inscricao ??= await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: chave });
-      await requisitarApi('/api/clientes/notificacoes/inscricao', { metodo: 'POST', dados: inscricao.toJSON() });
+      const vinculo = await requisitarApi('/api/clientes/notificacoes/inscricao', { metodo: 'POST', dados: inscricao.toJSON() });
+      await registrarVinculoPush(vinculo);
       definirAtiva(true);
       toastSucesso('Notificações ativadas neste dispositivo.');
     } catch (erro) {

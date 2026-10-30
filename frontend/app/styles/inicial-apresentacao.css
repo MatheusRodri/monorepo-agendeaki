@@ -20,6 +20,8 @@
 .cabecalho {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
   justify-content: space-between;
   min-height: 90px;
   position: relative;
@@ -58,10 +60,27 @@
   width: 31px;
 }
 
+.cabecalho__acoes {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(.75rem, 2vw, 2rem);
+  margin-left: auto;
+  max-width: 100%;
+}
+
+.cabecalho__acoes > [data-alternador-tema-destino] {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 44px;
+  justify-content: center;
+  min-height: 44px;
+}
+
 .navegacao-principal {
+  align-items: center;
   display: flex;
   gap: 2rem;
-  margin-left: 5rem;
 }
 
 .navegacao-principal a {
@@ -97,9 +116,11 @@
 }
 
 .alternador-tema--cabecalho {
+  flex-shrink: 0;
   height: 42px;
   justify-content: center;
   padding: .35rem;
+  position: static;
   width: 42px;
 }
 

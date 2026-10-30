@@ -1,7 +1,7 @@
 import { QueryTypes, Transaction } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 
-const recortes = ['todos', 'agendamentos', 'realizados', 'extras', 'cancelados', 'naoCompareceu', 'comparecimento', 'previstos'];
+const recortes = ['todos', 'agendamentos', 'realizados', 'extras', 'cancelados', 'naoCompareceu', 'comparecimento', 'previstos', 'taxaCancelamento'];
 export const camposOrdenacao = ['idAgendamento', 'dataInicio', 'dataRealizacao', 'cliente', 'contato', 'servico', 'quantidadeServicosExtras', 'unidade', 'profissional', 'status', 'valor', 'tipoItem', 'statusPagamento', 'motivoCancelamento', 'origemCancelamento'];
 const erroConsulta = (mensagem) => Object.assign(new Error(mensagem), { status: 400 });
 const dataIso = (data) => {
@@ -52,7 +52,7 @@ const origem = `FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade = 
 function condicao({ recorte }) {
   const datas = {
     todos: "DATE(CASE WHEN a.cd_status = 'CANCELADO' THEN COALESCE(a.dt_cancelamento,a.dt_inicio) ELSE a.dt_inicio END)",
-    agendamentos: 'DATE(a.dt_inicio)', realizados: 'DATE(a.dt_realizacao)', extras: 'DATE(a.dt_realizacao)',
+    agendamentos: 'DATE(a.dt_inicio)', taxaCancelamento: 'DATE(a.dt_inicio)', realizados: 'DATE(a.dt_realizacao)', extras: 'DATE(a.dt_realizacao)',
     cancelados: 'DATE(COALESCE(a.dt_cancelamento,a.dt_inicio))', naoCompareceu: 'DATE(a.dt_inicio)', comparecimento: 'DATE(a.dt_inicio)',
   };
   const status = { realizados: 'REALIZADO', extras: 'REALIZADO', cancelados: 'CANCELADO', naoCompareceu: 'NAO_COMPARECEU' };
@@ -61,7 +61,7 @@ function condicao({ recorte }) {
     : `${datas[recorte]} BETWEEN :dataInicio AND :dataFim${status[recorte] ? ` AND a.cd_status = '${status[recorte]}'` : ''}`;
   return `u.fk_salao = :idSalao AND (:idUnidade = 0 OR a.fk_unidade = :idUnidade)
     AND EXISTS (SELECT 1 FROM vw_servico_atendimento item WHERE item.id_agendamento = a.id_agendamento AND ${filtroItem})
-    AND ${periodo}${recorte === 'comparecimento' ? " AND a.cd_status IN ('REALIZADO','NAO_COMPARECEU')" : ''}${recorte === 'extras' ? ` AND ${contagemServicosExtrasSql} > 0` : ''}`;
+    AND ${periodo}${recorte === 'taxaCancelamento' ? " AND (a.dt_inicio <= :agora OR a.cd_status='CANCELADO')" : ''}${recorte === 'comparecimento' ? " AND a.cd_status IN ('REALIZADO','NAO_COMPARECEU')" : ''}${recorte === 'extras' ? ` AND ${contagemServicosExtrasSql} > 0` : ''}`;
 }
 
 const dataSql = (campo) => `DATE_FORMAT(a.${campo},'%Y-%m-%dT%H:%i:%s-03:00')`;
@@ -137,7 +137,7 @@ export async function consultarAnalitico(consulta) {
 export const colunasExportacao = [
   ['id_agendamento', 'idAgendamento'], ['tipo_item', 'tipoItem'], ['id_servico_adicional', 'idExtra'],
   ['id_usuario', 'idUsuario'], ['id_cliente_salao', 'idClienteSalao'], ['cliente', 'cliente'], ['email', 'email'], ['telefone', 'telefone'],
-  ['id_unidade', 'idUnidade'], ['filial', 'unidade'], ['id_servico', 'idServico'], ['servico', 'nomeServico'],
+  ['id_unidade', 'idUnidade'], ['unidade', 'unidade'], ['id_servico', 'idServico'], ['servico', 'nomeServico'],
   ['id_funcionario', 'idFuncionario'], ['profissional', 'nomeFuncionario'], ['data_agendada', 'dataInicio'],
   ['data_realizacao', 'dataRealizacao'], ['data_cancelamento', 'dataCancelamento'], ['status', 'status'],
   ['status_pagamento', 'statusPagamento'], ['valor_item', 'valorItem'], ['motivo_cancelamento', 'motivoCancelamento'],

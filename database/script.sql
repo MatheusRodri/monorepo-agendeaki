@@ -49,6 +49,30 @@ CREATE TABLE IF NOT EXISTS tb_usuario (
     UNIQUE (id_autenticacao_externa)
 ) ENGINE = InnoDB;
 
+-- Sessões administrativas revogáveis; nunca armazena o token em texto.
+CREATE TABLE IF NOT EXISTS tb_sessao_admin (
+  ds_token_hash CHAR(64) NOT NULL PRIMARY KEY,
+  ds_credencial_versao CHAR(64) NOT NULL,
+  dt_expiracao DATETIME NOT NULL,
+  dt_revogacao DATETIME NULL,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_sessao_admin_expiracao (dt_expiracao)
+) ENGINE=InnoDB;
+
+-- Sobrevive à remoção do salão para permitir retomar falhas entre provedores.
+CREATE TABLE IF NOT EXISTS tb_exclusao_conta_salao (
+  id_operacao CHAR(36) NOT NULL PRIMARY KEY,
+  id_autenticacao_externa VARCHAR(255) NOT NULL,
+  id_usuario BIGINT UNSIGNED NOT NULL,
+  id_salao BIGINT UNSIGNED NULL,
+  cd_etapa ENUM('PREPARACAO','COBRANCA','DADOS_LOCAIS','IDENTIDADE','CONCLUIDA') NOT NULL DEFAULT 'PREPARACAO',
+  ds_erro_codigo VARCHAR(80) NULL,
+  js_referencias_stripe JSON NULL,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  dt_atualizacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_exclusao_identidade (id_autenticacao_externa)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS tb_aceite_documento_legal (
   fk_usuario BIGINT UNSIGNED NOT NULL,
   cd_documento ENUM('TERMOS_USO', 'POLITICA_PRIVACIDADE') NOT NULL,
@@ -79,6 +103,7 @@ CREATE TABLE IF NOT EXISTS tb_salao (
 
   st_ativo BOOLEAN NOT NULL DEFAULT TRUE,
   st_teste_premium_utilizado BOOLEAN NOT NULL DEFAULT FALSE,
+  st_exclusao_pendente BOOLEAN NOT NULL DEFAULT FALSE,
 
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   dt_atualizacao DATETIME NOT NULL
@@ -111,6 +136,7 @@ CREATE TABLE IF NOT EXISTS tb_inscricao_notificacao (
   ds_endpoint_hash CHAR(64) NOT NULL,
   ds_chave_publica VARCHAR(255) NOT NULL,
   ds_chave_auth VARCHAR(255) NOT NULL,
+  id_vinculo_dispositivo CHAR(36) NOT NULL,
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id_inscricao),
   CONSTRAINT uk_inscricao_notificacao_endpoint UNIQUE (ds_endpoint_hash),
@@ -140,6 +166,7 @@ CREATE TABLE IF NOT EXISTS tb_inscricao_notificacao_cliente (
   ds_endpoint_hash CHAR(64) NOT NULL,
   ds_chave_publica VARCHAR(255) NOT NULL,
   ds_chave_auth VARCHAR(255) NOT NULL,
+  id_vinculo_dispositivo CHAR(36) NOT NULL,
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id_inscricao),
   CONSTRAINT uk_inscricao_notificacao_cliente_endpoint UNIQUE (ds_endpoint_hash),
@@ -202,6 +229,8 @@ CREATE TABLE IF NOT EXISTS tb_assinatura_salao (
   id_assinatura_provedor VARCHAR(150) NULL,
   id_checkout_provedor VARCHAR(150) NULL,
   ds_referencia_externa CHAR(36) NOT NULL,
+  js_parametros_checkout JSON NULL,
+  dt_tentativa_checkout DATETIME NULL,
 
   dt_inicio DATETIME NULL,
   dt_proxima_cobranca DATETIME NULL,
@@ -476,6 +505,12 @@ CREATE TABLE IF NOT EXISTS tb_servico (
   vl_servico DECIMAL(10, 2) NOT NULL,
   nu_duracao_minutos SMALLINT UNSIGNED NOT NULL,
 
+  tp_promocao ENUM('PRECO_FIXO', 'PERCENTUAL') NULL,
+  vl_promocao DECIMAL(10,2) NULL,
+  st_promocao_ativa BOOLEAN NOT NULL DEFAULT FALSE,
+  dt_promocao_inicio DATE NULL,
+  dt_promocao_fim DATE NULL,
+
   st_ativo BOOLEAN NOT NULL DEFAULT TRUE,
 
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -506,7 +541,21 @@ CREATE TABLE IF NOT EXISTS tb_servico (
   CONSTRAINT ck_servico_duracao
     CHECK (
       nu_duracao_minutos > 0
-    )
+    ),
+  CONSTRAINT ck_servico_promocao_dados CHECK (
+    (tp_promocao IS NULL AND vl_promocao IS NULL AND st_promocao_ativa=FALSE
+      AND dt_promocao_inicio IS NULL AND dt_promocao_fim IS NULL)
+    OR (tp_promocao IS NOT NULL AND vl_promocao IS NOT NULL AND vl_promocao >= 0
+      AND (tp_promocao <> 'PERCENTUAL' OR (vl_promocao > 0 AND vl_promocao <= 100)))
+  ),
+  CONSTRAINT ck_servico_promocao_preco CHECK (
+    st_promocao_ativa=FALSE OR (vl_servico > 0 AND
+      ((tp_promocao='PRECO_FIXO' AND vl_promocao < vl_servico)
+       OR (tp_promocao='PERCENTUAL' AND ROUND(vl_servico * (1-vl_promocao/100),2) < vl_servico)))
+  ),
+  CONSTRAINT ck_servico_promocao_periodo CHECK (
+    dt_promocao_inicio IS NULL OR dt_promocao_fim IS NULL OR dt_promocao_fim >= dt_promocao_inicio
+  )
 ) ENGINE = InnoDB;
 
 
@@ -647,7 +696,7 @@ CREATE TABLE IF NOT EXISTS tb_bloqueio_agenda (
   fk_funcionario BIGINT UNSIGNED NULL,
   dt_inicio DATETIME NOT NULL,
   dt_fim DATETIME NOT NULL,
-  ds_motivo VARCHAR(200) NULL,
+  ds_motivo VARCHAR(300) NULL,
   st_ativo BOOLEAN NOT NULL DEFAULT TRUE,
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   dt_atualizacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -846,9 +895,13 @@ CREATE TABLE IF NOT EXISTS tb_notificacao_cliente (
   ds_mensagem VARCHAR(300) NOT NULL,
   ds_link VARCHAR(255) NOT NULL,
   st_lida BOOLEAN NOT NULL DEFAULT FALSE,
+  dt_disponivel_em DATETIME NULL,
+  dt_push_processado DATETIME NULL,
+  dt_push_reservado DATETIME NULL,
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id_notificacao),
   INDEX idx_notificacao_cliente_agendamento (fk_agendamento),
+  INDEX idx_notificacao_cliente_push (cd_tipo, dt_push_processado, dt_disponivel_em),
   INDEX idx_notificacao_cliente_usuario_nao_lida (fk_usuario, st_lida, dt_criacao),
   CONSTRAINT fk_notificacao_cliente_usuario FOREIGN KEY (fk_usuario)
     REFERENCES tb_usuario (id_usuario) ON DELETE CASCADE ON UPDATE CASCADE,

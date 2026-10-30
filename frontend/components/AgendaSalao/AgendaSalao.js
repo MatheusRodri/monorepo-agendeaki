@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import ConclusaoAtendimento from './ConclusaoAtendimento';
 import FormularioAgendamentoSalao from '../FormularioAgendamentoSalao/FormularioAgendamentoSalao';
+import { agendarAtualizacaoTemporal } from '../../utils/atualizacaoTemporal.mjs';
 
 function dataLocal(dias = 0) {
   const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -13,6 +14,10 @@ function dataLocal(dias = 0) {
 
 function formatarDataHora(valor) {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(valor));
+}
+
+function formatarData(valor) {
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(valor));
 }
 
 const nomesStatus = { AGENDADO: 'Confirmado', REALIZADO: 'Realizado', CANCELADO: 'Cancelado', NAO_COMPARECEU: 'Não presente' };
@@ -45,6 +50,11 @@ export default function AgendaSalao({ dados, requisitar, aoSalvarAgendamento, mo
   const carregando = consulta.chave !== parametros || consulta.carregando;
   const resultado = consulta.chave === parametros ? consulta.resultado : null;
   const erro = consulta.chave === parametros ? consulta.erro : '';
+
+  useEffect(() => agendarAtualizacaoTemporal(
+    (resultado?.agendamentos ?? []).filter((item) => item.status === 'AGENDADO' && !item.podeConcluir).map((item) => item.conclusaoDisponivelEm),
+    () => definirTentativa((valor) => valor + 1),
+  ), [resultado]);
 
   function alterarControle(alteracoes) {
     definirControles((atuais) => ({ ...atuais, [tipoAgenda]: { ...atuais[tipoAgenda], pagina: 1, ...alteracoes } }));
@@ -127,7 +137,8 @@ export default function AgendaSalao({ dados, requisitar, aoSalvarAgendamento, mo
     {carregando ? <p className="estado-lista" role="status">Carregando agendamentos...</p> : erro ? <div className="agenda-salao__erro" role="alert"><p>{erro}</p><button className="botao-secundario" onClick={() => definirTentativa((valor) => valor + 1)} type="button">Tentar novamente</button></div> : <>
     <div className="lista-agendamentos-salao">{resultado?.agendamentos?.map((agendamento) => {
       const horarioFuturo = new Date(agendamento.dataHoraInicio) > new Date();
-      return <article className="cartao-agendamento-salao" key={agendamento.idAgendamento}><div className="cartao-agendamento-salao__cabecalho"><div><strong>{agendamento.cliente}</strong><span>{formatarDataHora(agendamento.dataHoraInicio)} · {agendamento.filial}</span>{(agendamento.emailCliente || agendamento.telefoneCliente) && <div className="contatos-cliente-agendamento">{agendamento.emailCliente && <small>{agendamento.emailCliente}</small>}{agendamento.telefoneCliente && <small>{agendamento.telefoneCliente}</small>}</div>}</div><div className="cartao-agendamento-salao__acoes"><span className={`selo-status selo-status--${String(agendamento.status).toLowerCase()}`}>{nomesStatus[agendamento.status] ?? agendamento.status}</span>{agendamento.status === 'AGENDADO' && <div className="acoes-resultado-agendamento"><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => definirConclusao(agendamento)} type="button">Realizado</button><button disabled={horarioFuturo || enviandoId === agendamento.idAgendamento} onClick={() => registrarResultado(agendamento, 'nao-compareceu')} title={horarioFuturo ? 'Disponível após o horário agendado.' : undefined} type="button">Não presente</button><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => definirReagendamento({ idAgendamento: agendamento.idAgendamento, idUnidade: agendamento.idUnidade, data: dataLocal(), idFuncionario: 'qualquer', horario: '' })} type="button">Reagendar</button><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => definirCancelamento({ agendamento, codigoMotivo: '', detalheMotivo: '' })} type="button">Cancelar</button></div>}</div></div><dl><div><dt>Serviço</dt><dd>{agendamento.servico} · R$ {Number(agendamento.valor).toFixed(2).replace('.', ',')}{agendamento.servicosAdicionais?.map((extra, indice) => <small className="servico-adicional-historico" key={indice}>+ {extra.servico} · {extra.profissional} · R$ {Number(extra.valorCobrado).toFixed(2).replace('.', ',')}</small>)}{agendamento.servicosAdicionais?.length > 0 && <strong className="servico-adicional-historico">Total: R$ {Number(agendamento.valorTotal).toFixed(2).replace('.', ',')}</strong>}</dd></div><div><dt>Profissional</dt><dd>{agendamento.funcionario}</dd></div><div><dt>Observação</dt><dd>{agendamento.observacao || 'Nenhuma observação.'}</dd></div></dl></article>;
+      const podeConcluir = agendamento.podeConcluir === true || Number(agendamento.podeConcluir) === 1;
+      return <article className="cartao-agendamento-salao" key={agendamento.idAgendamento}><div className="cartao-agendamento-salao__cabecalho"><div><strong>{agendamento.cliente}</strong><span>{formatarDataHora(agendamento.dataHoraInicio)} · {agendamento.filial}</span>{(agendamento.emailCliente || agendamento.telefoneCliente) && <div className="contatos-cliente-agendamento">{agendamento.emailCliente && <small>{agendamento.emailCliente}</small>}{agendamento.telefoneCliente && <small>{agendamento.telefoneCliente}</small>}</div>}</div><div className="cartao-agendamento-salao__acoes"><span className={`selo-status selo-status--${String(agendamento.status).toLowerCase()}`}>{nomesStatus[agendamento.status] ?? agendamento.status}</span>{agendamento.status === 'AGENDADO' && <><div className="acoes-resultado-agendamento"><button disabled={!podeConcluir || enviandoId === agendamento.idAgendamento} onClick={() => definirConclusao(agendamento)} title={!podeConcluir ? `Conclusão disponível a partir de ${formatarData(agendamento.conclusaoDisponivelEm)}` : undefined} type="button">Realizado</button><button disabled={horarioFuturo || enviandoId === agendamento.idAgendamento} onClick={() => registrarResultado(agendamento, 'nao-compareceu')} title={horarioFuturo ? 'Disponível após o horário agendado.' : undefined} type="button">Não presente</button><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => definirReagendamento({ idAgendamento: agendamento.idAgendamento, idUnidade: agendamento.idUnidade, data: dataLocal(), idFuncionario: 'qualquer', horario: '' })} type="button">Reagendar</button><button disabled={enviandoId === agendamento.idAgendamento} onClick={() => definirCancelamento({ agendamento, codigoMotivo: '', detalheMotivo: '' })} type="button">Cancelar</button></div>{!podeConcluir && <small>Conclusão disponível a partir de {formatarData(agendamento.conclusaoDisponivelEm)}</small>}</>}</div></div><dl><div><dt>Serviço</dt><dd>{agendamento.servico} · R$ {Number(agendamento.valor).toFixed(2).replace('.', ',')}{agendamento.servicosAdicionais?.map((extra, indice) => <small className="servico-adicional-historico" key={indice}>+ {extra.servico} · {extra.profissional} · R$ {Number(extra.valorCobrado).toFixed(2).replace('.', ',')}</small>)}{agendamento.servicosAdicionais?.length > 0 && <strong className="servico-adicional-historico">Total: R$ {Number(agendamento.valorTotal).toFixed(2).replace('.', ',')}</strong>}</dd></div><div><dt>Profissional</dt><dd>{agendamento.funcionario}</dd></div><div><dt>Observação</dt><dd>{agendamento.observacao || 'Nenhuma observação.'}</dd></div></dl></article>;
     })}</div>
     {!resultado?.agendamentos?.length && <p className="estado-lista">Nenhum agendamento encontrado{tipoAgenda === 'historico' || controle.periodo === 'todos' ? '.' : ' para este período.'}</p>}
     </>}

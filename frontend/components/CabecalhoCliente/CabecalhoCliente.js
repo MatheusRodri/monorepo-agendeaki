@@ -1,10 +1,12 @@
 'use client';
 
+import { encerrarSessaoPerfil } from '../../utils/notificacoesDispositivo';
+import { toastAviso } from '../../utils/toast';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { requisitarApi } from '../../utils/api';
-import { limparSessao, obterTokenAcesso } from '../../utils/respostaApi';
+import { obterTokenAcesso } from '../../utils/respostaApi';
 
 const navegacao = [['inicio', 'Explorar', '/cliente/inicio'], ['agendamentos', 'Agendamentos', '/cliente/agendamentos'], ['notificacoes', 'Notificações', '/cliente/notificacoes'], ['configuracoes', 'Configurações', '/cliente/configuracoes']];
 
@@ -30,8 +32,8 @@ export default function CabecalhoCliente({ secao }) {
   async function sair() {
     if (saindo) return;
     definirSaindo(true);
-    try { await requisitarApi('/api/clientes/logout', { metodo: 'POST' }); } catch {}
-    finally { limparSessao('cliente'); roteador.replace('/cliente'); }
+    if (!await encerrarSessaoPerfil('cliente')) toastAviso('Você saiu deste dispositivo. O encerramento no servidor não foi confirmado.');
+    roteador.replace('/cliente');
   }
 
   return <><header className="cabecalho-area cabecalho-cliente"><Link className="marca" href="/"><span aria-hidden="true" className="marca__simbolo">a</span><span>agende<span>aki</span></span></Link><p className="titulo-area-cliente">Olá, {nome}</p><div className="cabecalho-cliente__acoes"><span data-alternador-tema-destino /><button className="botao-secundario botao-sair-area" disabled={saindo} onClick={sair} type="button">{saindo ? 'Saindo...' : 'Sair'}</button></div></header><nav aria-label="Navegação do cliente" className="menu-cliente">{navegacao.map(([chave, titulo, caminho]) => <Link className={secao === chave ? 'menu-cliente__ativo' : ''} href={caminho} key={chave}>{titulo}{chave === 'notificacoes' && notificacoesNaoLidas > 0 && <span aria-label={`${notificacoesNaoLidas} não lidas`} className="menu-cliente__contador">{notificacoesNaoLidas > 99 ? '99+' : notificacoesNaoLidas}</span>}</Link>)}</nav></>;

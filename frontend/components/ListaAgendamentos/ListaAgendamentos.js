@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import CabecalhoCliente from '../CabecalhoCliente/CabecalhoCliente';
 import { requisitarApi } from '../../utils/api';
 import { toastErro, toastSucesso } from '../../utils/toast';
+import { agendarAtualizacaoTemporal } from '../../utils/atualizacaoTemporal.mjs';
 
 const listaVazia = [];
 
@@ -29,6 +30,11 @@ export default function ListaAgendamentos() {
   const resultado = consulta.chave === chaveConsulta ? consulta.resultado : null;
   const erro = consulta.chave === chaveConsulta ? consulta.erro : '';
   const agendamentos = resultado?.agendamentos ?? listaVazia;
+
+  useEffect(() => agendarAtualizacaoTemporal(
+    agendamentos.filter((item) => item.status === 'REALIZADO' && !item.idAvaliacao && !item.podeAvaliar).map((item) => item.dataHoraFim),
+    () => definirRevisao((valor) => valor + 1),
+  ), [agendamentos]);
 
   async function requisitar(caminho, opcoes = {}) {
     return requisitarApi(`/api/clientes${caminho}`, {
@@ -76,7 +82,9 @@ export default function ListaAgendamentos() {
     if (podeAvaliar && !agendamento.idAvaliacao) {
       definirAvaliacao({ idAgendamento, notaSalao: 5, notaServico: 5, comentario: '' });
     }
-    requisitar(`/notificacoes/agendamentos/${idAgendamento}/lida`, { method: 'PATCH' }).catch((erro) => toastErro(erro.message));
+    if (podeAvaliar || agendamento.idAvaliacao) {
+      requisitar(`/notificacoes/agendamentos/${idAgendamento}/lida`, { method: 'PATCH' }).catch((erro) => toastErro(erro.message));
+    }
     idAvaliacaoDaUrl.current = null;
     window.history.replaceState(window.history.state, '', window.location.pathname);
   }, [agendamentos, futuros, carregando]);
@@ -157,7 +165,7 @@ export default function ListaAgendamentos() {
       <div aria-busy={Boolean(carregando)}>
         {carregando ? <p className="estado-lista" role="status">Carregando seus agendamentos...</p> : erro ? <div className="erro-agendamentos-cliente" role="alert"><p>{erro}</p><button className="botao-secundario" onClick={() => definirRevisao((valor) => valor + 1)} type="button">Tentar novamente</button></div> : <>
           {!agendamentos.length && <p className="estado-lista">{futuros ? 'Você ainda não tem horários agendados.' : 'Seu histórico aparecerá aqui.'}</p>}
-          <div className="lista-agendamentos">{agendamentos.map((agendamento) => <article className="cartao-agendamento-lista" key={agendamento.idAgendamento}><span className="data-agendamento">{new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(agendamento.dataHoraInicio))}</span><div><span className={`status-agendamento status-agendamento--${agendamento.status.toLowerCase()}`}>{agendamento.status === 'NAO_COMPARECEU' ? 'Não presente' : agendamento.status.toLowerCase()}</span><h2>{agendamento.servico}</h2>{agendamento.servicosAdicionais?.map((extra, indice) => <small key={indice}>+ {extra.servico} · {extra.profissional} · R$ {Number(extra.valorCobrado).toFixed(2).replace('.', ',')}</small>)}<p>{agendamento.salao} · {agendamento.unidade}, {agendamento.municipio}</p><small>Com {agendamento.profissional} · {new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }).format(new Date(agendamento.dataHoraInicio))}</small>{agendamento.status === 'CANCELADO' && <small className="motivo-cancelamento-agendamento"><strong>Motivo do cancelamento:</strong> {agendamento.motivoCancelamento || 'Não informado.'}</small>}{agendamento.observacao && <small className="observacao-agendamento">Observação: {agendamento.observacao}</small>}</div><div className="acoes-agendamento"><strong>R$ {Number(agendamento.valorTotal ?? agendamento.valor).toFixed(2).replace('.', ',')}</strong>{futuros && <><button disabled={enviando} onClick={() => abrirEdicao(agendamento)} type="button">Editar</button><button className="acao-perigosa" disabled={enviando} onClick={() => cancelarAgendamento(agendamento)} type="button">Cancelar</button></>}{!futuros && agendamento.status === 'REALIZADO' && (agendamento.idAvaliacao ? <small>Avaliado ✓</small> : <button onClick={() => { definirAvaliacao({ idAgendamento: agendamento.idAgendamento, notaSalao: 5, notaServico: 5, comentario: '' }); }} type="button">Avaliar</button>)}</div></article>)}</div>
+          <div className="lista-agendamentos">{agendamentos.map((agendamento) => <article className="cartao-agendamento-lista" key={agendamento.idAgendamento}><span className="data-agendamento">{new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(agendamento.dataHoraInicio))}</span><div><span className={`status-agendamento status-agendamento--${agendamento.status.toLowerCase()}`}>{agendamento.status === 'NAO_COMPARECEU' ? 'Não presente' : agendamento.status.toLowerCase()}</span><h2>{agendamento.servico}</h2>{agendamento.servicosAdicionais?.map((extra, indice) => <small key={indice}>+ {extra.servico} · {extra.profissional} · R$ {Number(extra.valorCobrado).toFixed(2).replace('.', ',')}</small>)}<p>{agendamento.salao} · {agendamento.unidade}, {agendamento.municipio}</p><small>Com {agendamento.profissional} · {new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }).format(new Date(agendamento.dataHoraInicio))}</small>{agendamento.status === 'CANCELADO' && <small className="motivo-cancelamento-agendamento"><strong>Motivo do cancelamento:</strong> {agendamento.motivoCancelamento || 'Não informado.'}</small>}{agendamento.observacao && <small className="observacao-agendamento">Observação: {agendamento.observacao}</small>}</div><div className="acoes-agendamento"><strong>R$ {Number(agendamento.valorTotal ?? agendamento.valor).toFixed(2).replace('.', ',')}</strong>{futuros && <><button disabled={enviando} onClick={() => abrirEdicao(agendamento)} type="button">Editar</button><button className="acao-perigosa" disabled={enviando} onClick={() => cancelarAgendamento(agendamento)} type="button">Cancelar</button></>}{!futuros && agendamento.status === 'REALIZADO' && (agendamento.idAvaliacao ? <small>Avaliado ✓</small> : <><button disabled={!agendamento.podeAvaliar || enviando} onClick={() => { if (agendamento.podeAvaliar) definirAvaliacao({ idAgendamento: agendamento.idAgendamento, notaSalao: 5, notaServico: 5, comentario: '' }); }} type="button">Avaliar</button>{!agendamento.podeAvaliar && <small>Avaliação disponível em {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(agendamento.dataHoraFim))} (São Paulo).</small>}</>)}</div></article>)}</div>
         </>}
       </div>
       <nav aria-label="Paginação dos agendamentos" className="paginacao-agendamentos-cliente">
@@ -169,7 +177,7 @@ export default function ListaAgendamentos() {
       <form className="formulario-agendamento modal-agendamento__conteudo modal-avaliacao__conteudo" onSubmit={enviarAvaliacao}>
         <button aria-label="Fechar" className="modal-agendamento__fechar" disabled={enviando} onClick={() => definirAvaliacao(null)} type="button">×</button>
         <h2 id="titulo-avaliacao">Avaliar atendimento</h2>
-        <ClassificacaoEstrelas campo="notaSalao" rotulo="Nota da filial" valor={avaliacao.notaSalao} desabilitado={enviando} aoMudar={(nota) => definirAvaliacao((atual) => ({ ...atual, notaSalao: nota }))} />
+        <ClassificacaoEstrelas campo="notaSalao" rotulo="Nota da unidade" valor={avaliacao.notaSalao} desabilitado={enviando} aoMudar={(nota) => definirAvaliacao((atual) => ({ ...atual, notaSalao: nota }))} />
         <ClassificacaoEstrelas campo="notaServico" rotulo="Nota do serviço" valor={avaliacao.notaServico} desabilitado={enviando} aoMudar={(nota) => definirAvaliacao((atual) => ({ ...atual, notaServico: nota }))} />
         <label className="campo-formulario"><span>Comentário <small>Opcional</small></span><textarea maxLength="500" onChange={(evento) => definirAvaliacao((atual) => ({ ...atual, comentario: evento.target.value }))} value={avaliacao.comentario} /></label>
         <button className="botao-enviar" disabled={enviando} type="submit">{enviando ? 'Publicando...' : 'Publicar avaliação'} →</button>

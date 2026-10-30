@@ -1,7 +1,5 @@
 *.env
 */node_modules
-frontend/test-results/
-frontend/playwright-report/
 *.next
 frontend/public/maplibre/
 backend/.backups/

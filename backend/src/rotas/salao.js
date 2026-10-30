@@ -1,15 +1,17 @@
+import { comporMotivo, calcularMetricasCancelamento } from '../servicos/metricasAgenda.js';
+import { iniciarExclusaoSalao } from '../servicos/exclusaoContaSalao.js';
+import { consultarExclusao } from '../servicos/usuarios.js';
+import { reservarContratacao, finalizarCheckout, cancelarRecursosContratacao, recuperarCheckout } from '../servicos/contratacoes.js';
+import { autenticarRequisicao } from '../servicos/autorizacaoUsuarios.js';
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
-import { randomUUID } from 'crypto';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
-import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { cnpjValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
 import { decifrarDocumento, prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
-import { ativarAssinaturaPremium } from '../servicos/assinaturas.js';
-import { atualizarPeriodicidadeStripe, cancelarAssinaturaStripe, cancelarCheckoutStripe, criarCheckoutAssinatura, obterDadosPlanoPremium, obterOfertaPremium, obterPrecoStripe, consultarCheckoutStripe } from '../servicos/stripe.js';
+import { atualizarPeriodicidadeStripe, obterOfertaPremium, consultarCheckoutStripe, reativarAssinaturaStripe, encerrarAssinaturaStripe } from '../servicos/stripe.js';
 import { sincronizarAssinaturaStripe } from '../servicos/sincronizarAssinaturaStripe.js';
 import { criarSlugSalaoUnico, criarSlugUnidadeUnico } from '../servicos/slugs.js';
-import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, obterPendenciasUsuario, registrarAceitePendente } from '../servicos/usuarios.js';
 import { bloquearRecursosAgenda, criarTransacaoAgenda, listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 import { consultarInscricaoPush, criarNotificacaoCliente, enviarNotificacaoPushCliente, listarNotificacoesSalao, marcarNotificacaoSalaoLida, marcarTodasNotificacoesSalaoLidas, obterChavePublicaPush, removerInscricaoPush, salvarInscricaoPush } from '../servicos/notificacoesPush.js';
 
@@ -17,6 +19,9 @@ import { consultarAnalitico, consultarLinhasAnaliticas, contagemServicosExtrasSq
 import { exportarAnaliticoExcel } from '../servicos/dashboardExcel.js';
 import { salvarServicosAdicionais } from '../servicos/agendamentos.js';
 import { consultarAgendaSalao, normalizarConsultaAgenda } from '../servicos/agendaSalao.js';
+import { assinaturaTemAcessoPremium, obterAcessoPremiumSalao } from '../servicos/acessoPremium.js';
+import { apresentarServico, camposPromocaoSql, lerPromocao, normalizarValorServico, resolverPromocaoEdicao } from '../servicos/promocoesServicos.js';
+import { podeConcluirAgendamento } from '../servicos/regrasTemporaisAgendamento.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -40,42 +45,16 @@ function extrairTokenAcesso(requisicao) {
 }
 
 async function obterAdministradorAutenticado(requisicao, resposta) {
-  const tokenAcesso = extrairTokenAcesso(requisicao);
-  if (!tokenAcesso) {
-    console.warn('[Autenticação salão] Token ausente.', { rota: requisicao.originalUrl });
-    resposta.status(401).json({ mensagem: 'Informe o token de acesso.' });
-    return null;
-  }
-
-  try {
-    const clienteSupabase = obterClienteSupabase(tokenAcesso);
-    const { data: dadosUsuario, error: erroUsuario } = await clienteSupabase.auth.getUser(tokenAcesso);
-    if (erroUsuario || !dadosUsuario.user) {
-      console.warn('[Autenticação salão] Token recusado pelo Supabase.', { rota: requisicao.originalUrl, motivo: erroUsuario?.message ?? 'Usuário não encontrado' });
-      resposta.status(401).json({ mensagem: 'A sessão informada é inválida ou expirou.' });
-      return null;
-    }
-    if (dadosUsuario.user.user_metadata?.perfil !== 'ADMIN_SALAO') {
-      console.warn('[Autenticação salão] Perfil sem permissão.', { rota: requisicao.originalUrl, perfil: dadosUsuario.user.user_metadata?.perfil ?? null });
-      resposta.status(403).json({ mensagem: 'Esta área é exclusiva para responsáveis de salão.' });
-      return null;
-    }
-    console.info('[Autenticação salão] Usuário autenticado.', { rota: requisicao.originalUrl, idUsuario: dadosUsuario.user.id });
-    const administrador = await sincronizarUsuario({ email: dadosUsuario.user.email, idAutenticacaoExterna: dadosUsuario.user.id, nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email, perfil: 'ADMIN_SALAO', telefone: dadosUsuario.user.user_metadata.telefone ?? null });
-    return { ...administrador, idAutenticacaoExterna: dadosUsuario.user.id };
-  } catch (erro) {
-    console.error('[Autenticação salão] Falha inesperada.', { rota: requisicao.originalUrl, mensagem: erro.message });
-    resposta.status(500).json({ mensagem: erro.message });
-    return null;
-  }
+  return autenticarRequisicao(requisicao, resposta, 'ADMIN_SALAO');
 }
 
 async function obterSalaoAdministrador(idUsuario) {
   const saloes = await bancoDeDados.query(
     `SELECT s.id_salao AS idSalao, s.nm_salao AS nome, s.ds_slug AS slug,
+            s.st_teste_premium_utilizado AS testePremiumUtilizado,
             u.ds_email AS emailConta
      FROM tb_salao s INNER JOIN tb_usuario u ON u.id_usuario = s.fk_usuario_administrador
-     WHERE s.fk_usuario_administrador = :idUsuario AND s.st_ativo = TRUE LIMIT 1`,
+     WHERE s.fk_usuario_administrador = :idUsuario AND s.st_ativo = TRUE AND s.st_exclusao_pendente=FALSE LIMIT 1`,
     { replacements: { idUsuario }, type: QueryTypes.SELECT },
   );
   return saloes[0] ?? null;
@@ -113,8 +92,8 @@ async function salvarInscricaoNotificacoes(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Inscrição de notificações inválida.' }); return;
   }
   try {
-    await salvarInscricaoPush(salao.idSalao, inscricao);
-    resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.' });
+    const idVinculo = await salvarInscricaoPush(salao.idSalao, inscricao);
+    resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.', idVinculo, destinatarioId: administrador.idAutenticacaoExterna, audience: 'salao' });
   } catch (erro) {
     console.error('[Notificações push] Falha ao salvar inscrição.', { idSalao: salao.idSalao, mensagem: erro.message });
     resposta.status(500).json({ mensagem: 'Não foi possível ativar as notificações. Confira se a tabela tb_inscricao_notificacao existe.' });
@@ -125,16 +104,16 @@ async function consultarInscricaoNotificacoes(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
   const endpoint = String(requisicao.query.endpoint ?? '');
-  const ativa = await consultarInscricaoPush(salao.idSalao, endpoint);
-  resposta.status(200).json({ ativa });
+  const idVinculo = await consultarInscricaoPush(salao.idSalao, endpoint);
+  resposta.json({ ativa: Boolean(idVinculo), idVinculo, destinatarioId: administrador.idAutenticacaoExterna, audience: 'salao' });
 }
 
 async function excluirInscricaoNotificacoes(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const endpoint = requisicao.body?.endpoint;
   if (typeof endpoint !== 'string' || !endpoint) { resposta.status(400).json({ mensagem: 'Informe o dispositivo a desativar.' }); return; }
-  await removerInscricaoPush(salao.idSalao, endpoint);
+  await removerInscricaoPush(salao.idSalao, endpoint, requisicao.body?.idVinculo ?? '');
   resposta.status(200).json({ mensagem: 'Notificações desativadas neste dispositivo.' });
 }
 
@@ -273,7 +252,7 @@ async function consultarCoordenadasFilial(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta);
   if (!administrador) return;
   const numero = String(requisicao.query.numero ?? '').trim();
-  if (!numero) { resposta.status(400).json({ mensagem: 'Informe o número do endereço para localizar a filial.' }); return; }
+  if (!numero) { resposta.status(400).json({ mensagem: 'Informe o número do endereço para localizar a unidade.' }); return; }
 
   try {
     const endereco = await consultarEnderecoPorCep(requisicao.query.cep);
@@ -326,8 +305,8 @@ async function atualizarSalao(requisicao, resposta) {
 
 async function consultarPerfil(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const perfil = await obterDadosCadastraisUsuario(administrador.idUsuario);
-  resposta.status(200).json({ perfil, cadastroIncompleto: !perfil?.dataNascimento || !perfil?.tipoDocumento || !perfil?.documento || !perfil?.telefone });
+  const pendencias = await obterPendenciasUsuario(administrador.idUsuario, 'ADMIN_SALAO');
+  resposta.status(200).json({ perfil: pendencias.dadosCadastrais, ...pendencias });
 }
 
 async function atualizarPerfil(requisicao, resposta) {
@@ -381,6 +360,7 @@ async function atualizarPerfil(requisicao, resposta) {
         return;
       }
     }
+    await registrarAceitePendente(administrador.idUsuario, requisicao.body?.aceitouDocumentos, transacao);
     await atualizarDadosCadastraisUsuario(administrador.idUsuario, { dataNascimento, documento, nome, telefone: telefoneNormalizado, tipoDocumento: 'CNPJ', transaction: transacao });
     if (salao) {
       await bancoDeDados.query(
@@ -414,61 +394,18 @@ async function alterarSenha(requisicao, resposta) {
   } catch { resposta.status(400).json({ mensagem: 'Não foi possível alterar a senha agora.' }); }
 }
 
+async function consultarEstadoExclusao(requisicao, resposta) {
+  const usuario = await autenticarRequisicao(requisicao, resposta, 'ADMIN_SALAO', { permitirExclusao: true });
+  if (!usuario) return;
+  const operacao = await consultarExclusao(usuario.idAutenticacaoExterna);
+  resposta.json({ pendente: Boolean(operacao && operacao.etapa !== 'CONCLUIDA'), etapa: operacao?.etapa ?? null });
+}
+
 async function excluirConta(requisicao, resposta) {
-  const administrador = await obterAdministradorAutenticado(requisicao, resposta);
-  if (!administrador) return;
-
-  let clienteAdministrativo;
-  try {
-    clienteAdministrativo = obterClienteAdministrativoSupabase();
-  } catch (erro) {
-    resposta.status(503).json({ mensagem: erro.message });
-    return;
-  }
-
-  const transacao = await bancoDeDados.transaction();
-  try {
-    const saloes = await bancoDeDados.query(
-      'SELECT id_salao AS idSalao FROM tb_salao WHERE fk_usuario_administrador = :idUsuario',
-      { replacements: administrador, transaction: transacao, type: QueryTypes.SELECT },
-    );
-    const idsSaloes = saloes.map((salao) => salao.idSalao);
-    const unidades = idsSaloes.length
-      ? await bancoDeDados.query('SELECT id_unidade AS idUnidade FROM tb_unidade WHERE fk_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao, type: QueryTypes.SELECT })
-      : [];
-    const idsUnidades = unidades.map((unidade) => unidade.idUnidade);
-    const condicoesAgendamento = ['fk_usuario = :idUsuario'];
-    if (idsUnidades.length) condicoesAgendamento.push('fk_unidade IN (:idsUnidades)');
-    const agendamentos = await bancoDeDados.query(
-      `SELECT id_agendamento AS idAgendamento FROM tb_agendamento WHERE ${condicoesAgendamento.join(' OR ')}`,
-      { replacements: { idUsuario: administrador.idUsuario, idsUnidades }, transaction: transacao, type: QueryTypes.SELECT },
-    );
-    const idsAgendamentos = agendamentos.map((agendamento) => agendamento.idAgendamento);
-
-    await bancoDeDados.query('UPDATE tb_agendamento SET fk_usuario_cancelamento = NULL WHERE fk_usuario_cancelamento = :idUsuario', { replacements: administrador, transaction: transacao });
-    if (idsAgendamentos.length) {
-      await bancoDeDados.query('DELETE FROM tb_pagamento WHERE fk_agendamento IN (:idsAgendamentos)', { replacements: { idsAgendamentos }, transaction: transacao });
-      await bancoDeDados.query('DELETE FROM tb_agendamento WHERE id_agendamento IN (:idsAgendamentos)', { replacements: { idsAgendamentos }, transaction: transacao });
-    }
-    if (idsUnidades.length) {
-      await bancoDeDados.query('DELETE FROM tb_funcionario WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
-      await bancoDeDados.query('DELETE FROM tb_servico WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
-      await bancoDeDados.query('DELETE FROM tb_unidade WHERE id_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
-    }
-    if (idsSaloes.length) await bancoDeDados.query('DELETE FROM tb_cliente_salao WHERE fk_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao });
-    if (idsSaloes.length) await bancoDeDados.query('DELETE FROM tb_salao WHERE id_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao });
-    await bancoDeDados.query('DELETE FROM tb_usuario WHERE id_usuario = :idUsuario', { replacements: administrador, transaction: transacao });
-
-    const { error: erroSupabase } = await clienteAdministrativo.auth.admin.deleteUser(administrador.idAutenticacaoExterna);
-    if (erroSupabase) throw new Error('Não foi possível excluir a conta no Supabase. Nenhum dado local foi removido.');
-
-    await transacao.commit();
-    resposta.status(200).json({ mensagem: 'Conta e todos os dados vinculados foram excluídos.' });
-  } catch (erro) {
-    await transacao.rollback();
-    console.error('[Exclusão de conta] Falha ao excluir conta.', { idUsuario: administrador.idUsuario, mensagem: erro.message });
-    resposta.status(500).json({ mensagem: erro.message });
-  }
+  const usuario = await autenticarRequisicao(requisicao, resposta, 'ADMIN_SALAO', { permitirExclusao: true });
+  if (!usuario) return;
+  try { resposta.json(await iniciarExclusaoSalao(usuario)); }
+  catch (erro) { resposta.status(erro.status ?? 502).json({ mensagem: erro.message, codigo: erro.codigo, etapa: erro.etapa, cobrancaEncerrada: erro.cobrancaEncerrada }); }
 }
 
 async function listarFiliais(requisicao, resposta) {
@@ -486,7 +423,7 @@ async function listarFiliais(requisicao, resposta) {
   const horariosPorUnidade = new Map(idsUnidades.map((idUnidade) => [idUnidade, []]));
   horarios.forEach((horario) => horariosPorUnidade.get(horario.idUnidade)?.push(horario));
   filiais.forEach((filial) => { filial.horarios = horariosPorUnidade.get(filial.idUnidade) ?? []; });
-  console.info('[Gestão salão] Filiais ativas carregadas.', {
+  console.info('[Gestão salão] Unidades ativas carregadas.', {
     quantidadeFiliais: filiais.length,
     filiais: filiais.map((filial) => ({
       idUnidade: filial.idUnidade,
@@ -499,26 +436,26 @@ async function listarFiliais(requisicao, resposta) {
 
 async function salvarFilial(requisicao, resposta, idUnidade = null) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre o salão antes de cadastrar filiais.' }); return; }
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre o salão antes de cadastrar unidades.' }); return; }
   const dadosEmpresa = await bancoDeDados.query('SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao LIMIT 1', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT });
   const indiceRaizEmpresa = dadosEmpresa[0]?.indiceRaizCnpj;
   const dadosFilial = requisicao.body ?? {};
-  if (!dadosFilial.nome?.trim() || !dadosFilial.numero?.trim() || !categoriasPermitidas.includes(dadosFilial.categoria)) { resposta.status(400).json({ mensagem: 'Informe nome, número e categoria válidos para a filial.' }); return; }
+  if (!dadosFilial.nome?.trim() || !dadosFilial.numero?.trim() || !categoriasPermitidas.includes(dadosFilial.categoria)) { resposta.status(400).json({ mensagem: 'Informe nome, número e categoria válidos para a unidade.' }); return; }
   const email = String(dadosFilial.email ?? '').trim();
   const telefone = somenteNumeros(dadosFilial.telefone);
   const documento = normalizarCnpj(dadosFilial.documento);
   const documentoValido = cnpjValido(documento);
-  if (!/^\S+@\S+\.\S+$/.test(email)) { resposta.status(400).json({ mensagem: 'Informe um e-mail válido para a filial.' }); return; }
-  if (telefone.length < 10 || telefone.length > 11) { resposta.status(400).json({ mensagem: 'Informe um telefone válido para a filial.' }); return; }
-  if (dadosFilial.tipoDocumento !== 'CNPJ' || !documentoValido) { resposta.status(400).json({ mensagem: 'Informe um CNPJ válido para a filial.' }); return; }
+  if (!/^\S+@\S+\.\S+$/.test(email)) { resposta.status(400).json({ mensagem: 'Informe um e-mail válido para a unidade.' }); return; }
+  if (telefone.length < 10 || telefone.length > 11) { resposta.status(400).json({ mensagem: 'Informe um telefone válido para a unidade.' }); return; }
+  if (dadosFilial.tipoDocumento !== 'CNPJ' || !documentoValido) { resposta.status(400).json({ mensagem: 'Informe um CNPJ válido para a unidade.' }); return; }
   const protegido = prepararDocumento('CNPJ', documento);
   const indiceRaizCnpj = prepararIndiceRaizCnpj(documento);
-  if (indiceRaizCnpj !== indiceRaizEmpresa) { resposta.status(409).json({ mensagem: 'O CNPJ da filial precisa pertencer à mesma empresa do salão.' }); return; }
+  if (indiceRaizCnpj !== indiceRaizEmpresa) { resposta.status(409).json({ mensagem: 'O CNPJ da unidade precisa pertencer à mesma empresa do salão.' }); return; }
   let horarios;
   try { horarios = normalizarHorariosUnidade(dadosFilial.horarios); } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); return; }
   const latitude = Number(dadosFilial.latitude);
   const longitude = Number(dadosFilial.longitude);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) { resposta.status(400).json({ mensagem: 'Selecione um endereço válido para localizar a filial.' }); return; }
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) { resposta.status(400).json({ mensagem: 'Selecione um endereço válido para localizar a unidade.' }); return; }
   let enderecoCep;
   try {
     enderecoCep = await consultarEnderecoPorCep(dadosFilial.cep);
@@ -528,7 +465,7 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
   }
   const coordenadas = { latitude, longitude };
   const valores = { ...dadosFilial, ...enderecoCep, ...coordenadas, ...protegido, email, telefone, documento, tipoDocumento: 'CNPJ', indiceRaizCnpj, idSalao: salao.idSalao, idUnidade };
-  const transacao = await bancoDeDados.transaction();
+  const transacao = await criarTransacaoAgenda();
   async function validarCnpjUnico() {
     const cnpjsEmUnidades = await bancoDeDados.query(
       'SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice=:documentoIndice AND (:idUnidade IS NULL OR id_unidade<>:idUnidade) LIMIT 1',
@@ -544,16 +481,17 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
   if (idUnidade) {
     try {
       const [salaoAtual] = await bancoDeDados.query('SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao FOR UPDATE', { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT });
-      if (salaoAtual?.indiceRaizCnpj !== indiceRaizCnpj) { await transacao.rollback(); resposta.status(409).json({ mensagem: 'O CNPJ da filial precisa pertencer à mesma empresa do salão.' }); return; }
+      if (salaoAtual?.indiceRaizCnpj !== indiceRaizCnpj) { await transacao.rollback(); resposta.status(409).json({ mensagem: 'O CNPJ da unidade precisa pertencer à mesma empresa do salão.' }); return; }
       await validarCnpjUnico();
       const filiais = await bancoDeDados.query('SELECT id_unidade AS idUnidade FROM tb_unidade WHERE id_unidade = :idUnidade AND fk_salao = :idSalao LIMIT 1', { replacements: valores, transaction: transacao, type: QueryTypes.SELECT });
-      if (!filiais.length) { await transacao.rollback(); resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+      if (!filiais.length) { await transacao.rollback(); resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
+      await bloquearRecursosAgenda({ idsUnidades: [idUnidade], transaction: transacao });
       const agendamentosFuturos = await bancoDeDados.query(
         `SELECT DAYOFWEEK(dt_inicio)-1 AS diaSemana,
                 TIME_FORMAT(dt_inicio, '%H:%i') AS inicio,
                 TIME_FORMAT(dt_fim, '%H:%i') AS fim
          FROM tb_agendamento WHERE fk_unidade=:idUnidade
-           AND cd_status='AGENDADO' AND dt_inicio>NOW()`,
+           AND cd_status='AGENDADO' AND dt_fim>NOW()`,
         { replacements: { idUnidade }, transaction: transacao, type: QueryTypes.SELECT },
       );
       const conflitoExpediente = agendamentosFuturos.find((agendamento) => {
@@ -565,18 +503,18 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       await bancoDeDados.query(`UPDATE tb_unidade SET nm_unidade=:nome, ds_slug=:slug, tp_categoria=:categoria, ds_rua=:rua, nu_endereco=:numero, ds_complemento=:complemento, ds_bairro=:bairro, ds_municipio=:municipio, ds_estado=:estado, nu_cep=:cep, ds_email=:email, tp_documento='CNPJ', ds_documento_cifrado=:documentoCifrado, ds_documento_indice=:documentoIndice, ds_cnpj_raiz_indice=:indiceRaizCnpj, nu_latitude=:latitude, nu_longitude=:longitude, nu_telefone=:telefone WHERE id_unidade=:idUnidade`, { replacements: valores, transaction: transacao });
       await salvarHorariosUnidade(idUnidade, horarios, transacao);
       await transacao.commit();
-      resposta.status(200).json({ mensagem: 'Filial, localização e horários atualizados.', coordenadas }); return;
-    } catch (erro) { await transacao.rollback(); const duplicado = codigoErroBanco(erro) === 'ER_DUP_ENTRY'; resposta.status(erro.status ?? (duplicado ? 409 : 500)).json({ mensagem: duplicado ? 'Este CNPJ já está cadastrado na plataforma.' : erro.message }); return; }
+      resposta.status(200).json({ mensagem: 'Unidade, localização e horários atualizados.', coordenadas }); return;
+    } catch (erro) { if (!transacao.finished) await transacao.rollback(); const duplicado = codigoErroBanco(erro) === 'ER_DUP_ENTRY'; const ocupado = ['ER_LOCK_DEADLOCK','ER_LOCK_WAIT_TIMEOUT'].includes(codigoErroBanco(erro)); resposta.status(erro.status ?? (duplicado || ocupado ? 409 : 500)).json({ mensagem: ocupado ? 'A agenda está sendo atualizada. Tente novamente.' : duplicado ? 'Este CNPJ já está cadastrado na plataforma.' : erro.message }); return; }
   }
   let etapa = 'gerar slug';
   let idUnidadeCriada = null;
   let transacaoConfirmada = false;
   const responderCriacaoConcluida = () => {
-    if (!resposta.headersSent) resposta.status(201).json({ mensagem: 'Filial criada com localização e horários salvos.', idUnidade: idUnidadeCriada, coordenadas });
+    if (!resposta.headersSent) resposta.status(201).json({ mensagem: 'Unidade criada com localização e horários salvos.', idUnidade: idUnidadeCriada, coordenadas });
   };
   try {
     const [salaoAtual] = await bancoDeDados.query('SELECT ds_cnpj_raiz_indice AS indiceRaizCnpj FROM tb_salao WHERE id_salao=:idSalao FOR UPDATE', { replacements: { idSalao: salao.idSalao }, transaction: transacao, type: QueryTypes.SELECT });
-    if (salaoAtual?.indiceRaizCnpj !== indiceRaizCnpj) throw Object.assign(new Error('O CNPJ da filial precisa pertencer à mesma empresa do salão.'), { status: 409 });
+    if (salaoAtual?.indiceRaizCnpj !== indiceRaizCnpj) throw Object.assign(new Error('O CNPJ da unidade precisa pertencer à mesma empresa do salão.'), { status: 409 });
     const assinatura = await obterAssinaturaSalao(salao.idSalao);
     const premiumAtivo = resumoAssinatura(assinatura).temAcessoPremium;
     const unidadesAtivas = await bancoDeDados.query(
@@ -590,13 +528,13 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
     }
     await validarCnpjUnico();
     valores.slug = await criarSlugUnidadeUnico(dadosFilial.nome, salao.idSalao, { transaction: transacao });
-    etapa = 'inserir filial';
+    etapa = 'inserir unidade';
     const [resultadoInsercao] = await bancoDeDados.query(`INSERT INTO tb_unidade (fk_salao, nm_unidade, ds_slug, tp_categoria, ds_rua, nu_endereco, ds_complemento, ds_bairro, ds_municipio, ds_estado, nu_cep, ds_email, tp_documento, ds_documento_cifrado, ds_documento_indice, ds_cnpj_raiz_indice, nu_latitude, nu_longitude, nu_telefone) VALUES (:idSalao, :nome, :slug, :categoria, :rua, :numero, :complemento, :bairro, :municipio, :estado, :cep, :email, 'CNPJ', :documentoCifrado, :documentoIndice, :indiceRaizCnpj, :latitude, :longitude, :telefone)`, { replacements: valores, transaction: transacao });
     idUnidadeCriada = Number(resultadoInsercao?.insertId) || null;
-    etapa = 'identificar filial criada';
+    etapa = 'identificar unidade criada';
     const unidadesCriadas = await bancoDeDados.query('SELECT LAST_INSERT_ID() AS idUnidade', { transaction: transacao, type: QueryTypes.SELECT });
     idUnidadeCriada = Number(unidadesCriadas[0]?.idUnidade) || idUnidadeCriada;
-    if (!idUnidadeCriada) throw new Error('Não foi possível identificar a filial criada.');
+    if (!idUnidadeCriada) throw new Error('Não foi possível identificar a unidade criada.');
     etapa = 'salvar horários';
     await salvarHorariosUnidade(idUnidadeCriada, horarios, transacao);
     etapa = 'confirmar transação';
@@ -607,7 +545,7 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
   } catch (erro) {
     if (!transacao.finished) {
       try { await transacao.rollback(); } catch (erroRollback) {
-        console.error('[Cadastro filial] Falha ao desfazer transação.', { etapa, mensagem: erroRollback.message });
+        console.error('[Cadastro unidade] Falha ao desfazer transação.', { etapa, mensagem: erroRollback.message });
       }
     }
     let filialPersistida = transacaoConfirmada;
@@ -619,11 +557,11 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
         );
         filialPersistida = filiaisPersistidas.length > 0;
       } catch (erroVerificacao) {
-        console.error('[Cadastro filial] Não foi possível verificar a persistência após a falha.', { mensagem: erroVerificacao.message });
+        console.error('[Cadastro unidade] Não foi possível verificar a persistência após a falha.', { mensagem: erroVerificacao.message });
       }
     }
     if (filialPersistida) {
-      console.error('[Cadastro filial] A filial foi persistida, mas houve falha ao concluir a resposta.', {
+      console.error('[Cadastro unidade] A unidade foi persistida, mas houve falha ao concluir a resposta.', {
         idUnidade: idUnidadeCriada,
         etapa,
         tipoErro: erro.name,
@@ -633,7 +571,7 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       responderCriacaoConcluida();
       return;
     }
-    console.error('[Cadastro filial] Falha ao salvar.', {
+    console.error('[Cadastro unidade] Falha ao salvar.', {
       etapa,
       tipoErro: erro.name,
       mensagem: erro.message,
@@ -646,7 +584,7 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       const conflitoDocumento = codigoErroBanco(erro) === 'ER_DUP_ENTRY';
       resposta.status(erro.status ?? (conflitoNome || conflitoDocumento ? 409 : 500)).json({
         mensagem: conflitoNome
-          ? 'Já existe uma filial com esse nome neste salão. Confira a lista de filiais, inclusive as removidas da descoberta.'
+          ? 'Já existe uma unidade com esse nome neste salão. Confira a lista de unidades, inclusive as removidas da descoberta.'
           : conflitoDocumento ? 'Este CNPJ já está cadastrado na plataforma.' : erro.message,
       });
     }
@@ -657,15 +595,44 @@ async function criarServico(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const { descricao = null, duracaoMinutos, idUnidade, nome, valor } = requisicao.body ?? {};
-  if (!nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || !duracoesServicoPermitidas.includes(Number(duracaoMinutos))) { resposta.status(400).json({ mensagem: 'Informe filial, nome, valor e uma duração permitida.' }); return; }
-  const filial = await bancoDeDados.query('SELECT id_unidade FROM tb_unidade WHERE id_unidade=:idUnidade AND fk_salao=:idSalao AND st_ativo=TRUE LIMIT 1', { replacements: { idUnidade, idSalao: salao.idSalao }, type: QueryTypes.SELECT }); if (!filial.length) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
-  await bancoDeDados.query('INSERT INTO tb_servico (fk_unidade, nm_servico, ds_servico, vl_servico, nu_duracao_minutos) VALUES (:idUnidade, :nome, :descricao, :valor, :duracaoMinutos)', { replacements: { idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null, valor, duracaoMinutos } }); resposta.status(201).json({ mensagem: 'Serviço criado com sucesso.' });
+  if (!nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || !duracoesServicoPermitidas.includes(Number(duracaoMinutos))) { resposta.status(400).json({ mensagem: 'Informe unidade, nome, valor e uma duração permitida.' }); return; }
+  const filial = await bancoDeDados.query('SELECT id_unidade FROM tb_unidade WHERE id_unidade=:idUnidade AND fk_salao=:idSalao AND st_ativo=TRUE LIMIT 1', { replacements: { idUnidade, idSalao: salao.idSalao }, type: QueryTypes.SELECT }); if (!filial.length) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
+  try {
+    const valorNormal = normalizarValorServico(valor);
+    const premiumAtivo = await obterAcessoPremiumSalao(salao.idSalao);
+    const promocao = resolverPromocaoEdicao(requisicao.body, null, valorNormal, premiumAtivo);
+    await bancoDeDados.query(`INSERT INTO tb_servico (fk_unidade, nm_servico, ds_servico, vl_servico, nu_duracao_minutos,
+      tp_promocao, vl_promocao, st_promocao_ativa, dt_promocao_inicio, dt_promocao_fim)
+      VALUES (:idUnidade, :nome, :descricao, :valor, :duracaoMinutos,
+        :promocaoTipo, :promocaoValor, :promocaoHabilitada, :promocaoInicio, :promocaoFim)`, {
+      replacements: { idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null, valor: valorNormal, duracaoMinutos,
+        ...parametrosPromocao(promocao) },
+    });
+    resposta.status(201).json({ mensagem: 'Serviço criado com sucesso.' });
+  } catch (erro) { resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo }); }
+}
+
+function parametrosPromocao(promocao) {
+  return { promocaoTipo: promocao?.tipo ?? null, promocaoValor: promocao?.valor ?? null,
+    promocaoHabilitada: promocao?.ativa ?? false, promocaoInicio: promocao?.dataInicio ?? null,
+    promocaoFim: promocao?.dataFim ?? null };
 }
 
 async function listarServicos(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const servicos = await bancoDeDados.query(`SELECT s.id_servico AS idServico, s.nm_servico AS nome, s.ds_servico AS descricao, s.vl_servico AS valor, s.nu_duracao_minutos AS duracaoMinutos, u.id_unidade AS idUnidade, u.nm_unidade AS filial FROM tb_servico s INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY u.nm_unidade, s.nm_servico`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ servicos });
+  const [servicos, premiumAtivo] = await Promise.all([
+    bancoDeDados.query(`SELECT s.id_servico AS idServico, s.nm_servico AS nome, s.ds_servico AS descricao,
+      s.vl_servico AS valor, s.nu_duracao_minutos AS duracaoMinutos, ${camposPromocaoSql('s')},
+      u.id_unidade AS idUnidade, u.nm_unidade AS filial FROM tb_servico s
+      INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade
+      WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY u.nm_unidade, s.nm_servico`, {
+      replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT,
+    }),
+    obterAcessoPremiumSalao(salao.idSalao),
+  ]);
+  const agora = new Date();
+  resposta.status(200).json({ premiumAtivo, servicos: servicos.map((servico) => apresentarServico(servico, premiumAtivo, true, agora)) });
 }
 
 async function obterFilialDoSalao(idUnidade, idSalao, transacao) {
@@ -681,16 +648,43 @@ async function atualizarServico(requisicao, resposta) {
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const idServico = Number(requisicao.params.idServico);
   const { descricao = null, duracaoMinutos, idUnidade, nome, valor } = requisicao.body ?? {};
-  if (!idServico || !nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || !duracoesServicoPermitidas.includes(Number(duracaoMinutos))) { resposta.status(400).json({ mensagem: 'Informe filial, nome, valor e uma duração permitida.' }); return; }
-  if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
-  const [resultado] = await bancoDeDados.query(
-    `UPDATE tb_servico s INNER JOIN tb_unidade u ON u.id_unidade = s.fk_unidade
-     SET s.fk_unidade=:idUnidade, s.nm_servico=:nome, s.ds_servico=:descricao, s.vl_servico=:valor, s.nu_duracao_minutos=:duracaoMinutos
-     WHERE s.id_servico=:idServico AND u.fk_salao=:idSalao AND s.st_ativo=TRUE`,
-    { replacements: { idServico, idSalao: salao.idSalao, idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null, valor, duracaoMinutos } },
-  );
-  if (!resultado.affectedRows) { resposta.status(404).json({ mensagem: 'Serviço não encontrado.' }); return; }
-  resposta.status(200).json({ mensagem: 'Serviço atualizado com sucesso.' });
+  if (!idServico || !nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || !duracoesServicoPermitidas.includes(Number(duracaoMinutos))) { resposta.status(400).json({ mensagem: 'Informe unidade, nome, valor e uma duração permitida.' }); return; }
+  if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao)) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
+  try {
+    const valorNormal = normalizarValorServico(valor);
+    const [localizacao] = await bancoDeDados.query(`SELECT s.fk_unidade AS idUnidade FROM tb_servico s
+      INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade
+      WHERE s.id_servico=:idServico AND u.fk_salao=:idSalao AND s.st_ativo=TRUE`, {
+      replacements: { idServico, idSalao: salao.idSalao }, type: QueryTypes.SELECT,
+    });
+    if (!localizacao) { resposta.status(404).json({ mensagem: 'Serviço não encontrado.' }); return; }
+    const idsUnidades = [...new Set([Number(localizacao.idUnidade), Number(idUnidade)])].sort((a, b) => a - b);
+    await bancoDeDados.transaction(async (transaction) => {
+      // Mesma ordem das reservas: unidades antes do serviço e das suas FKs.
+      await bancoDeDados.query('SELECT id_unidade FROM tb_unidade WHERE id_unidade IN (:idsUnidades) ORDER BY id_unidade FOR UPDATE', {
+        replacements: { idsUnidades }, transaction, type: QueryTypes.SELECT,
+      });
+      const [atual] = await bancoDeDados.query(`SELECT ${camposPromocaoSql('s')}, s.fk_unidade AS idUnidade FROM tb_servico s
+        INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade
+        WHERE s.id_servico=:idServico AND u.fk_salao=:idSalao AND s.st_ativo=TRUE FOR UPDATE`, {
+        replacements: { idServico, idSalao: salao.idSalao }, transaction, type: QueryTypes.SELECT,
+      });
+      if (!atual) throw Object.assign(new Error('Serviço não encontrado.'), { status: 404 });
+      if (!idsUnidades.includes(Number(atual.idUnidade))) {
+        throw Object.assign(new Error('A unidade do serviço mudou. Atualize o catálogo e tente novamente.'), { status: 409 });
+      }
+      const premiumAtivo = await obterAcessoPremiumSalao(salao.idSalao, { transaction });
+      const promocao = resolverPromocaoEdicao(requisicao.body, lerPromocao(atual), valorNormal, premiumAtivo);
+      await bancoDeDados.query(`UPDATE tb_servico SET fk_unidade=:idUnidade, nm_servico=:nome, ds_servico=:descricao,
+        vl_servico=:valor, nu_duracao_minutos=:duracaoMinutos, tp_promocao=:promocaoTipo,
+        vl_promocao=:promocaoValor, st_promocao_ativa=:promocaoHabilitada,
+        dt_promocao_inicio=:promocaoInicio, dt_promocao_fim=:promocaoFim WHERE id_servico=:idServico`, {
+        replacements: { idServico, idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null,
+          valor: valorNormal, duracaoMinutos, ...parametrosPromocao(promocao) }, transaction,
+      });
+    });
+    resposta.status(200).json({ mensagem: 'Serviço atualizado com sucesso.' });
+  } catch (erro) { resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo }); }
 }
 
 async function excluirServico(requisicao, resposta) {
@@ -709,12 +703,12 @@ async function criarFuncionario(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const { idUnidade, idsServicos = [], nome, ativo = true } = requisicao.body ?? {};
-  if (!nome?.trim() || !Number(idUnidade) || !Array.isArray(idsServicos) || !idsServicos.length) { resposta.status(400).json({ mensagem: 'Informe nome, filial e ao menos um serviço.' }); return; }
+  if (!nome?.trim() || !Number(idUnidade) || !Array.isArray(idsServicos) || !idsServicos.length) { resposta.status(400).json({ mensagem: 'Informe nome, unidade e ao menos um serviço.' }); return; }
   const transacao = await bancoDeDados.transaction();
   try {
-    if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao, transacao)) throw new Error('Filial não encontrada.');
+    if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao, transacao)) throw new Error('Unidade não encontrada.');
     const servicos = await bancoDeDados.query(`SELECT id_servico AS idServico FROM tb_servico WHERE fk_unidade=:idUnidade AND st_ativo=TRUE AND id_servico IN (:idsServicos)`, { replacements: { idUnidade, idsServicos }, transaction: transacao, type: QueryTypes.SELECT });
-    if (servicos.length !== idsServicos.length) throw new Error('Selecione apenas serviços da filial informada.');
+    if (servicos.length !== idsServicos.length) throw new Error('Selecione apenas serviços da unidade informada.');
     await bancoDeDados.query('INSERT INTO tb_funcionario (fk_unidade, nm_funcionario, st_ativo) VALUES (:idUnidade, :nome, :ativo)', { replacements: { idUnidade, nome: nome.trim(), ativo }, transaction: transacao });
     const identificadores = await bancoDeDados.query('SELECT LAST_INSERT_ID() AS idFuncionario', { transaction: transacao, type: QueryTypes.SELECT });
     const idFuncionario = Number(identificadores[0]?.idFuncionario);
@@ -762,10 +756,10 @@ async function atualizarFuncionario(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const idFuncionario = Number(requisicao.params.idFuncionario); const { idUnidade, idsServicos = [], nome } = requisicao.body ?? {};
-  if (!idFuncionario || !nome?.trim() || !Number(idUnidade) || !Array.isArray(idsServicos) || !idsServicos.length) { resposta.status(400).json({ mensagem: 'Informe nome, filial e ao menos um serviço.' }); return; }
+  if (!idFuncionario || !nome?.trim() || !Number(idUnidade) || !Array.isArray(idsServicos) || !idsServicos.length) { resposta.status(400).json({ mensagem: 'Informe nome, unidade e ao menos um serviço.' }); return; }
   const transacao = await bancoDeDados.transaction();
   try {
-    if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao, transacao)) throw new Error('Filial não encontrada.');
+    if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao, transacao)) throw new Error('Unidade não encontrada.');
     const profissionais = await bancoDeDados.query(
       `SELECT f.id_funcionario AS idFuncionario FROM tb_funcionario f
        INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
@@ -775,7 +769,7 @@ async function atualizarFuncionario(requisicao, resposta) {
     );
     if (!profissionais.length) throw Object.assign(new Error('Profissional não encontrado.'), { status: 404 });
     const servicos = await bancoDeDados.query('SELECT id_servico AS idServico FROM tb_servico WHERE fk_unidade=:idUnidade AND st_ativo=TRUE AND id_servico IN (:idsServicos)', { replacements: { idUnidade, idsServicos }, transaction: transacao, type: QueryTypes.SELECT });
-    if (servicos.length !== idsServicos.length) throw new Error('Selecione apenas serviços ativos da filial informada.');
+    if (servicos.length !== idsServicos.length) throw new Error('Selecione apenas serviços ativos da unidade informada.');
     // Nome e filial podem permanecer iguais em uma alteração apenas dos serviços.
     await bancoDeDados.query('UPDATE tb_funcionario SET fk_unidade=:idUnidade, nm_funcionario=:nome WHERE id_funcionario=:idFuncionario', { replacements: { idFuncionario, idUnidade, nome: nome.trim() }, transaction: transacao });
     await bancoDeDados.query('DELETE FROM tb_funcionario_servico WHERE fk_funcionario=:idFuncionario', { replacements: { idFuncionario }, transaction: transacao });
@@ -796,8 +790,8 @@ async function excluirFilial(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const [resultado] = await bancoDeDados.query('UPDATE tb_unidade SET st_ativo=FALSE WHERE id_unidade=:idUnidade AND fk_salao=:idSalao AND st_ativo=TRUE', { replacements: { idUnidade: Number(requisicao.params.idUnidade), idSalao: salao.idSalao } });
-  if (!resultado.affectedRows) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
-  resposta.status(200).json({ mensagem: 'Filial removida da descoberta. O histórico foi preservado.' });
+  if (!resultado.affectedRows) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
+  resposta.status(200).json({ mensagem: 'Unidade removida da descoberta. O histórico foi preservado.' });
 }
 
 function normalizarPeriodosFuncionario(periodos) {
@@ -825,7 +819,7 @@ async function listarDisponibilidade(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const idUnidade = Number(requisicao.query.idUnidade);
-  if (!Number.isInteger(idUnidade) || !await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  if (!Number.isInteger(idUnidade) || !await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
   const funcionarios = await bancoDeDados.query(
     `SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS nome
      FROM tb_funcionario f WHERE f.fk_unidade=:idUnidade AND f.st_ativo=TRUE ORDER BY f.nm_funcionario`,
@@ -868,28 +862,32 @@ async function salvarDisponibilidadeFuncionario(requisicao, resposta) {
     { replacements: { idFuncionario, idSalao: salao.idSalao }, type: QueryTypes.SELECT },
   );
   if (!profissionais.length) { resposta.status(404).json({ mensagem: 'Profissional não encontrado.' }); return; }
-  const agendamentos = await bancoDeDados.query(
-    `SELECT id_agendamento AS idAgendamento, DAYOFWEEK(dt_inicio)-1 AS diaSemana,
-            TIME_FORMAT(dt_inicio, '%H:%i') AS inicio, TIME_FORMAT(dt_fim, '%H:%i') AS fim
-     FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
-       AND cd_status='AGENDADO' AND dt_inicio>NOW()`,
-    { replacements: { idFuncionario }, type: QueryTypes.SELECT },
-  );
-  const foraDaNovaAgenda = agendamentos.find((agendamento) => !periodos.some((periodo) =>
-    periodo.diaSemana === Number(agendamento.diaSemana) && agendamento.inicio >= periodo.inicio && agendamento.fim <= periodo.fim));
-  if (foraDaNovaAgenda) { resposta.status(409).json({ mensagem: 'A nova jornada deixaria um agendamento confirmado fora do expediente.' }); return; }
-  const transacao = await bancoDeDados.transaction();
+  const transacao = await criarTransacaoAgenda();
   try {
+    await bloquearRecursosAgenda({ idsUnidades: [profissionais[0].idUnidade], transaction: transacao });
+    const [atual] = await bancoDeDados.query(`SELECT fk_unidade AS idUnidade FROM tb_funcionario
+      WHERE id_funcionario=:idFuncionario AND st_ativo=TRUE`, { replacements: { idFuncionario }, transaction: transacao, type: QueryTypes.SELECT });
+    if (!atual || Number(atual.idUnidade) !== Number(profissionais[0].idUnidade)) throw Object.assign(new Error('O profissional foi alterado. Atualize a tela.'), { status: 409 });
+    const agendamentos = await bancoDeDados.query(`SELECT DAYOFWEEK(dt_inicio)-1 AS diaSemana,
+      TIME_FORMAT(dt_inicio, '%H:%i') AS inicio, TIME_FORMAT(dt_fim, '%H:%i') AS fim
+      FROM tb_agendamento WHERE fk_funcionario=:idFuncionario AND cd_status='AGENDADO' AND dt_fim>NOW()`, {
+      replacements: { idFuncionario }, transaction: transacao, type: QueryTypes.SELECT,
+    });
+    if (agendamentos.some((a) => !periodos.some((p) => p.diaSemana === Number(a.diaSemana) && a.inicio >= p.inicio && a.fim <= p.fim))) {
+      throw Object.assign(new Error('A nova jornada deixaria um agendamento confirmado fora do expediente.'), { status: 409 });
+    }
     await bancoDeDados.query('DELETE FROM tb_disponibilidade_funcionario WHERE fk_funcionario=:idFuncionario', { replacements: { idFuncionario }, transaction: transacao });
-    for (const periodo of periodos) await bancoDeDados.query(
-      `INSERT INTO tb_disponibilidade_funcionario
-       (fk_funcionario, nr_dia_semana, hr_inicio, hr_fim)
-       VALUES (:idFuncionario, :diaSemana, :inicio, :fim)`,
-      { replacements: { idFuncionario, ...periodo }, transaction: transacao },
-    );
+    for (const periodo of periodos) await bancoDeDados.query(`INSERT INTO tb_disponibilidade_funcionario
+      (fk_funcionario,nr_dia_semana,hr_inicio,hr_fim) VALUES (:idFuncionario,:diaSemana,:inicio,:fim)`, {
+      replacements: { idFuncionario, ...periodo }, transaction: transacao,
+    });
     await transacao.commit();
-    resposta.status(200).json({ mensagem: 'Disponibilidade atualizada com sucesso.' });
-  } catch (erro) { await transacao.rollback(); resposta.status(400).json({ mensagem: erro.message }); }
+    resposta.json({ mensagem: 'Disponibilidade atualizada com sucesso.' });
+  } catch (erro) {
+    if (!transacao.finished) await transacao.rollback();
+    const conflito = ['ER_LOCK_DEADLOCK','ER_LOCK_WAIT_TIMEOUT'].includes(codigoErroBanco(erro));
+    resposta.status(erro.status ?? (conflito ? 409 : 400)).json({ mensagem: conflito ? 'A agenda está sendo atualizada. Tente novamente.' : erro.message });
+  }
 }
 
 function dataHoraBanco(valor) {
@@ -904,11 +902,11 @@ async function criarBloqueio(requisicao, resposta) {
   const idFuncionario = requisicao.body?.idFuncionario ? Number(requisicao.body.idFuncionario) : null;
   const dataHoraInicio = dataHoraBanco(requisicao.body?.dataHoraInicio);
   const dataHoraFim = dataHoraBanco(requisicao.body?.dataHoraFim);
-  if (!Number.isInteger(idUnidade) || !dataHoraInicio || !dataHoraFim || dataHoraInicio >= dataHoraFim) { resposta.status(400).json({ mensagem: 'Informe filial e período válidos para o bloqueio.' }); return; }
-  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  if (!Number.isInteger(idUnidade) || !dataHoraInicio || !dataHoraFim || dataHoraInicio >= dataHoraFim) { resposta.status(400).json({ mensagem: 'Informe unidade e período válidos para o bloqueio.' }); return; }
+  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
   if (idFuncionario) {
     const profissionais = await bancoDeDados.query('SELECT id_funcionario FROM tb_funcionario WHERE id_funcionario=:idFuncionario AND fk_unidade=:idUnidade AND st_ativo=TRUE LIMIT 1', { replacements: { idFuncionario, idUnidade }, type: QueryTypes.SELECT });
-    if (!profissionais.length) { resposta.status(404).json({ mensagem: 'Profissional não encontrado nesta filial.' }); return; }
+    if (!profissionais.length) { resposta.status(404).json({ mensagem: 'Profissional não encontrado nesta unidade.' }); return; }
   }
   const codigoMotivo = requisicao.body?.codigoMotivo;
   const detalheMotivo = typeof requisicao.body?.detalheMotivo === 'string' ? requisicao.body.detalheMotivo.trim() : '';
@@ -916,7 +914,7 @@ async function criarBloqueio(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Selecione o motivo do bloqueio e descreva o motivo quando escolher “Outro”.' }); return;
   }
   if (detalheMotivo.length > 200) { resposta.status(400).json({ mensagem: 'O detalhe do motivo deve ter até 200 caracteres.' }); return; }
-  const motivo = `${motivosCancelamento[codigoMotivo]}${detalheMotivo ? `: ${detalheMotivo}` : ''}`;
+  const motivo = comporMotivo(codigoMotivo, detalheMotivo, motivosCancelamento);
   const transacao = await criarTransacaoAgenda();
   const notificacoes = [];
   try {
@@ -1001,9 +999,9 @@ async function listarHorariosAgendamento(requisicao, resposta) {
   const idServico = Number(requisicao.query.idServico);
   const idFuncionario = requisicao.query.idFuncionario ? Number(requisicao.query.idFuncionario) : null;
   if (!Number.isInteger(idUnidade) || !Number.isInteger(idServico) || (idFuncionario !== null && !Number.isInteger(idFuncionario))) {
-    resposta.status(400).json({ mensagem: 'Informe filial, serviço e profissional válidos.' }); return;
+    resposta.status(400).json({ mensagem: 'Informe unidade, serviço e profissional válidos.' }); return;
   }
-  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
   try {
     const disponibilidade = await listarHorariosDisponiveis({
       data: String(requisicao.query.data ?? ''), idFuncionario, idServico, idUnidade,
@@ -1025,7 +1023,7 @@ async function criarAgendamentoSalao(requisicao, resposta) {
   const telefone = String(dados.cliente?.telefone ?? '').trim() || null;
 
   if (![idUnidade, idServico].every(Number.isInteger) || (idFuncionario !== null && !Number.isInteger(idFuncionario))) {
-    resposta.status(400).json({ mensagem: 'Informe filial, serviço, profissional e horário válidos.' }); return;
+    resposta.status(400).json({ mensagem: 'Informe unidade, serviço, profissional e horário válidos.' }); return;
   }
   if (idClienteSalao !== null && !Number.isInteger(idClienteSalao)) {
     resposta.status(400).json({ mensagem: 'Selecione um cliente válido.' }); return;
@@ -1036,7 +1034,7 @@ async function criarAgendamentoSalao(requisicao, resposta) {
   if (nome.length > 120 || (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) || (telefone && telefone.length > 20)) {
     resposta.status(400).json({ mensagem: 'Confira o nome, email e telefone informados.' }); return;
   }
-  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Filial não encontrada.' }); return; }
+  if (!await obterFilialDoSalao(idUnidade, salao.idSalao)) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
 
   const transacao = await criarTransacaoAgenda();
   try {
@@ -1058,7 +1056,8 @@ async function criarAgendamentoSalao(requisicao, resposta) {
 
     await bloquearRecursosAgenda({ idClienteSalao: clienteId, idsUnidades: [idUnidade], transaction: transacao });
     const reserva = await resolverReserva({
-      dataHoraInicio: dados.dataHoraInicio, idFuncionario, idServico, idUnidade, idClienteSalao: clienteId, transaction: transacao,
+      dataHoraInicio: dados.dataHoraInicio, idFuncionario, idServico, idUnidade, idClienteSalao: clienteId,
+      valorEsperado: dados.valorEsperado, transaction: transacao,
     });
     const conflitos = await bancoDeDados.query(
       `SELECT id_agendamento FROM tb_agendamento
@@ -1084,7 +1083,7 @@ async function criarAgendamentoSalao(requisicao, resposta) {
     resposta.status(201).json({ mensagem: 'Agendamento criado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, idFuncionario: reserva.idFuncionario });
   } catch (erro) {
     await transacao.rollback();
-    resposta.status(erro.status ?? 500).json({ mensagem: erro.message });
+    resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo });
   }
 }
 
@@ -1147,7 +1146,6 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
   const idAgendamento = Number(requisicao.params.idAgendamento);
   if (!Number.isSafeInteger(idAgendamento) || idAgendamento <= 0) { resposta.status(400).json({ mensagem: 'Agendamento inválido.' }); return; }
   const transacao = await criarTransacaoAgenda();
-  let dadosNotificacao = null;
   try {
     const [contexto] = await bancoDeDados.query(`SELECT a.fk_unidade AS idUnidade,
       a.fk_usuario AS idUsuario, a.fk_cliente_salao AS idClienteSalao
@@ -1157,7 +1155,7 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
     });
     if (!contexto) throw Object.assign(new Error('Agendamento não encontrado.'), { status: 404 });
     await bloquearRecursosAgenda({ ...contexto, idsUnidades: [contexto.idUnidade], transaction: transacao });
-    const [agendamento] = await bancoDeDados.query(`SELECT cd_status AS status, dt_inicio AS dataHoraInicio,
+    const [agendamento] = await bancoDeDados.query(`SELECT cd_status AS status, dt_inicio AS dataHoraInicio, dt_fim AS dataHoraFim,
       nm_servico_agendado AS servico, fk_unidade AS idUnidade FROM tb_agendamento
       WHERE id_agendamento=:idAgendamento FOR UPDATE`, {
       replacements: { idAgendamento }, transaction: transacao, type: QueryTypes.SELECT,
@@ -1165,6 +1163,9 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
     if (agendamento.status !== 'AGENDADO') throw Object.assign(new Error('Este agendamento já recebeu um resultado.'), { status: 409 });
     // Revalidar a unidade após os locks, inclusive se houve reagendamento concorrente.
     if (Number(agendamento.idUnidade) !== Number(contexto.idUnidade)) throw Object.assign(new Error('O agendamento foi alterado. Atualize a agenda.'), { status: 409 });
+    if (status === 'REALIZADO' && !podeConcluirAgendamento(agendamento)) {
+      throw Object.assign(new Error('O atendimento só pode ser marcado como realizado a partir de 00h do dia anterior ao agendamento, no horário de São Paulo.'), { status: 409 });
+    }
     if (status === 'NAO_COMPARECEU' && new Date(agendamento.dataHoraInicio) > new Date()) {
       throw Object.assign(new Error('A ausência só pode ser registrada após o horário agendado.'), { status: 409 });
     }
@@ -1177,15 +1178,15 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
       const titulo = 'Como foi seu atendimento?';
       const mensagem = `Seu atendimento de ${agendamento.servico} foi marcado como realizado. Avalie sua experiência.`;
       const link = `/cliente/agendamentos?avaliar=${idAgendamento}`;
-      const idNotificacao = await criarNotificacaoCliente(contexto.idUsuario, idAgendamento, { titulo, mensagem, link }, transacao);
-      dadosNotificacao = { idUsuario: contexto.idUsuario, idNotificacao, titulo, mensagem, link };
+      await criarNotificacaoCliente(contexto.idUsuario, idAgendamento, {
+        titulo, mensagem, link, disponivelEm: agendamento.dataHoraFim,
+      }, transacao);
     }
     await transacao.commit();
   } catch (erro) {
     await transacao.rollback();
     resposta.status(erro.status ?? 500).json({ mensagem: erro.message }); return;
   }
-  if (dadosNotificacao) void enviarNotificacaoPushCliente(dadosNotificacao.idUsuario, dadosNotificacao.titulo, dadosNotificacao.mensagem, dadosNotificacao.idNotificacao, dadosNotificacao.link);
   resposta.status(200).json({ mensagem: status === 'REALIZADO' ? 'Atendimento confirmado como realizado.' : 'Ausência registrada.' });
 }
 
@@ -1205,7 +1206,7 @@ async function cancelarAgendamentoSalao(requisicao, resposta) {
   if (detalheMotivo.length > 200) {
     resposta.status(400).json({ mensagem: 'O detalhe do motivo deve ter até 200 caracteres.' }); return;
   }
-  const motivo = `${motivosCancelamento[codigoMotivo]}${detalheMotivo ? `: ${detalheMotivo}` : ''}`;
+  const motivo = comporMotivo(codigoMotivo, detalheMotivo, motivosCancelamento);
 
   const transacao = await bancoDeDados.transaction();
   let dadosNotificacao = null;
@@ -1309,7 +1310,7 @@ async function reagendarAgendamentoSalao(requisicao, resposta) {
     await bloquearRecursosAgenda({ ...contexto, idsUnidades: [contexto.idUnidade], transaction });
     const agendamento = await obterAgendamentoReagendavel(idAgendamento, salao.idSalao, transaction);
     if (!agendamento) { const erro = new Error('Agendamento indisponível para reagendamento.'); erro.status = 409; throw erro; }
-    if (Number(agendamento.idUnidade) !== Number(contexto.idUnidade)) throw Object.assign(new Error('A filial do agendamento mudou. Atualize a agenda.'), { status: 409 });
+    if (Number(agendamento.idUnidade) !== Number(contexto.idUnidade)) throw Object.assign(new Error('A unidade do agendamento mudou. Atualize a agenda.'), { status: 409 });
     const reserva = await resolverReserva({
       dataHoraInicio: requisicao.body?.dataHoraInicio, idFuncionario,
       idServico: agendamento.idServico, idUnidade: agendamento.idUnidade,
@@ -1355,7 +1356,7 @@ async function listarAvaliacoesSalao(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const idUnidade = requisicao.query.idUnidade ? Number(requisicao.query.idUnidade) : 0;
-  if (!Number.isSafeInteger(idUnidade) || idUnidade < 0) { resposta.status(400).json({ mensagem: 'Filial inválida.' }); return; }
+  if (!Number.isSafeInteger(idUnidade) || idUnidade < 0) { resposta.status(400).json({ mensagem: 'Unidade inválida.' }); return; }
   const pagina = Math.max(1, Math.min(1000, Number.parseInt(requisicao.query.pagina, 10) || 1));
   const filtro = idUnidade ? 'AND av.fk_unidade=:idUnidade' : '';
   const replacements = { idSalao: salao.idSalao, idUnidade };
@@ -1446,7 +1447,7 @@ async function indicadoresPremium(requisicao, resposta) {
     const quantidadeDiasPeriodo = Math.floor((new Date(`${dataFim}T00:00:00.000Z`) - new Date(`${dataInicio}T00:00:00.000Z`)) / 86_400_000) + 1;
     const dataFimAnterior = deslocarDataIso(dataInicio, -1);
     const dataInicioAnterior = deslocarDataIso(dataFimAnterior, -(quantidadeDiasPeriodo - 1));
-    const filtros = { idSalao: salao.idSalao, idServico, idFuncionario };
+    const filtros = { idSalao: salao.idSalao, idServico, idFuncionario, agora: normalizarConsultaAnalitica({}, salao.idSalao).filtros.agora };
     const condicoes = ['u.fk_salao=:idSalao'];
     if (idUnidade) { filtros.idUnidade = idUnidade; condicoes.push('a.fk_unidade=:idUnidade'); }
     const filtroItem = '(:idServico = 0 OR item.fk_servico=:idServico) AND (:idFuncionario = 0 OR item.fk_funcionario=:idFuncionario)';
@@ -1482,18 +1483,19 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeComparecimentos,
         COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos,
         COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoCancelamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados,
+        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeCancelamentosElegiveis,
         COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosMarcados,
-        COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO' AND a.dt_inicio<NOW()${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
+        COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO' AND a.dt_inicio< :agora${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
         COALESCE(SUM(CASE WHEN 1=1${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
-        COALESCE(SUM(CASE WHEN (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis
+        COALESCE(SUM(CASE WHEN (a.dt_inicio<= :agora OR a.cd_status='CANCELADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase}`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT COALESCE(SUM(a.vl_servico_agendado),0) AS receitaPrevista
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-        WHERE ${condicaoBase} AND a.cd_status='AGENDADO' AND a.dt_inicio>=NOW()
-          AND a.dt_inicio<DATE_ADD(NOW(), INTERVAL 30 DAY)`, { replacements: filtros, type: QueryTypes.SELECT }),
+        WHERE ${condicaoBase} AND a.cd_status='AGENDADO' AND a.dt_inicio>= :agora
+          AND a.dt_inicio<DATE_ADD(:agora, INTERVAL 30 DAY)`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT
         COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN ${valorAtendimento} ELSE 0 END),0) AS receitaRealizada,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
@@ -1503,8 +1505,10 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS quantidadeComparecimentos,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='NAO_COMPARECEU' THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
-        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' AND a.dt_inicio<NOW() THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
-        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' AND a.dt_inicio< :agora THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND (a.dt_inicio<= :agora OR a.cd_status='CANCELADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeCancelamentosElegiveis,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosMarcados,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorCancelamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase}`, { replacements: filtrosComparacao, type: QueryTypes.SELECT }),
@@ -1562,8 +1566,8 @@ async function indicadoresPremium(requisicao, resposta) {
         WHERE u.fk_salao=:idSalao AND a.cd_status='REALIZADO'
           AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)
         GROUP BY COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))
-        HAVING MAX(a.dt_realizacao)<DATE_SUB(NOW(), INTERVAL 90 DAY)
-        ORDER BY ultimoAtendimento ASC LIMIT 20`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
+        HAVING MAX(a.dt_realizacao)<DATE_SUB(:agora, INTERVAL 90 DAY)
+        ORDER BY ultimoAtendimento ASC LIMIT 20`, { replacements: { idSalao: salao.idSalao, agora: filtros.agora }, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS profissional,
         COUNT(DISTINCT CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.id_agendamento END) AS atendimentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN item.minutos_reservados ELSE 0 END),0) AS minutosAtendimentoRealizado,
@@ -1626,6 +1630,8 @@ async function indicadoresPremium(requisicao, resposta) {
         ocupacaoEstimada: minutosDisponiveis ? (minutosAtendidos / minutosDisponiveis) * 100 : null,
       };
     });
+    calcularMetricasCancelamento(resumo[0]);
+    calcularMetricasCancelamento(comparacaoAnterior[0]);
     resumo[0].receitaPrevista = receitaPrevista[0].receitaPrevista;
     // Comparecimento usa a mesma data agendada para realizados e ausências.
     // Os agregados partem dos atendimentos, evitando multiplicação pelos extras.
@@ -1636,14 +1642,12 @@ async function indicadoresPremium(requisicao, resposta) {
     }
     const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
     const insights = [];
-    const taxaCancelamentoAtual = Number(resumo[0].quantidadeAgendamentosElegiveis)
-      ? (Number(resumo[0].quantidadeAgendamentosCancelados) / Number(resumo[0].quantidadeAgendamentosElegiveis)) * 100 : 0;
-    const taxaCancelamentoPassada = Number(comparacaoAnterior[0].quantidadeAgendamentosElegiveis)
-      ? (Number(comparacaoAnterior[0].quantidadeAgendamentosCancelados) / Number(comparacaoAnterior[0].quantidadeAgendamentosElegiveis)) * 100 : 0;
+    const taxaCancelamentoAtual = resumo[0].taxaCancelamento;
+    const taxaCancelamentoPassada = comparacaoAnterior[0].taxaCancelamento;
     if (Number(resumo[0].quantidadeAtendimentosAConfirmar) > 0) {
       insights.push({ tipo: 'acao', titulo: 'Confirme atendimentos concluídos', descricao: `${resumo[0].quantidadeAtendimentosAConfirmar} agendamento(s) passado(s) ainda aguardam confirmação na Agenda.` });
     }
-    if (taxaCancelamentoAtual >= 15 && taxaCancelamentoAtual > taxaCancelamentoPassada) {
+    if (taxaCancelamentoAtual != null && taxaCancelamentoPassada != null && taxaCancelamentoAtual >= 15 && taxaCancelamentoAtual > taxaCancelamentoPassada) {
       insights.push({ tipo: 'alerta', titulo: 'Cancelamentos em alta', descricao: `A taxa está em ${taxaCancelamentoAtual.toFixed(1).replace('.', ',')}%, ${ (taxaCancelamentoAtual - taxaCancelamentoPassada).toFixed(1).replace('.', ',')} p.p. acima do período anterior.` });
     }
     const horarioMaisProcurado = [...mapaCalor].sort((a, b) => Number(b.quantidade) - Number(a.quantidade))[0];
@@ -1703,18 +1707,14 @@ async function analiticoPremium(requisicao, resposta, exportar = false) {
 }
 
 function resumoAssinatura(assinatura) {
-  if (!assinatura) return { plano: 'BASICO', status: 'BASICO', temAcessoPremium: false };
-  const dataFimAcesso = assinatura.dataProximaCobranca ? new Date(assinatura.dataProximaCobranca) : null;
-  const canceladaComCicloVigente = ['CANCELADA', 'CANCELAMENTO_AGENDADO'].includes(assinatura.status)
-    && dataFimAcesso && dataFimAcesso > new Date();
-  const temAcessoPremium = ['AUTORIZADA', 'EM_TESTE'].includes(assinatura.status) || canceladaComCicloVigente;
-  return { ...assinatura, plano: temAcessoPremium ? 'PREMIUM' : 'BASICO', temAcessoPremium };
+  if (!assinatura) return { plano: 'BASICO', status: 'BASICO', temAcessoPremium: false, podeReativar: false };
+  const temAcessoPremium = assinaturaTemAcessoPremium(assinatura);
+  const podeReativar = assinatura.status === 'CANCELAMENTO_AGENDADO' && Boolean(temAcessoPremium)
+    && assinatura.provedor === 'STRIPE' && Boolean(assinatura.idAssinaturaProvedor);
+  const { parametrosCheckout, criadaEm, ...publica } = assinatura;
+  return { ...publica, plano: temAcessoPremium ? 'PREMIUM' : 'BASICO', temAcessoPremium: Boolean(temAcessoPremium), podeReativar };
 }
 
-function assinaturaBloqueiaNovaContratacao(assinatura) {
-  return ['PENDENTE', 'PAUSADA', 'PAGAMENTO_PENDENTE'].includes(assinatura?.status)
-    || (assinatura?.status === 'CANCELAMENTO_AGENDADO' && resumoAssinatura(assinatura).temAcessoPremium);
-}
 
 async function obterAssinaturaSalao(idSalao) {
   const assinaturas = await bancoDeDados.query(
@@ -1723,7 +1723,7 @@ async function obterAssinaturaSalao(idSalao) {
             vl_assinatura AS valor, st_teste_gratis AS testeGratis,
             ds_provedor AS provedor, id_preco_provedor AS idPrecoProvedor,
             id_assinatura_provedor AS idAssinaturaProvedor, id_checkout_provedor AS idCheckoutProvedor,
-            dt_inicio AS dataInicio,
+            dt_inicio AS dataInicio, js_parametros_checkout AS parametrosCheckout, dt_criacao AS criadaEm,
             dt_proxima_cobranca AS dataProximaCobranca, dt_cancelamento_solicitado AS dataCancelamentoSolicitado
      FROM tb_assinatura_salao WHERE fk_salao=:idSalao
      ORDER BY dt_criacao DESC, id_assinatura_salao DESC LIMIT 1`,
@@ -1732,30 +1732,46 @@ async function obterAssinaturaSalao(idSalao) {
   return assinaturas[0] ?? null;
 }
 
+async function obterAssinaturaSalaoAtualizada(idSalao) {
+  const assinatura = await obterAssinaturaSalao(idSalao);
+  if (assinatura?.provedor !== 'STRIPE') return assinatura;
+  if (assinatura.status === 'PENDENTE' && !assinatura.idCheckoutProvedor && assinatura.parametrosCheckout) {
+    const checkout = await recuperarCheckout({ idAssinatura: assinatura.idAssinatura, parametros: assinatura.parametrosCheckout, criadaEm: assinatura.criadaEm });
+    assinatura.idCheckoutProvedor = checkout.id;
+  }
+  if (assinatura.idAssinaturaProvedor) {
+    const sincronizada = await sincronizarAssinaturaStripe(assinatura.idAssinaturaProvedor, assinatura.idCheckoutProvedor);
+    if (!sincronizada) throw new Error('Não foi possível associar a assinatura do Stripe ao salão.');
+  } else if (assinatura.status === 'PENDENTE' && assinatura.idCheckoutProvedor) {
+    const checkout = await consultarCheckoutStripe(assinatura.idCheckoutProvedor);
+    const idAssinatura = typeof checkout.subscription === 'string' ? checkout.subscription : checkout.subscription?.id;
+    if (idAssinatura) {
+      const sincronizada = await sincronizarAssinaturaStripe(idAssinatura, checkout.id);
+      if (!sincronizada) throw new Error('Não foi possível associar o checkout do Stripe ao salão.');
+    } else if (checkout.status === 'expired') {
+      await bancoDeDados.query("UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura", { replacements: { idAssinatura: assinatura.idAssinatura } });
+    }
+  } else {
+    return assinatura;
+  }
+  return obterAssinaturaSalao(idSalao);
+}
+
 async function consultarAssinatura(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre seu salão antes de contratar o Premium.' }); return; }
-  let assinatura = await obterAssinaturaSalao(salao.idSalao);
-  if (assinatura?.status === 'PENDENTE' && assinatura.idCheckoutProvedor && process.env.ASSINATURA_MODO_TESTE !== 'true') {
-    try {
-      const checkout = await consultarCheckoutStripe(assinatura.idCheckoutProvedor);
-      const idAssinatura = typeof checkout.subscription === 'string' ? checkout.subscription : checkout.subscription?.id;
-      if (idAssinatura) await sincronizarAssinaturaStripe(idAssinatura, checkout.id);
-      else if (checkout.status === 'expired') {
-        await bancoDeDados.query("UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura", { replacements: { idAssinatura: assinatura.idAssinatura } });
-      }
-      assinatura = await obterAssinaturaSalao(salao.idSalao);
-    } catch (erro) {
-      console.error('[Assinatura] Falha ao atualizar o estado no Stripe.', { mensagem: erro.message, idSalao: salao.idSalao });
-      resposta.status(502).json({ mensagem: 'Não foi possível atualizar o estado com o Stripe. Tente novamente.' });
-      return;
-    }
+  try {
+    const assinatura = await obterAssinaturaSalaoAtualizada(salao.idSalao);
+    resposta.status(200).json({
+      modoTeste: process.env.ASSINATURA_MODO_TESTE === 'true',
+      testeGratisDisponivel: !salao.testePremiumUtilizado,
+      oferta: obterOfertaPremium(),
+      assinatura: resumoAssinatura(assinatura),
+    });
+  } catch (erro) {
+    console.error('[Assinatura] Falha ao atualizar o estado no Stripe.', { mensagem: erro.message, idSalao: salao.idSalao });
+    resposta.status(502).json({ mensagem: 'Não foi possível atualizar o estado com o Stripe. Tente novamente.' });
   }
-  resposta.status(200).json({
-    modoTeste: process.env.ASSINATURA_MODO_TESTE === 'true',
-    oferta: obterOfertaPremium(),
-    assinatura: resumoAssinatura(assinatura),
-  });
 }
 
 async function ativarAssinaturaTeste(requisicao, resposta) {
@@ -1768,15 +1784,8 @@ async function ativarAssinaturaTeste(requisicao, resposta) {
 
   const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
   try {
-    const atual = await obterAssinaturaSalao(salao.idSalao);
-    if (resumoAssinatura(atual).temAcessoPremium) { resposta.status(409).json({ mensagem: 'Seu salão já possui uma assinatura Premium ativa.' }); return; }
-    if (assinaturaBloqueiaNovaContratacao(atual)) { resposta.status(409).json({ mensagem: 'Já existe uma assinatura em andamento. Atualize o status ou resolva essa assinatura antes de iniciar outra contratação.' }); return; }
-    const plano = obterDadosPlanoPremium(periodicidade);
-    const assinatura = await ativarAssinaturaPremium({
-      idSalao: salao.idSalao,
-      periodicidade,
-      valor: plano.valor,
-    });
+    await reservarContratacao({ idSalao: salao.idSalao, periodicidade, local: true });
+    const assinatura = await obterAssinaturaSalao(salao.idSalao);
     resposta.status(200).json({ mensagem: 'Premium ativado para teste.', assinatura: resumoAssinatura(assinatura) });
   } catch (erro) {
     console.error('[Assinatura] Falha ao ativar Premium para teste.', { mensagem: erro.message, periodicidade, idSalao: salao.idSalao });
@@ -1786,82 +1795,73 @@ async function ativarAssinaturaTeste(requisicao, resposta) {
 
 async function iniciarCheckoutAssinatura(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Cadastre seu salão antes de contratar o Premium.' }); return; }
-  const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
-  let referenciaExterna = null;
-  let idCheckoutStripe = null;
-  let cancelamentoCheckoutFalhou = false;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   try {
-    const atual = await obterAssinaturaSalao(salao.idSalao);
-    if (resumoAssinatura(atual).temAcessoPremium) { resposta.status(409).json({ mensagem: 'Seu salão já possui uma assinatura Premium ativa.' }); return; }
-    if (assinaturaBloqueiaNovaContratacao(atual)) { resposta.status(409).json({ mensagem: 'Já existe uma assinatura em andamento. Atualize o status ou resolva essa assinatura antes de iniciar outra contratação.' }); return; }
-    const dadosPlano = obterDadosPlanoPremium(periodicidade);
-    const saloes = await bancoDeDados.query('SELECT st_teste_premium_utilizado AS testeUtilizado FROM tb_salao WHERE id_salao=:idSalao LIMIT 1', { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT });
-    const testeGratis = !saloes[0]?.testeUtilizado;
-    referenciaExterna = randomUUID();
-    await bancoDeDados.query(
-      `INSERT INTO tb_assinatura_salao (fk_salao, cd_periodicidade, cd_status, vl_assinatura, st_teste_gratis, ds_provedor, id_preco_provedor, ds_referencia_externa)
-       VALUES (:idSalao, :periodicidade, 'PENDENTE', :valor, :testeGratis, 'STRIPE', :idPreco, :referenciaExterna)`,
-      { replacements: { idSalao: salao.idSalao, periodicidade, valor: dadosPlano.valor, testeGratis, idPreco: obterPrecoStripe(periodicidade), referenciaExterna } },
-    );
-    const checkout = await criarCheckoutAssinatura({
-      emailPagador: salao.emailConta,
-      periodicidade,
-      referenciaExterna,
-      testeGratis,
-      urlRetorno: `${(process.env.FRONTEND_URL ?? 'http://localhost:3000').replace(/\/$/, '')}/salao/assinatura?checkout=retorno`,
-    });
-    if (!checkout.id || !checkout.url) throw new Error('O Stripe não retornou um link de checkout.');
-    idCheckoutStripe = String(checkout.id);
-    await bancoDeDados.query('UPDATE tb_assinatura_salao SET id_checkout_provedor=:idCheckout WHERE ds_referencia_externa=:referenciaExterna', { replacements: { idCheckout: idCheckoutStripe, referenciaExterna } });
-    resposta.status(201).json({ checkoutUrl: checkout.url });
+    const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
+    const registro = await reservarContratacao({ idSalao: salao.idSalao, periodicidade, emailPagador: salao.emailConta });
+    const checkout = await finalizarCheckout(registro, salao.idSalao);
+    resposta.status(registro.nova ? 201 : 200).json({ checkoutUrl: checkout.url });
   } catch (erro) {
-    if (idCheckoutStripe) {
-      try { await cancelarCheckoutStripe(idCheckoutStripe); }
-      catch (erroCancelamento) {
-        cancelamentoCheckoutFalhou = true;
-        console.error('[Assinatura] Não foi possível encerrar um checkout órfão no Stripe.', { mensagem: erroCancelamento.message });
-      }
-    }
-    if (referenciaExterna && !cancelamentoCheckoutFalhou) await bancoDeDados.query("UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW() WHERE ds_referencia_externa=:referenciaExterna AND cd_status='PENDENTE'", { replacements: { referenciaExterna } });
-    console.error('[Assinatura] Falha ao iniciar checkout.', { mensagem: erro.message, periodicidade, idSalao: salao.idSalao });
-    resposta.status(400).json({ mensagem: erro.message });
+    resposta.status(erro.status ?? 502).json({ mensagem: erro.status ? erro.message : 'Não foi possível confirmar a criação do checkout. Atualize o status antes de tentar novamente.', codigo: erro.codigo });
   }
 }
 
 async function cancelarAssinatura(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const assinatura = await obterAssinaturaSalao(salao.idSalao);
-  const checkoutPendente = assinatura?.status === 'PENDENTE';
-  const assinaturaTesteLocal = assinatura?.idPrecoProvedor === 'ATIVACAO_TESTE' && !assinatura.idAssinaturaProvedor;
-  if (assinaturaTesteLocal) {
-    await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_proxima_cobranca=NULL, dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
-    resposta.status(200).json({ mensagem: 'Assinatura local de teste encerrada. Agora você pode contratar pelo Stripe.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
-    return;
-  }
-  if (checkoutPendente && assinatura?.idCheckoutProvedor) {
-    try {
-      const resultado = await cancelarCheckoutStripe(assinatura.idCheckoutProvedor);
-      if (resultado.object === 'subscription') {
-        await sincronizarAssinaturaStripe(resultado.id, assinatura.idCheckoutProvedor);
-        resposta.status(200).json({ mensagem: 'A renovação foi cancelada. O acesso Premium continua até o fim do período vigente.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
-      } else {
-        await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELADA', dt_cancelamento=NOW(), dt_atualizacao=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
-        resposta.status(200).json({ mensagem: 'Checkout pendente cancelado. Você já pode iniciar uma nova contratação.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
-      }
-    } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
-    return;
-  }
-  if (!assinatura?.idAssinaturaProvedor || assinatura.provedor !== 'STRIPE' || (!checkoutPendente && !resumoAssinatura(assinatura).temAcessoPremium)) { resposta.status(404).json({ mensagem: 'Não há uma assinatura Premium ativa no Stripe ou checkout pendente para cancelar.' }); return; }
+  const salao = await obterSalaoAdministrador(administrador.idUsuario);
+  if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   try {
-    const dadosCancelamento = await cancelarAssinaturaStripe(assinatura.idAssinaturaProvedor);
-    const fimPeriodo = dadosCancelamento.items?.data?.[0]?.current_period_end ?? dadosCancelamento.current_period_end;
-    const dataFimPeriodo = fimPeriodo ? new Date(fimPeriodo * 1000) : assinatura.dataProximaCobranca;
-    await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELAMENTO_AGENDADO', dt_cancelamento_solicitado=NOW() WHERE id_assinatura_salao=:idAssinatura`, { replacements: { idAssinatura: assinatura.idAssinatura } });
-    if (dataFimPeriodo) await bancoDeDados.query('UPDATE tb_assinatura_salao SET dt_proxima_cobranca=:dataFimPeriodo WHERE id_assinatura_salao=:idAssinatura', { replacements: { dataFimPeriodo, idAssinatura: assinatura.idAssinatura } });
-    resposta.status(200).json({ mensagem: 'Cancelamento solicitado. O acesso Premium continua até o fim do período já pago.', assinatura: resumoAssinatura(await obterAssinaturaSalao(salao.idSalao)) });
-  } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
+    const [registro] = await bancoDeDados.query(`SELECT id_assinatura_salao AS idAssinatura,
+      id_assinatura_provedor AS idAssinaturaProvedor, id_checkout_provedor AS idCheckout,
+      js_parametros_checkout AS parametros, dt_criacao AS criadaEm, ds_provedor AS provedor
+      FROM tb_assinatura_salao WHERE fk_salao=:idSalao ORDER BY id_assinatura_salao DESC LIMIT 1`, {
+      replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT,
+    });
+    if (!registro) { resposta.status(404).json({ mensagem: 'Não há assinatura para cancelar.' }); return; }
+    const resultado = registro.provedor === 'STRIPE' ? await cancelarRecursosContratacao(registro) : {};
+    if (resultado.idAssinatura) await sincronizarAssinaturaStripe(resultado.idAssinatura);
+    else await bancoDeDados.query(`UPDATE tb_assinatura_salao SET cd_status='CANCELADA',
+      dt_proxima_cobranca=NULL, cd_periodicidade_pendente=NULL, dt_cancelamento=COALESCE(dt_cancelamento,NOW())
+      WHERE id_assinatura_salao=:id`, { replacements: { id: registro.idAssinatura } });
+    const assinatura = await obterAssinaturaSalao(salao.idSalao);
+    resposta.json({ mensagem: assinatura.status === 'CANCELAMENTO_AGENDADO'
+      ? 'Renovação cancelada. O Premium continua até o fim do ciclo vigente.'
+      : 'Assinatura encerrada imediatamente, sem reembolso automático.', assinatura: resumoAssinatura(assinatura) });
+  } catch (erro) { resposta.status(erro.status ?? 502).json({ mensagem: erro.status ? erro.message : 'Não foi possível confirmar o cancelamento no Stripe.', codigo: erro.codigo }); }
+}
+
+async function reativarAssinatura(requisicao, resposta) {
+  const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
+  try {
+    const assinatura = await obterAssinaturaSalaoAtualizada(salao.idSalao);
+    if (assinatura?.provedor !== 'STRIPE' || !assinatura.idAssinaturaProvedor) {
+      resposta.status(404).json({ mensagem: 'Não há uma assinatura no Stripe para reativar.' }); return;
+    }
+    if (['AUTORIZADA', 'EM_TESTE'].includes(assinatura.status)) {
+      resposta.status(200).json({ mensagem: 'A renovação da sua assinatura já está ativa.', assinatura: resumoAssinatura(assinatura) }); return;
+    }
+    if (!resumoAssinatura(assinatura).podeReativar) {
+      resposta.status(409).json({ mensagem: 'Esta assinatura não pode mais ser reativada. Se o período terminou, escolha “Assinar novamente”.' }); return;
+    }
+    await reativarAssinaturaStripe(assinatura.idAssinaturaProvedor);
+    if (!await obterSalaoAdministrador(administrador.idUsuario)) {
+      await encerrarAssinaturaStripe(assinatura.idAssinaturaProvedor);
+      throw Object.assign(new Error('A exclusão desta conta está em andamento.'), { status: 409, codigo: 'EXCLUSAO_PENDENTE' });
+    }
+    const atualizada = await obterAssinaturaSalaoAtualizada(salao.idSalao);
+    if (!['AUTORIZADA', 'EM_TESTE'].includes(atualizada?.status)) {
+      resposta.status(409).json({ mensagem: 'A renovação ainda não foi confirmada. Atualize o status da assinatura e tente novamente.' }); return;
+    }
+    resposta.status(200).json({
+      mensagem: 'Assinatura reativada. Seu plano e a próxima data de cobrança foram mantidos.',
+      assinatura: resumoAssinatura(atualizada),
+    });
+  } catch (erro) {
+    console.error('[Assinatura] Falha ao reativar a renovação.', { mensagem: erro.message, idSalao: salao.idSalao });
+    resposta.status(erro.status === 409 ? 409 : 502).json({ mensagem: erro.status === 409 ? erro.message : 'Não foi possível confirmar a reativação com o Stripe. Atualize o status e tente novamente.' });
+  }
 }
 
 async function alterarPeriodicidadeAssinatura(requisicao, resposta) {
@@ -1870,15 +1870,21 @@ async function alterarPeriodicidadeAssinatura(requisicao, resposta) {
   const assinatura = await obterAssinaturaSalao(salao.idSalao);
   const periodicidade = String(requisicao.body?.periodicidade ?? '').toUpperCase();
   if (!assinatura?.idAssinaturaProvedor || assinatura.provedor !== 'STRIPE' || !resumoAssinatura(assinatura).temAcessoPremium) { resposta.status(404).json({ mensagem: 'Não há uma assinatura Premium ativa no Stripe para alterar.' }); return; }
+  if (['CANCELAMENTO_AGENDADO', 'CANCELADA'].includes(assinatura.status)) { resposta.status(409).json({ mensagem: 'Reative a renovação da assinatura antes de alterar a periodicidade.' }); return; }
   if (assinatura.periodicidade === periodicidade) { resposta.status(400).json({ mensagem: 'Esta já é a periodicidade da sua assinatura.' }); return; }
   if (assinatura.periodicidadePendente) { resposta.status(409).json({ mensagem: 'Já existe uma troca de periodicidade agendada.' }); return; }
   try {
     await atualizarPeriodicidadeStripe(assinatura.idAssinaturaProvedor, periodicidade);
+    if (!await obterSalaoAdministrador(administrador.idUsuario)) {
+      await encerrarAssinaturaStripe(assinatura.idAssinaturaProvedor);
+      throw Object.assign(new Error('A exclusão desta conta está em andamento.'), { status: 409 });
+    }
     await bancoDeDados.query('UPDATE tb_assinatura_salao SET cd_periodicidade_pendente=:periodicidade WHERE id_assinatura_salao=:idAssinatura', { replacements: { periodicidade, idAssinatura: assinatura.idAssinatura } });
     resposta.status(200).json({ mensagem: 'A nova periodicidade será aplicada na próxima renovação.' });
   } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
 }
 
+roteadorSalao.get('/conta/exclusao', consultarEstadoExclusao);
 roteadorSalao.get('/enderecos/:cep', consultarCep);
 roteadorSalao.get('/notificacoes/chave-publica', chavePublicaNotificacoes);
 roteadorSalao.get('/notificacoes', consultarNotificacoes);
@@ -1905,6 +1911,6 @@ roteadorSalao.get('/avaliacoes', listarAvaliacoesSalao);
 roteadorSalao.get('/indicadores/premium/analitico', (req, res) => analiticoPremium(req, res));
 roteadorSalao.get('/indicadores/premium/analitico/exportar', (req, res) => analiticoPremium(req, res, true));
 roteadorSalao.get('/indicadores', indicadores); roteadorSalao.get('/indicadores/premium', indicadoresPremium);
-roteadorSalao.get('/assinatura', consultarAssinatura); roteadorSalao.post('/assinatura/ativar', ativarAssinaturaTeste); roteadorSalao.post('/assinatura/checkout', iniciarCheckoutAssinatura); roteadorSalao.patch('/assinatura/cancelar', cancelarAssinatura); roteadorSalao.patch('/assinatura/periodicidade', alterarPeriodicidadeAssinatura);
+roteadorSalao.get('/assinatura', consultarAssinatura); roteadorSalao.post('/assinatura/ativar', ativarAssinaturaTeste); roteadorSalao.post('/assinatura/checkout', iniciarCheckoutAssinatura); roteadorSalao.patch('/assinatura/cancelar', cancelarAssinatura); roteadorSalao.patch('/assinatura/reativar', reativarAssinatura); roteadorSalao.patch('/assinatura/periodicidade', alterarPeriodicidadeAssinatura);
 
 export default roteadorSalao;

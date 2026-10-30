@@ -15,6 +15,7 @@ export function obterOfertaPremium() {
       testeGratisDias: 7,
       opcoes: Object.values(planosPremium).map(({ periodicidade, valor }) => ({ periodicidade, valor })),
       recursos: [
+        { nome: 'Promoções em serviços', descricao: 'Ofereça preços promocionais ou descontos percentuais, com período opcional.' },
         { nome: 'Unidades ilimitadas', descricao: 'Cadastre e gerencie quantas unidades sua empresa precisar.' },
         { nome: 'Dashboard avançado', descricao: 'Painel mais detalhado para te auxiliar na tomada de decisão.' },
         { nome: 'Notificações', descricao: 'Receba notificações direto no dispositivo caso o cliente faça um agendamento, cancele ou altere.' },
@@ -27,7 +28,7 @@ export function obterOfertaPremium() {
 
 export function obterDadosPlanoPremium(periodicidade) {
   const plano = planosPremium[String(periodicidade ?? '').toUpperCase()];
-  if (!plano) throw new Error('Selecione uma periodicidade válida para o plano Premium.');
+  if (!plano) throw Object.assign(new Error('Selecione uma periodicidade válida para o plano Premium.'), { status: 400, codigo: 'PLANO_INVALIDO' });
   return plano;
 }
 
@@ -38,10 +39,10 @@ export function obterPrecoStripe(periodicidade) {
   return idPreco;
 }
 
-async function validarPrecoStripe(periodicidade) {
+async function validarPrecoStripe(periodicidade, idPreco = obterPrecoStripe(periodicidade)) {
   const plano = obterDadosPlanoPremium(periodicidade);
   const stripe = obterClienteStripe();
-  const preco = await stripe.prices.retrieve(obterPrecoStripe(periodicidade));
+  const preco = await stripe.prices.retrieve(idPreco);
   const intervaloEsperado = String(periodicidade).toUpperCase() === 'ANUAL' ? 'year' : 'month';
   if (preco.currency !== 'brl' || preco.unit_amount !== Math.round(plano.valor * 100)
       || preco.recurring?.interval !== intervaloEsperado || (preco.recurring?.interval_count ?? 1) !== 1) {
@@ -53,28 +54,37 @@ async function validarPrecoStripe(periodicidade) {
 export function obterClienteStripe() {
   const chave = process.env.STRIPE_SECRET_KEY?.trim();
   if (!chave) throw new Error('Configure STRIPE_SECRET_KEY no backend para habilitar as assinaturas.');
-  if (!clienteStripe) clienteStripe = new Stripe(chave);
+  if (!clienteStripe) clienteStripe = new Stripe(chave, { timeout: 10_000, maxNetworkRetries: 1 });
   return clienteStripe;
 }
 
-export async function criarCheckoutAssinatura({ emailPagador, periodicidade, referenciaExterna, testeGratis, urlRetorno }) {
-  const stripe = obterClienteStripe();
-  const idPreco = await validarPrecoStripe(periodicidade);
+export function prepararParametrosCheckout({ emailPagador, periodicidade, referenciaExterna, testeGratis, urlRetorno }) {
   const baseRetorno = urlRetorno.split('?')[0];
-  const assinatura = {
+  return {
+    mode: 'subscription', line_items: [{ price: obterPrecoStripe(periodicidade), quantity: 1 }],
+    customer_email: emailPagador, client_reference_id: referenciaExterna,
     metadata: { referenciaExterna, periodicidade },
-    ...(testeGratis ? { trial_period_days: 7 } : {}),
-  };
-  return stripe.checkout.sessions.create({
-    mode: 'subscription',
-    line_items: [{ price: idPreco, quantity: 1 }],
-    customer_email: emailPagador,
-    client_reference_id: referenciaExterna,
-    metadata: { referenciaExterna, periodicidade },
-    subscription_data: assinatura,
+    subscription_data: { metadata: { referenciaExterna, periodicidade }, ...(testeGratis ? { trial_period_days: 7 } : {}) },
     success_url: `${baseRetorno}?checkout=retorno&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseRetorno}?checkout=cancelado`,
-  });
+  };
+}
+
+export async function criarCheckoutAssinatura({ parametros }) {
+  await validarPrecoStripe(parametros.metadata.periodicidade, parametros.line_items[0].price);
+  return obterClienteStripe().checkout.sessions.create(parametros, { idempotencyKey: parametros.metadata.referenciaExterna });
+}
+
+export async function encerrarAssinaturaStripe(idAssinatura) {
+  const stripe = obterClienteStripe();
+  const assinatura = await stripe.subscriptions.retrieve(idAssinatura);
+  if (['canceled', 'incomplete_expired'].includes(assinatura.status)) return assinatura;
+  if (assinatura.schedule) {
+    await stripe.subscriptionSchedules.cancel(typeof assinatura.schedule === 'string' ? assinatura.schedule : assinatura.schedule.id,
+      { prorate: false, invoice_now: false });
+    return stripe.subscriptions.retrieve(idAssinatura);
+  }
+  return stripe.subscriptions.cancel(idAssinatura, { prorate: false, invoice_now: false });
 }
 
 export async function consultarCheckoutStripe(idCheckout) {
@@ -94,7 +104,22 @@ export async function cancelarCheckoutStripe(idCheckout) {
 }
 
 export async function cancelarAssinaturaStripe(idAssinatura) {
-  return obterClienteStripe().subscriptions.update(idAssinatura, { cancel_at_period_end: true });
+  const stripe = obterClienteStripe();
+  const assinatura = await stripe.subscriptions.retrieve(idAssinatura);
+  if (!['active','trialing'].includes(assinatura.status)) return encerrarAssinaturaStripe(idAssinatura);
+  if (assinatura.schedule) await stripe.subscriptionSchedules.release(typeof assinatura.schedule === 'string' ? assinatura.schedule : assinatura.schedule.id);
+  return stripe.subscriptions.update(idAssinatura, { cancel_at_period_end: true });
+}
+
+export async function reativarAssinaturaStripe(idAssinatura) {
+  const stripe = obterClienteStripe();
+  const assinatura = await stripe.subscriptions.retrieve(idAssinatura);
+  const fimPeriodo = assinatura.items?.data?.[0]?.current_period_end ?? assinatura.current_period_end;
+  if (!['active', 'trialing'].includes(assinatura.status) || !fimPeriodo || fimPeriodo * 1000 <= Date.now()) {
+    throw Object.assign(new Error('Esta assinatura não pode mais ser reativada. Atualize o status e escolha “Assinar novamente”.'), { status: 409 });
+  }
+  if (!assinatura.cancel_at_period_end) return assinatura;
+  return stripe.subscriptions.update(idAssinatura, { cancel_at_period_end: false, proration_behavior: 'none' });
 }
 
 export async function atualizarPeriodicidadeStripe(idAssinatura, periodicidade) {
