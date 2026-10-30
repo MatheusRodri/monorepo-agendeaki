@@ -1,0 +1,57 @@
+.preco-servico,
+.cartao-gestao .preco-servico,
+.cartao-servico__rodape .preco-servico {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: .3rem .5rem;
+  max-width: 100%;
+}
+
+.preco-servico del {
+  color: var(--texto-suave);
+  font-size: .85em;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.preco-servico__atual {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.preco-servico .preco-servico__selo {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--coral-escuro);
+  font-size: .7rem;
+  font-weight: 700;
+  padding: .1rem .45rem;
+}
+
+.formulario-promocao {
+  border: 1px solid var(--borda);
+  border-radius: 12px;
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0 0;
+  min-width: 0;
+  padding: 1rem;
+  scroll-margin-top: 1.5rem;
+}
+
+.formulario-promocao legend {
+  font-weight: 700;
+  padding: 0 .35rem;
+}
+
+.formulario-promocao legend small { color: var(--texto-suave); }
+.formulario-promocao__ativacao { align-items: center; display: flex; gap: .5rem; }
+.formulario-promocao__ativacao input { accent-color: var(--coral-escuro); height: 1.15rem; width: 1.15rem; }
+.formulario-promocao__previa { margin: 0; }
+.formulario-promocao > .botao-secundario { justify-self: start; }
+
+@media (max-width: 540px) {
+  .formulario-promocao { padding: .75rem; }
+  .servico-selecionado__valor .preco-servico { align-items: flex-end; flex-direction: column; }
+}

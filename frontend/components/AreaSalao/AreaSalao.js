@@ -9,6 +9,7 @@ import FormularioFilial from '../FormularioFilial/FormularioFilial';
 import VisualizacaoUnidades from '../VisualizacaoUnidades/VisualizacaoUnidades';
 import FormularioProfissional from '../FormularioProfissional/FormularioProfissional';
 import FormularioServico from '../FormularioServico/FormularioServico';
+import PrecoServico from '../PrecoServico/PrecoServico';
 import DashboardPremium from '../DashboardPremium/DashboardPremium';
 import DisponibilidadeSalao from '../DisponibilidadeSalao/DisponibilidadeSalao';
 import AgendaSalao from '../AgendaSalao/AgendaSalao';
@@ -187,7 +188,7 @@ export default function AreaSalao({ secao }) {
         definirAssinante(premiumAtivo);
         definirDados({ ...filiais, perfilResponsavel: perfil.perfil, premiumAtivo });
       }
-      if (secao === 'servicos') { const [filiais, servicos] = await Promise.all([requisitar('/filiais'), requisitar('/servicos')]); definirDados({ filiais: filiais.filiais, servicos: servicos.servicos }); }
+      if (secao === 'servicos') { const [filiais, servicos] = await Promise.all([requisitar('/filiais'), requisitar('/servicos')]); definirDados({ filiais: filiais.filiais, servicos: servicos.servicos, premiumAtivo: servicos.premiumAtivo }); }
       if (secao === 'funcionarios') { const [filiais, servicos, funcionarios] = await Promise.all([requisitar('/filiais'), requisitar('/servicos'), requisitar('/funcionarios')]); definirDados({ filiais: filiais.filiais, servicos: servicos.servicos, funcionarios: funcionarios.funcionarios }); }
       if (secao === 'disponibilidade') definirDados(await requisitar('/filiais'));
       if (secao === 'clientes') definirDados(await requisitar('/clientes'));
@@ -486,6 +487,7 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
   const premium = oferta.premium ?? { opcoes: [], recursos: [] };
   const recursosBasicos = oferta.basico?.recursos?.length ? oferta.basico.recursos : ['Dashboard atual', 'Agenda, clientes e gestão do salão', '1 unidade'];
   const recursosPremium = premium.recursos?.length ? premium.recursos : [
+    { nome: 'Promoções em serviços', descricao: 'Ofereça preços promocionais ou descontos percentuais, com período opcional.' },
     { nome: 'Dashboard avançado', descricao: 'Painel mais detalhado para te auxiliar na tomada de decisão.' },
     { nome: 'Notificações', descricao: 'Receba notificações direto no dispositivo caso o cliente faça um agendamento, cancele ou altere.' },
     { nome: 'Destaque', descricao: 'Ganhe destaque na lista de salões da sua região.' },
@@ -652,6 +654,13 @@ function Filiais({ dados, enderecoCep, enviarFormulario, excluirItem, buscarCep,
 
 function Servicos({ dados, enviarFormulario, excluirItem, servicoEdicao, definirServicoEdicao }) {
   const editando = Boolean(servicoEdicao);
+  const [atalhoPromocao, definirAtalhoPromocao] = useState(0);
+
+  function editarServico(servico, promocao = false) {
+    definirAtalhoPromocao((atual) => promocao ? atual + 1 : 0);
+    definirServicoEdicao(servico);
+  }
+
   return <>
     <p className="sobretitulo">Seu catálogo</p>
     <h1>{editando ? 'Atualize o serviço.' : 'Serviços que encantam.'}</h1>
@@ -659,11 +668,13 @@ function Servicos({ dados, enviarFormulario, excluirItem, servicoEdicao, definir
       aoCancelar={() => definirServicoEdicao(null)}
       enviarFormulario={enviarFormulario}
       filiais={dados.filiais}
-      key={servicoEdicao?.idServico ?? 'novo'}
+      key={`${servicoEdicao?.idServico ?? 'novo'}:${editando ? atalhoPromocao : 0}`}
       servico={servicoEdicao}
+      premiumAtivo={dados.premiumAtivo}
+      etapaInicial={editando && atalhoPromocao ? 3 : 1}
     />
     <CabecalhoLista titulo="Serviços cadastrados" descricao="Seu catálogo organizado por unidade." />
-    <div className="grade-gestao">{dados.servicos?.map((servico) => <article className="cartao-gestao" key={servico.idServico}><div><strong>{servico.nome}</strong><span>{servico.filial} · {servico.duracaoMinutos} min · R$ {Number(servico.valor).toFixed(2).replace('.', ',')}</span>{servico.descricao && <small>{servico.descricao}</small>}</div><AcoesGestao aoEditar={() => definirServicoEdicao(servico)} aoExcluir={() => excluirItem(`/servicos/${servico.idServico}`, `o serviço “${servico.nome}”`)} /></article>)}</div>
+    <div className="grade-gestao">{dados.servicos?.map((servico) => <article className="cartao-gestao" key={servico.idServico}><div><strong>{servico.nome}</strong><span>{servico.filial} · {servico.duracaoMinutos} min</span><PrecoServico valor={servico.valorVigente ?? servico.valor} valorOriginal={servico.valor} promocaoAtiva={servico.promocaoAtiva} />{servico.promocao && <small>{({ ATIVA: 'Promoção ativa', AGENDADA: 'Promoção agendada', ENCERRADA: 'Promoção encerrada', SUSPENSA: 'Promoção suspensa: requer Premium', DESATIVADA: 'Promoção desativada' })[servico.statusPromocao]}</small>}{servico.descricao && <small>{servico.descricao}</small>}</div><AcoesGestao aoEditar={() => editarServico(servico)} aoPromocao={() => editarServico(servico, true)} aoExcluir={() => excluirItem(`/servicos/${servico.idServico}`, `o serviço “${servico.nome}”`)} /></article>)}</div>
     {!dados.servicos?.length && <p className="estado-lista">Nenhum serviço cadastrado.</p>}
   </>;
 }
@@ -714,7 +725,7 @@ function AvaliacoesSalao({ filiais = [], requisitar }) {
 
 function Indicador({ titulo, valor, variante = '' }) { return <article className={variante ? `indicador indicador--${variante}` : 'indicador'}><span>{titulo}</span><strong>{valor}</strong></article>; }
 function CabecalhoLista({ titulo, descricao }) { return <div className="cabecalho-lista"><h2>{titulo}</h2><p>{descricao}</p></div>; }
-function AcoesGestao({ aoEditar, aoExcluir }) { return <div className="acoes-gestao"><button onClick={aoEditar} type="button">Alterar</button><button className="botao-perigo" onClick={aoExcluir} type="button">Excluir</button></div>; }
+function AcoesGestao({ aoEditar, aoExcluir, aoPromocao }) { return <div className="acoes-gestao"><button onClick={aoEditar} type="button">Alterar</button>{aoPromocao && <button onClick={aoPromocao} type="button">Promoção</button>}<button className="botao-perigo" onClick={aoExcluir} type="button">Excluir</button></div>; }
 function Campo({ aoMudar, nome, rotulo, tipo = 'text', valor, passo, obrigatorio = true }) { return <label className="campo-formulario"><span>{rotulo}</span><input defaultValue={aoMudar ? undefined : valor ?? ''} name={nome} onChange={aoMudar} required={obrigatorio} step={passo} type={tipo} value={aoMudar ? valor ?? '' : undefined} /></label>; }
 function SelectCampo({ aoMudar, chave, opcoes, rotulo, valor }) { return <label className="campo-formulario"><span>{rotulo}</span><select onChange={aoMudar} value={valor}><option value="">Todos</option>{opcoes?.map((opcao) => <option key={opcao[chave]} value={opcao[chave]}>{opcao.nome}</option>)}</select></label>; }
 function ListaSimples({ itens = [], campo, vazio }) { return <div className="lista-simples">{itens.length ? itens.map((item, indice) => <article key={item.idAgendamento ?? item.idClienteSalao ?? item.idUsuario ?? indice}><strong>{item[campo]}</strong><span>{item.servico ?? item.email ?? item.telefone ?? item.quantidade ?? ''}</span></article>) : <p className="estado-lista">{vazio}</p>}</div>; }

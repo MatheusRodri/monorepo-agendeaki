@@ -15,6 +15,7 @@ export function obterOfertaPremium() {
       testeGratisDias: 7,
       opcoes: Object.values(planosPremium).map(({ periodicidade, valor }) => ({ periodicidade, valor })),
       recursos: [
+        { nome: 'Promoções em serviços', descricao: 'Ofereça preços promocionais ou descontos percentuais, com período opcional.' },
         { nome: 'Unidades ilimitadas', descricao: 'Cadastre e gerencie quantas unidades sua empresa precisar.' },
         { nome: 'Dashboard avançado', descricao: 'Painel mais detalhado para te auxiliar na tomada de decisão.' },
         { nome: 'Notificações', descricao: 'Receba notificações direto no dispositivo caso o cliente faça um agendamento, cancele ou altere.' },

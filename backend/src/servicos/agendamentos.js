@@ -35,11 +35,12 @@ export async function criarReservasCliente({ idUsuario, idUnidade, itens, exigir
   let indiceItem = 0;
   try {
     await bloquearRecursosAgenda({ idUsuario, idsUnidades: [idUnidade], transaction });
+    const agoraPreco = new Date();
     for (const item of itens) {
       const reserva = await resolverReserva({
         dataHoraInicio: item.dataHoraInicio, idUnidade: Number(idUnidade),
         idServico: Number(item.idServico), idFuncionario: item.idFuncionario == null ? null : Number(item.idFuncionario),
-        idUsuario, transaction,
+        idUsuario, transaction, valorEsperado: item.valorEsperado, agoraPreco,
       });
       const [idAgendamento] = await bancoDeDados.query(`INSERT INTO tb_agendamento
         (fk_usuario, fk_unidade, fk_funcionario, fk_servico, dt_inicio, dt_fim,

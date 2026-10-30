@@ -505,6 +505,12 @@ CREATE TABLE IF NOT EXISTS tb_servico (
   vl_servico DECIMAL(10, 2) NOT NULL,
   nu_duracao_minutos SMALLINT UNSIGNED NOT NULL,
 
+  tp_promocao ENUM('PRECO_FIXO', 'PERCENTUAL') NULL,
+  vl_promocao DECIMAL(10,2) NULL,
+  st_promocao_ativa BOOLEAN NOT NULL DEFAULT FALSE,
+  dt_promocao_inicio DATE NULL,
+  dt_promocao_fim DATE NULL,
+
   st_ativo BOOLEAN NOT NULL DEFAULT TRUE,
 
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -535,7 +541,21 @@ CREATE TABLE IF NOT EXISTS tb_servico (
   CONSTRAINT ck_servico_duracao
     CHECK (
       nu_duracao_minutos > 0
-    )
+    ),
+  CONSTRAINT ck_servico_promocao_dados CHECK (
+    (tp_promocao IS NULL AND vl_promocao IS NULL AND st_promocao_ativa=FALSE
+      AND dt_promocao_inicio IS NULL AND dt_promocao_fim IS NULL)
+    OR (tp_promocao IS NOT NULL AND vl_promocao IS NOT NULL AND vl_promocao >= 0
+      AND (tp_promocao <> 'PERCENTUAL' OR (vl_promocao > 0 AND vl_promocao <= 100)))
+  ),
+  CONSTRAINT ck_servico_promocao_preco CHECK (
+    st_promocao_ativa=FALSE OR (vl_servico > 0 AND
+      ((tp_promocao='PRECO_FIXO' AND vl_promocao < vl_servico)
+       OR (tp_promocao='PERCENTUAL' AND ROUND(vl_servico * (1-vl_promocao/100),2) < vl_servico)))
+  ),
+  CONSTRAINT ck_servico_promocao_periodo CHECK (
+    dt_promocao_inicio IS NULL OR dt_promocao_fim IS NULL OR dt_promocao_fim >= dt_promocao_inicio
+  )
 ) ENGINE = InnoDB;
 
 

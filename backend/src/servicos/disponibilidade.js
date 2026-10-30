@@ -1,5 +1,7 @@
 import { QueryTypes, Transaction } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
+import { obterAcessoPremiumSalao } from './acessoPremium.js';
+import { camposPromocaoSql, lerPromocao, precoServico, validarValorEsperado } from './promocoesServicos.js';
 
 const FORMATO_DATA = /^\d{4}-\d{2}-\d{2}$/;
 const FORMATO_DATA_HORA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/;
@@ -134,6 +136,7 @@ async function buscarContexto({ idUnidade, idServico, idFuncionario = null, tran
   const profissionais = await bancoDeDados.query(
     `SELECT s.id_servico AS idServico, s.fk_unidade AS idUnidade,
             s.nm_servico AS nomeServico, s.vl_servico AS valorServico,
+            u.fk_salao AS idSalao, ${camposPromocaoSql('s')},
             s.nu_duracao_minutos AS duracaoMinutos,
             f.id_funcionario AS idFuncionario, f.nm_funcionario AS nomeFuncionario
      FROM tb_servico s
@@ -208,6 +211,7 @@ async function ocupacoesDoProfissional({ data, idFuncionario, idUnidade, ignorar
 
 export async function listarHorariosDisponiveis({
   data, idUnidade, idServico, idFuncionario = null, idUsuario = null, idClienteSalao = null, ignorarIdAgendamento = null, duracaoMinutos: duracaoPersonalizada = null, transaction,
+  agoraPreco = new Date(),
 }) {
   if (!dataDentroDaJanela(data)) {
     const erro = new Error('Escolha uma data entre hoje e os próximos 60 dias.');
@@ -223,6 +227,8 @@ export async function listarHorariosDisponiveis({
   }
 
   const duracaoMinutos = Number(duracaoPersonalizada ?? contexto[0].duracaoMinutos);
+  const premiumAtivo = await obterAcessoPremiumSalao(contexto[0].idSalao, { transaction, agora: agoraPreco });
+  const preco = precoServico(contexto[0].valorServico, lerPromocao(contexto[0]), premiumAtivo, agoraPreco);
   const agora = new Date();
   const horariosPorInicio = new Map();
   const ocupacoesCliente = await ocupacoesDoCliente({ data, idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
@@ -261,13 +267,15 @@ export async function listarHorariosDisponiveis({
     servico: {
       idServico: Number(contexto[0].idServico),
       nome: contexto[0].nomeServico,
-      valor: Number(contexto[0].valorServico),
+      ...preco,
+      valor: preco.valorVigente,
     },
   };
 }
 
 export async function resolverReserva({
   dataHoraInicio, idUnidade, idServico, idFuncionario = null, idUsuario = null, idClienteSalao = null, ignorarIdAgendamento = null, duracaoMinutos = null, transaction,
+  valorEsperado, agoraPreco = new Date(),
 }) {
   const inicioNormalizado = normalizarDataHora(dataHoraInicio);
   if (!inicioNormalizado) {
@@ -276,7 +284,7 @@ export async function resolverReserva({
     throw erro;
   }
   const disponibilidade = await listarHorariosDisponiveis({
-    data: inicioNormalizado.slice(0, 10), idFuncionario, idServico, idUnidade, ignorarIdAgendamento, duracaoMinutos, transaction,
+    data: inicioNormalizado.slice(0, 10), idFuncionario, idServico, idUnidade, ignorarIdAgendamento, duracaoMinutos, transaction, agoraPreco,
   });
   await validarServicoNoDia({ data: inicioNormalizado.slice(0, 10), idServico, idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
   const opcao = disponibilidade.horarios.find((item) => item.inicio === inicioNormalizado.slice(11, 16));
@@ -286,6 +294,7 @@ export async function resolverReserva({
     throw erro;
   }
   const profissional = opcao.profissionais.sort((a, b) => a.idFuncionario - b.idFuncionario)[0];
+  validarValorEsperado(valorEsperado, disponibilidade.servico.valor);
   const reserva = {
     dataFimBanco: paraBanco(`${inicioNormalizado.slice(0, 10)}T${opcao.fim}:00`),
     dataInicioBanco: paraBanco(inicioNormalizado),

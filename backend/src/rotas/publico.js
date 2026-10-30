@@ -2,6 +2,8 @@ import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { listarHorariosDisponiveis } from '../servicos/disponibilidade.js';
+import { obterAcessoPremiumSalao } from '../servicos/acessoPremium.js';
+import { apresentarServico, camposPromocaoSql } from '../servicos/promocoesServicos.js';
 
 const roteadorPublico = Router();
 
@@ -15,6 +17,8 @@ function agruparServicos(linhas) {
       nome: linha.nome,
       profissionais: [],
       valor: Number(linha.valor),
+      valorOriginal: linha.valorOriginal,
+      promocaoAtiva: linha.promocaoAtiva,
     });
     if (linha.idFuncionario) porId.get(linha.idServico).profissionais.push({
       idFuncionario: Number(linha.idFuncionario), nome: linha.nomeFuncionario,
@@ -45,6 +49,7 @@ async function consultarPagina(requisicao, resposta) {
   const linhas = await bancoDeDados.query(
     `SELECT se.id_servico AS idServico, se.nm_servico AS nome, se.ds_servico AS descricao,
             se.vl_servico AS valor, se.nu_duracao_minutos AS duracaoMinutos,
+            ${camposPromocaoSql('se')},
             f.id_funcionario AS idFuncionario, f.nm_funcionario AS nomeFuncionario
      FROM tb_servico se
      LEFT JOIN tb_funcionario_servico fs ON fs.fk_servico = se.id_servico
@@ -54,7 +59,9 @@ async function consultarPagina(requisicao, resposta) {
      ORDER BY se.nm_servico, f.nm_funcionario`,
     { replacements: filial, type: QueryTypes.SELECT },
   );
-  const servicos = agruparServicos(linhas);
+  const premiumAtivo = await obterAcessoPremiumSalao(filial.idSalao);
+  const agora = new Date();
+  const servicos = agruparServicos(linhas.map((linha) => apresentarServico(linha, premiumAtivo, false, agora)));
   resposta.status(200).json({ filial, servicos, disponivel: servicos.length > 0 });
 }
 

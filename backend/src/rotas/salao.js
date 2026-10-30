@@ -20,6 +20,7 @@ import { exportarAnaliticoExcel } from '../servicos/dashboardExcel.js';
 import { salvarServicosAdicionais } from '../servicos/agendamentos.js';
 import { consultarAgendaSalao, normalizarConsultaAgenda } from '../servicos/agendaSalao.js';
 import { assinaturaTemAcessoPremium, obterAcessoPremiumSalao } from '../servicos/acessoPremium.js';
+import { apresentarServico, camposPromocaoSql, lerPromocao, normalizarValorServico, resolverPromocaoEdicao } from '../servicos/promocoesServicos.js';
 
 const roteadorSalao = Router();
 const categoriasPermitidas = ['FEMININO', 'MASCULINO', 'UNISSEX', 'OUTRO'];
@@ -595,13 +596,42 @@ async function criarServico(requisicao, resposta) {
   const { descricao = null, duracaoMinutos, idUnidade, nome, valor } = requisicao.body ?? {};
   if (!nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || !duracoesServicoPermitidas.includes(Number(duracaoMinutos))) { resposta.status(400).json({ mensagem: 'Informe unidade, nome, valor e uma duração permitida.' }); return; }
   const filial = await bancoDeDados.query('SELECT id_unidade FROM tb_unidade WHERE id_unidade=:idUnidade AND fk_salao=:idSalao AND st_ativo=TRUE LIMIT 1', { replacements: { idUnidade, idSalao: salao.idSalao }, type: QueryTypes.SELECT }); if (!filial.length) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
-  await bancoDeDados.query('INSERT INTO tb_servico (fk_unidade, nm_servico, ds_servico, vl_servico, nu_duracao_minutos) VALUES (:idUnidade, :nome, :descricao, :valor, :duracaoMinutos)', { replacements: { idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null, valor, duracaoMinutos } }); resposta.status(201).json({ mensagem: 'Serviço criado com sucesso.' });
+  try {
+    const valorNormal = normalizarValorServico(valor);
+    const premiumAtivo = await obterAcessoPremiumSalao(salao.idSalao);
+    const promocao = resolverPromocaoEdicao(requisicao.body, null, valorNormal, premiumAtivo);
+    await bancoDeDados.query(`INSERT INTO tb_servico (fk_unidade, nm_servico, ds_servico, vl_servico, nu_duracao_minutos,
+      tp_promocao, vl_promocao, st_promocao_ativa, dt_promocao_inicio, dt_promocao_fim)
+      VALUES (:idUnidade, :nome, :descricao, :valor, :duracaoMinutos,
+        :promocaoTipo, :promocaoValor, :promocaoHabilitada, :promocaoInicio, :promocaoFim)`, {
+      replacements: { idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null, valor: valorNormal, duracaoMinutos,
+        ...parametrosPromocao(promocao) },
+    });
+    resposta.status(201).json({ mensagem: 'Serviço criado com sucesso.' });
+  } catch (erro) { resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo }); }
+}
+
+function parametrosPromocao(promocao) {
+  return { promocaoTipo: promocao?.tipo ?? null, promocaoValor: promocao?.valor ?? null,
+    promocaoHabilitada: promocao?.ativa ?? false, promocaoInicio: promocao?.dataInicio ?? null,
+    promocaoFim: promocao?.dataFim ?? null };
 }
 
 async function listarServicos(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
-  const servicos = await bancoDeDados.query(`SELECT s.id_servico AS idServico, s.nm_servico AS nome, s.ds_servico AS descricao, s.vl_servico AS valor, s.nu_duracao_minutos AS duracaoMinutos, u.id_unidade AS idUnidade, u.nm_unidade AS filial FROM tb_servico s INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY u.nm_unidade, s.nm_servico`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }); resposta.status(200).json({ servicos });
+  const [servicos, premiumAtivo] = await Promise.all([
+    bancoDeDados.query(`SELECT s.id_servico AS idServico, s.nm_servico AS nome, s.ds_servico AS descricao,
+      s.vl_servico AS valor, s.nu_duracao_minutos AS duracaoMinutos, ${camposPromocaoSql('s')},
+      u.id_unidade AS idUnidade, u.nm_unidade AS filial FROM tb_servico s
+      INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade
+      WHERE u.fk_salao=:idSalao AND s.st_ativo=TRUE ORDER BY u.nm_unidade, s.nm_servico`, {
+      replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT,
+    }),
+    obterAcessoPremiumSalao(salao.idSalao),
+  ]);
+  const agora = new Date();
+  resposta.status(200).json({ premiumAtivo, servicos: servicos.map((servico) => apresentarServico(servico, premiumAtivo, true, agora)) });
 }
 
 async function obterFilialDoSalao(idUnidade, idSalao, transacao) {
@@ -619,14 +649,41 @@ async function atualizarServico(requisicao, resposta) {
   const { descricao = null, duracaoMinutos, idUnidade, nome, valor } = requisicao.body ?? {};
   if (!idServico || !nome?.trim() || !Number(idUnidade) || Number(valor) < 0 || !duracoesServicoPermitidas.includes(Number(duracaoMinutos))) { resposta.status(400).json({ mensagem: 'Informe unidade, nome, valor e uma duração permitida.' }); return; }
   if (!await obterFilialDoSalao(Number(idUnidade), salao.idSalao)) { resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
-  const [resultado] = await bancoDeDados.query(
-    `UPDATE tb_servico s INNER JOIN tb_unidade u ON u.id_unidade = s.fk_unidade
-     SET s.fk_unidade=:idUnidade, s.nm_servico=:nome, s.ds_servico=:descricao, s.vl_servico=:valor, s.nu_duracao_minutos=:duracaoMinutos
-     WHERE s.id_servico=:idServico AND u.fk_salao=:idSalao AND s.st_ativo=TRUE`,
-    { replacements: { idServico, idSalao: salao.idSalao, idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null, valor, duracaoMinutos } },
-  );
-  if (!resultado.affectedRows) { resposta.status(404).json({ mensagem: 'Serviço não encontrado.' }); return; }
-  resposta.status(200).json({ mensagem: 'Serviço atualizado com sucesso.' });
+  try {
+    const valorNormal = normalizarValorServico(valor);
+    const [localizacao] = await bancoDeDados.query(`SELECT s.fk_unidade AS idUnidade FROM tb_servico s
+      INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade
+      WHERE s.id_servico=:idServico AND u.fk_salao=:idSalao AND s.st_ativo=TRUE`, {
+      replacements: { idServico, idSalao: salao.idSalao }, type: QueryTypes.SELECT,
+    });
+    if (!localizacao) { resposta.status(404).json({ mensagem: 'Serviço não encontrado.' }); return; }
+    const idsUnidades = [...new Set([Number(localizacao.idUnidade), Number(idUnidade)])].sort((a, b) => a - b);
+    await bancoDeDados.transaction(async (transaction) => {
+      // Mesma ordem das reservas: unidades antes do serviço e das suas FKs.
+      await bancoDeDados.query('SELECT id_unidade FROM tb_unidade WHERE id_unidade IN (:idsUnidades) ORDER BY id_unidade FOR UPDATE', {
+        replacements: { idsUnidades }, transaction, type: QueryTypes.SELECT,
+      });
+      const [atual] = await bancoDeDados.query(`SELECT ${camposPromocaoSql('s')}, s.fk_unidade AS idUnidade FROM tb_servico s
+        INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade
+        WHERE s.id_servico=:idServico AND u.fk_salao=:idSalao AND s.st_ativo=TRUE FOR UPDATE`, {
+        replacements: { idServico, idSalao: salao.idSalao }, transaction, type: QueryTypes.SELECT,
+      });
+      if (!atual) throw Object.assign(new Error('Serviço não encontrado.'), { status: 404 });
+      if (!idsUnidades.includes(Number(atual.idUnidade))) {
+        throw Object.assign(new Error('A unidade do serviço mudou. Atualize o catálogo e tente novamente.'), { status: 409 });
+      }
+      const premiumAtivo = await obterAcessoPremiumSalao(salao.idSalao, { transaction });
+      const promocao = resolverPromocaoEdicao(requisicao.body, lerPromocao(atual), valorNormal, premiumAtivo);
+      await bancoDeDados.query(`UPDATE tb_servico SET fk_unidade=:idUnidade, nm_servico=:nome, ds_servico=:descricao,
+        vl_servico=:valor, nu_duracao_minutos=:duracaoMinutos, tp_promocao=:promocaoTipo,
+        vl_promocao=:promocaoValor, st_promocao_ativa=:promocaoHabilitada,
+        dt_promocao_inicio=:promocaoInicio, dt_promocao_fim=:promocaoFim WHERE id_servico=:idServico`, {
+        replacements: { idServico, idUnidade, nome: nome.trim(), descricao: descricao?.trim() || null,
+          valor: valorNormal, duracaoMinutos, ...parametrosPromocao(promocao) }, transaction,
+      });
+    });
+    resposta.status(200).json({ mensagem: 'Serviço atualizado com sucesso.' });
+  } catch (erro) { resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo }); }
 }
 
 async function excluirServico(requisicao, resposta) {
@@ -998,7 +1055,8 @@ async function criarAgendamentoSalao(requisicao, resposta) {
 
     await bloquearRecursosAgenda({ idClienteSalao: clienteId, idsUnidades: [idUnidade], transaction: transacao });
     const reserva = await resolverReserva({
-      dataHoraInicio: dados.dataHoraInicio, idFuncionario, idServico, idUnidade, idClienteSalao: clienteId, transaction: transacao,
+      dataHoraInicio: dados.dataHoraInicio, idFuncionario, idServico, idUnidade, idClienteSalao: clienteId,
+      valorEsperado: dados.valorEsperado, transaction: transacao,
     });
     const conflitos = await bancoDeDados.query(
       `SELECT id_agendamento FROM tb_agendamento
@@ -1024,7 +1082,7 @@ async function criarAgendamentoSalao(requisicao, resposta) {
     resposta.status(201).json({ mensagem: 'Agendamento criado com sucesso.', dataHoraInicio: reserva.dataInicioBanco, idFuncionario: reserva.idFuncionario });
   } catch (erro) {
     await transacao.rollback();
-    resposta.status(erro.status ?? 500).json({ mensagem: erro.message });
+    resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo });
   }
 }
 

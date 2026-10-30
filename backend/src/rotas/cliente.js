@@ -5,6 +5,8 @@ import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
 import { bloquearRecursosAgenda, criarTransacaoAgenda, listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
+import { obterAcessoPremiumSalao } from '../servicos/acessoPremium.js';
+import { apresentarServico, camposPromocaoSql } from '../servicos/promocoesServicos.js';
 import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, obterPendenciasUsuario, registrarAceitePendente } from '../servicos/usuarios.js';
 import {
   criarNotificacaoCliente,
@@ -145,6 +147,8 @@ function agruparServicos(linhasServicos) {
         nome: linhaServico.nome,
         descricao: linhaServico.descricao,
         valor: Number(linhaServico.valor),
+        valorOriginal: linhaServico.valorOriginal,
+        promocaoAtiva: linhaServico.promocaoAtiva,
         duracaoMinutos: linhaServico.duracaoMinutos,
         profissionais: [],
       });
@@ -304,10 +308,12 @@ async function listarServicosSalao(requisicao, resposta) {
             s.nm_servico AS nome,
             s.ds_servico AS descricao,
             s.vl_servico AS valor,
+            u.fk_salao AS idSalao, ${camposPromocaoSql('s')},
             s.nu_duracao_minutos AS duracaoMinutos,
             f.id_funcionario AS idFuncionario,
             f.nm_funcionario AS nomeFuncionario
      FROM tb_servico s
+     INNER JOIN tb_unidade u ON u.id_unidade=s.fk_unidade
      LEFT JOIN tb_funcionario_servico fs ON fs.fk_servico = s.id_servico
      LEFT JOIN tb_funcionario f ON f.id_funcionario = fs.fk_funcionario AND f.st_ativo = TRUE
      WHERE s.fk_unidade = :idUnidade AND s.st_ativo = TRUE
@@ -315,7 +321,10 @@ async function listarServicosSalao(requisicao, resposta) {
     { replacements: { idUnidade }, type: QueryTypes.SELECT },
   );
 
-  resposta.status(200).json({ idUnidade, servicos: agruparServicos(linhasServicos) });
+  const premiumAtivo = linhasServicos.length ? await obterAcessoPremiumSalao(linhasServicos[0].idSalao) : false;
+  const agora = new Date();
+  resposta.status(200).json({ idUnidade,
+    servicos: agruparServicos(linhasServicos.map((linha) => apresentarServico(linha, premiumAtivo, false, agora))) });
 }
 
 async function criarAgendamento(requisicao, resposta) {
