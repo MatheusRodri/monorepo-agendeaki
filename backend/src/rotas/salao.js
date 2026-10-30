@@ -1,3 +1,4 @@
+import { autenticarRequisicao } from '../servicos/autorizacaoUsuarios.js';
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
@@ -9,7 +10,7 @@ import { ativarAssinaturaPremium } from '../servicos/assinaturas.js';
 import { atualizarPeriodicidadeStripe, cancelarAssinaturaStripe, cancelarCheckoutStripe, criarCheckoutAssinatura, obterDadosPlanoPremium, obterOfertaPremium, obterPrecoStripe, consultarCheckoutStripe, reativarAssinaturaStripe } from '../servicos/stripe.js';
 import { sincronizarAssinaturaStripe } from '../servicos/sincronizarAssinaturaStripe.js';
 import { criarSlugSalaoUnico, criarSlugUnidadeUnico } from '../servicos/slugs.js';
-import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, obterPendenciasUsuario, registrarAceitePendente } from '../servicos/usuarios.js';
 import { bloquearRecursosAgenda, criarTransacaoAgenda, listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
 import { consultarInscricaoPush, criarNotificacaoCliente, enviarNotificacaoPushCliente, listarNotificacoesSalao, marcarNotificacaoSalaoLida, marcarTodasNotificacoesSalaoLidas, obterChavePublicaPush, removerInscricaoPush, salvarInscricaoPush } from '../servicos/notificacoesPush.js';
 
@@ -40,34 +41,7 @@ function extrairTokenAcesso(requisicao) {
 }
 
 async function obterAdministradorAutenticado(requisicao, resposta) {
-  const tokenAcesso = extrairTokenAcesso(requisicao);
-  if (!tokenAcesso) {
-    console.warn('[Autenticação salão] Token ausente.', { rota: requisicao.originalUrl });
-    resposta.status(401).json({ mensagem: 'Informe o token de acesso.' });
-    return null;
-  }
-
-  try {
-    const clienteSupabase = obterClienteSupabase(tokenAcesso);
-    const { data: dadosUsuario, error: erroUsuario } = await clienteSupabase.auth.getUser(tokenAcesso);
-    if (erroUsuario || !dadosUsuario.user) {
-      console.warn('[Autenticação salão] Token recusado pelo Supabase.', { rota: requisicao.originalUrl, motivo: erroUsuario?.message ?? 'Usuário não encontrado' });
-      resposta.status(401).json({ mensagem: 'A sessão informada é inválida ou expirou.' });
-      return null;
-    }
-    if (dadosUsuario.user.user_metadata?.perfil !== 'ADMIN_SALAO') {
-      console.warn('[Autenticação salão] Perfil sem permissão.', { rota: requisicao.originalUrl, perfil: dadosUsuario.user.user_metadata?.perfil ?? null });
-      resposta.status(403).json({ mensagem: 'Esta área é exclusiva para responsáveis de salão.' });
-      return null;
-    }
-    console.info('[Autenticação salão] Usuário autenticado.', { rota: requisicao.originalUrl, idUsuario: dadosUsuario.user.id });
-    const administrador = await sincronizarUsuario({ email: dadosUsuario.user.email, idAutenticacaoExterna: dadosUsuario.user.id, nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email, perfil: 'ADMIN_SALAO', telefone: dadosUsuario.user.user_metadata.telefone ?? null });
-    return { ...administrador, idAutenticacaoExterna: dadosUsuario.user.id };
-  } catch (erro) {
-    console.error('[Autenticação salão] Falha inesperada.', { rota: requisicao.originalUrl, mensagem: erro.message });
-    resposta.status(500).json({ mensagem: erro.message });
-    return null;
-  }
+  return autenticarRequisicao(requisicao, resposta, 'ADMIN_SALAO');
 }
 
 async function obterSalaoAdministrador(idUsuario) {
@@ -327,8 +301,8 @@ async function atualizarSalao(requisicao, resposta) {
 
 async function consultarPerfil(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const perfil = await obterDadosCadastraisUsuario(administrador.idUsuario);
-  resposta.status(200).json({ perfil, cadastroIncompleto: !perfil?.dataNascimento || !perfil?.tipoDocumento || !perfil?.documento || !perfil?.telefone });
+  const pendencias = await obterPendenciasUsuario(administrador.idUsuario, 'ADMIN_SALAO');
+  resposta.status(200).json({ perfil: pendencias.dadosCadastrais, ...pendencias });
 }
 
 async function atualizarPerfil(requisicao, resposta) {
@@ -382,6 +356,7 @@ async function atualizarPerfil(requisicao, resposta) {
         return;
       }
     }
+    await registrarAceitePendente(administrador.idUsuario, requisicao.body?.aceitouDocumentos, transacao);
     await atualizarDadosCadastraisUsuario(administrador.idUsuario, { dataNascimento, documento, nome, telefone: telefoneNormalizado, tipoDocumento: 'CNPJ', transaction: transacao });
     if (salao) {
       await bancoDeDados.query(

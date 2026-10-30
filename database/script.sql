@@ -49,6 +49,20 @@ CREATE TABLE IF NOT EXISTS tb_usuario (
     UNIQUE (id_autenticacao_externa)
 ) ENGINE = InnoDB;
 
+-- Sobrevive à remoção do salão para permitir retomar falhas entre provedores.
+CREATE TABLE IF NOT EXISTS tb_exclusao_conta_salao (
+  id_operacao CHAR(36) NOT NULL PRIMARY KEY,
+  id_autenticacao_externa VARCHAR(255) NOT NULL,
+  id_usuario BIGINT UNSIGNED NOT NULL,
+  id_salao BIGINT UNSIGNED NULL,
+  cd_etapa ENUM('PREPARACAO','COBRANCA','DADOS_LOCAIS','IDENTIDADE','CONCLUIDA') NOT NULL DEFAULT 'PREPARACAO',
+  ds_erro_codigo VARCHAR(80) NULL,
+  js_referencias_stripe JSON NULL,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  dt_atualizacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_exclusao_identidade (id_autenticacao_externa)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS tb_aceite_documento_legal (
   fk_usuario BIGINT UNSIGNED NOT NULL,
   cd_documento ENUM('TERMOS_USO', 'POLITICA_PRIVACIDADE') NOT NULL,
@@ -79,6 +93,7 @@ CREATE TABLE IF NOT EXISTS tb_salao (
 
   st_ativo BOOLEAN NOT NULL DEFAULT TRUE,
   st_teste_premium_utilizado BOOLEAN NOT NULL DEFAULT FALSE,
+  st_exclusao_pendente BOOLEAN NOT NULL DEFAULT FALSE,
 
   dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   dt_atualizacao DATETIME NOT NULL

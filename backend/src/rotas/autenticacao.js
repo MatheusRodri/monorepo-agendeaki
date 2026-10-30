@@ -4,7 +4,7 @@ import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { cnpjValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
 import { prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
-import { obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { sincronizarUsuario, obterPendenciasUsuario, publicarPerfilConfiavel } from '../servicos/usuarios.js';
 import { criarSlugSalaoUnico } from '../servicos/slugs.js';
 import { obterDocumentosLegais, obterVersoesDocumentosLegais } from '../servicos/documentosLegais.js';
 
@@ -250,6 +250,8 @@ async function criarConta(requisicao, resposta, perfil) {
       return usuariosInseridos[0];
     });
 
+    await publicarPerfilConfiavel(clienteAdministrativo, dadosAutenticacao.user, perfil);
+
     const clienteSupabase = obterClienteSupabase();
     const { error: erroEnvioConfirmacao } = await clienteSupabase.auth.resend({ type: 'signup', email });
     if (erroEnvioConfirmacao) {
@@ -323,35 +325,13 @@ async function realizarLogin(requisicao, resposta, perfil) {
       return resposta.status(401).json({ mensagem: 'Não foi possível iniciar uma sessão. Confirme seu e-mail e tente entrar novamente.' });
     }
 
-    if (dadosAutenticacao.user?.user_metadata?.perfil !== perfil) {
-      return resposta.status(403).json({ mensagem: 'Use a área de acesso correspondente ao seu perfil.' });
-    }
-
-    let usuarioLocal;
-    if (perfil === perfis.admin) {
-      const administradores = await bancoDeDados.query(
-        `SELECT id_usuario AS idUsuario, nm_usuario AS nome, st_ativo AS ativo FROM tb_usuario
-         WHERE id_autenticacao_externa=:idExterno AND tp_usuario='ADMIN_AGENDEAKI' LIMIT 1`,
-        { replacements: { idExterno: dadosAutenticacao.user.id }, type: QueryTypes.SELECT },
-      );
-      if (!administradores[0]?.ativo) {
-        await clienteSupabase.auth.signOut({ scope: 'local' });
-        return resposta.status(403).json({ mensagem: 'Esta conta não possui acesso administrativo ao AgendeAki.' });
-      }
-      usuarioLocal = administradores[0];
-    } else {
-      usuarioLocal = await sincronizarUsuario({
-        email: dadosAutenticacao.user.email,
-        idAutenticacaoExterna: dadosAutenticacao.user.id,
-        nome: dadosAutenticacao.user.user_metadata.nome ?? dadosAutenticacao.user.email,
-        perfil,
-        telefone: dadosAutenticacao.user.user_metadata.telefone ?? null,
-      });
-    }
-    const dadosCadastrais = perfil === perfis.admin ? null : await obterDadosCadastraisUsuario(usuarioLocal.idUsuario);
-    const cadastroIncompleto = perfil === perfis.admin ? false : perfil === perfis.cliente
-      ? !dadosCadastrais?.dataNascimento || !dadosCadastrais?.telefone
-      : !dadosCadastrais?.dataNascimento || !dadosCadastrais?.tipoDocumento || !dadosCadastrais?.documento || !dadosCadastrais?.telefone;
+    const usuarioLocal = await sincronizarUsuario({ usuarioSupabase: dadosAutenticacao.user, perfil, permitirExclusao: true });
+    if (usuarioLocal.exclusaoPendente) return resposta.status(200).json({
+      usuario: { id: dadosAutenticacao.user.id, email: dadosAutenticacao.user.email, perfil },
+      tokenAcesso: dadosAutenticacao.session.access_token, tokenAtualizacao: dadosAutenticacao.session.refresh_token,
+      exclusaoPendente: true,
+    });
+    const { dadosCadastrais, cadastroIncompleto, aceiteDocumentosPendente } = await obterPendenciasUsuario(usuarioLocal.idUsuario, perfil);
     let salaoIncompleto = false;
     if (perfil === perfis.salao) {
       const saloesLocais = await bancoDeDados.query(
@@ -372,12 +352,13 @@ async function realizarLogin(requisicao, resposta, perfil) {
       tokenAcesso: dadosAutenticacao.session.access_token,
       tokenAtualizacao: dadosAutenticacao.session.refresh_token,
       cadastroIncompleto,
+      aceiteDocumentosPendente,
       salaoIncompleto,
       nomeSalao: perfil === perfis.salao ? dadosAutenticacao.user.user_metadata?.nomeSalao ?? '' : null,
       dadosCadastrais,
     });
   } catch (erro) {
-    return resposta.status(500).json({ mensagem: erro.message });
+    return resposta.status(erro.status ?? 500).json({ mensagem: erro.status ? erro.message : 'Não foi possível processar a autenticação.', codigo: erro.codigo });
   }
 }
 
@@ -397,26 +378,14 @@ async function renovarSessao(requisicao, resposta, perfil) {
       return resposta.status(401).json({ mensagem: 'A sessão expirou. Faça login novamente.' });
     }
 
-    if (dadosAutenticacao.user?.user_metadata?.perfil !== perfil) {
-      return resposta.status(403).json({ mensagem: 'A sessão não corresponde a esta área.' });
-    }
-
-    if (perfil === perfis.admin) {
-      const administradores = await bancoDeDados.query(
-        `SELECT u.st_ativo AS ativo FROM tb_usuario u
-         WHERE u.id_autenticacao_externa=:idAutenticacaoExterna
-           AND u.tp_usuario='ADMIN_AGENDEAKI' LIMIT 1`,
-        { replacements: { idAutenticacaoExterna: dadosAutenticacao.user.id }, type: QueryTypes.SELECT },
-      );
-      if (!administradores[0]?.ativo) return resposta.status(403).json({ mensagem: 'Esta conta não possui acesso administrativo ao AgendeAki.' });
-    }
+    await sincronizarUsuario({ usuarioSupabase: dadosAutenticacao.user, perfil, permitirExclusao: true });
 
     return resposta.status(200).json({
       tokenAcesso: dadosAutenticacao.session.access_token,
       tokenAtualizacao: dadosAutenticacao.session.refresh_token,
     });
   } catch (erro) {
-    return resposta.status(500).json({ mensagem: erro.message });
+    return resposta.status(erro.status ?? 500).json({ mensagem: erro.status ? erro.message : 'Não foi possível processar a autenticação.', codigo: erro.codigo });
   }
 }
 
@@ -472,7 +441,8 @@ async function redefinirSenha(requisicao, resposta, perfil) {
   try {
     const clienteSupabase = obterClienteSupabase(tokenAcesso);
     const { data: dadosUsuario, error: erroUsuario } = await clienteSupabase.auth.getUser(tokenAcesso);
-    if (erroUsuario || dadosUsuario.user?.user_metadata?.perfil !== perfil) { resposta.status(401).json({ mensagem: 'O link de redefinição é inválido ou expirou.' }); return; }
+    if (erroUsuario || !dadosUsuario.user) { resposta.status(401).json({ mensagem: 'O link de redefinição é inválido ou expirou.' }); return; }
+    await sincronizarUsuario({ usuarioSupabase: dadosUsuario.user, perfil });
     const respostaAtualizacao = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
       method: 'PUT',
       headers: {

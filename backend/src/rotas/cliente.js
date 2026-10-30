@@ -1,10 +1,11 @@
+import { autenticarRequisicao } from '../servicos/autorizacaoUsuarios.js';
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { dataNascimentoValida, somenteNumeros } from '../servicos/documentos.js';
 import { bloquearRecursosAgenda, criarTransacaoAgenda, listarHorariosDisponiveis, resolverReserva } from '../servicos/disponibilidade.js';
-import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, sincronizarUsuario } from '../servicos/usuarios.js';
+import { atualizarDadosCadastraisUsuario, obterDadosCadastraisUsuario, obterPendenciasUsuario, registrarAceitePendente } from '../servicos/usuarios.js';
 import {
   criarNotificacaoCliente,
   consultarInscricaoPushCliente,
@@ -30,38 +31,7 @@ function extrairTokenAcesso(requisicao) {
 }
 
 async function obterClienteAutenticado(requisicao, resposta) {
-  const tokenAcesso = extrairTokenAcesso(requisicao);
-
-  if (!tokenAcesso) {
-    resposta.status(401).json({ mensagem: 'Informe o token de acesso.' });
-    return null;
-  }
-
-  try {
-    const clienteSupabase = obterClienteSupabase(tokenAcesso);
-    const { data: dadosUsuario, error: erroUsuario } = await clienteSupabase.auth.getUser(tokenAcesso);
-
-    if (erroUsuario || !dadosUsuario.user) {
-      resposta.status(401).json({ mensagem: 'A sessão informada é inválida ou expirou.' });
-      return null;
-    }
-
-    if (dadosUsuario.user.user_metadata?.perfil !== 'CLIENTE') {
-      resposta.status(403).json({ mensagem: 'Esta área é exclusiva para clientes.' });
-      return null;
-    }
-
-    const cliente = await sincronizarUsuario({
-      email: dadosUsuario.user.email,
-      idAutenticacaoExterna: dadosUsuario.user.id,
-      nome: dadosUsuario.user.user_metadata.nome ?? dadosUsuario.user.email,
-      perfil: 'CLIENTE',
-    });
-    return { ...cliente, idAutenticacaoExterna: dadosUsuario.user.id };
-  } catch (erro) {
-    resposta.status(500).json({ mensagem: erro.message });
-    return null;
-  }
+  return autenticarRequisicao(requisicao, resposta, 'CLIENTE');
 }
 
 async function consultarHorariosAgendamento(requisicao, resposta) {
@@ -124,11 +94,8 @@ async function obterCoordenadas(requisicao) {
 async function consultarPerfil(requisicao, resposta) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
-  const perfil = await obterDadosCadastraisUsuario(cliente.idUsuario);
-  resposta.status(200).json({
-    perfil,
-    cadastroIncompleto: !perfil?.dataNascimento || !perfil?.telefone,
-  });
+  const pendencias = await obterPendenciasUsuario(cliente.idUsuario, 'CLIENTE');
+  resposta.status(200).json({ perfil: pendencias.dadosCadastrais, ...pendencias });
 }
 
 async function atualizarPerfil(requisicao, resposta) {
@@ -140,10 +107,14 @@ async function atualizarPerfil(requisicao, resposta) {
   if (![10, 11].includes(telefoneNormalizado.length)) { resposta.status(400).json({ mensagem: 'Informe um telefone válido.' }); return; }
   if (!dataNascimentoValida(dataNascimento)) { resposta.status(400).json({ mensagem: 'Você precisa ter pelo menos 18 anos.' }); return; }
   try {
-    const perfil = await atualizarDadosCadastraisUsuario(cliente.idUsuario, { dataNascimento, nome, telefone: telefoneNormalizado });
+    await bancoDeDados.transaction(async (transaction) => {
+      await registrarAceitePendente(cliente.idUsuario, requisicao.body?.aceitouDocumentos, transaction);
+      await atualizarDadosCadastraisUsuario(cliente.idUsuario, { dataNascimento, nome, telefone: telefoneNormalizado, transaction });
+    });
+    const perfil = await obterDadosCadastraisUsuario(cliente.idUsuario);
     resposta.status(200).json({ mensagem: 'Informações da conta atualizadas.', perfil, cadastroIncompleto: false });
   } catch (erro) {
-    resposta.status(400).json({ mensagem: 'Não foi possível atualizar suas informações.' });
+    resposta.status(erro.status ?? 400).json({ mensagem: erro.status ? erro.message : 'Não foi possível atualizar suas informações.', codigo: erro.codigo });
   }
 }
 
