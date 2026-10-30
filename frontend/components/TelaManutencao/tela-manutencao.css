@@ -17,8 +17,10 @@
   align-items: center;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   max-width: 620px;
   position: relative;
+  width: 100%;
   z-index: 1;
 }
 
@@ -91,6 +93,7 @@
   line-height: 1.08;
   margin: 0;
   max-width: 590px;
+  overflow-wrap: anywhere;
 }
 
 .manutencao__descricao {
@@ -115,6 +118,15 @@
 .manutencao__brilho { background: rgba(223, 113, 104, .12); border-radius: 50%; filter: blur(2px); height: 420px; position: absolute; width: 420px; z-index: -1; }
 .manutencao__brilho--um { left: -260px; top: -260px; }
 .manutencao__brilho--dois { bottom: -300px; right: -210px; }
+
+html[data-alto-contraste='ativo'] .manutencao,
+html[data-alto-contraste='ativo'] .manutencao__engrenagem {
+  background-image: none !important;
+}
+
+html[data-alto-contraste='ativo'] .manutencao__brilho {
+  display: none;
+}
 
 @media (max-width: 540px) {
   .manutencao { padding: 36px 22px; }
