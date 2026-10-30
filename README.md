@@ -8,6 +8,8 @@ O **AgendeAki** centraliza a rotina de agendamentos de salões de beleza. Client
 
 O sistema também oferece páginas públicas de agendamento por filial, autenticação para clientes e salões, pagamentos de assinatura e notificações para administradores.
 
+Salões Premium também podem configurar **promoções em serviços**, por preço final ou desconto percentual, com datas opcionais. Consulte os [contratos, regras e preparação da migração](docs/promocoes-servicos.md). Em bases existentes, aplique `database/migracoes/2026-10-29-promocoes-servicos.sql` antes de publicar esta funcionalidade; o esquema inicial já inclui a estrutura.
+
 ## Stack
 
 | Camada | Tecnologias |
@@ -231,6 +233,12 @@ Configure `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` no ambiente 
 
 O painel do salão inclui uma central de notificações com contador de itens não lidos e avisos toast enquanto estiver aberto. Os eventos são persistidos em `tb_notificacao_salao` e enviados por push aos dispositivos inscritos. A ativação por dispositivo fica no dashboard Premium e em Configurações.
 
+O salão pode marcar um atendimento como **Realizado** desde 00h do dia anterior à data agendada, no horário de São Paulo. O cliente somente pode avaliar a partir do término previsto salvo na reserva, com status Realizado e uma avaliação por agendamento. Após reagendamento, vale o horário vigente; a duração preservada na reserva não é substituída por alterações posteriores no catálogo ou por serviços extras.
+
+O convite para avaliar fica oculto até essa liberação, inclusive dos contadores e das marcações de leitura. O backend verifica os envios pendentes ao iniciar e a cada 30 segundos, sem depender do app aberto. Reservas de processamento interrompidas e falhas transitórias são retomadas após dois minutos; o aviso continua disponível na central mesmo sem dispositivo inscrito para push. O processo da API precisa permanecer ativo, como na configuração de PM2 descrita abaixo.
+
+Para essa alteração, aplique **uma vez**, em bases existentes, `database/migracoes/2026-10-30-liberacao-avaliacoes.sql` **antes de publicar o backend** e depois publique o frontend. O histórico de notificações é preservado e não é reenviado. Instalações novas usam o `database/script.sql` atualizado e não devem executar essa migração adicional.
+
 Em uma base existente, aplique `database/migracoes/2026-10-09-notificacoes-push.sql` e `database/migracoes/2026-10-09-central-notificacoes.sql` no MySQL. Em uma instalação nova, `database/script.sql` cria as tabelas necessárias.
 
 O navegador e o sistema operacional precisam permitir notificações. Em produção, o site deve usar HTTPS; em desenvolvimento, `localhost` é aceito pelos navegadores.
@@ -269,7 +277,7 @@ A aba Próximos da Agenda oferece **Todos**, **Hoje**, **Amanhã** e **Próximos
 
 Mudar o período ou o tamanho da página retorna à primeira página. Concluir, cancelar, reagendar ou criar atualiza a lista mantendo os controles; se a última página deixar de existir, a consulta retorna a última página válida. Carregamento, erro com nova tentativa e lista vazia têm estados próprios. Publicar o backend antes do frontend; esta mudança não exige migração.
 
-A agenda do **cliente** também pagina Próximos horários e Histórico, com 10 registros por padrão e opções de 25 e 50. Cada lista preserva sua página e seu tamanho ao alternar. `GET /api/clientes/agendamentos/futuros` e `/historico` aceitam `pagina` e `porPagina` e retornam `agendamentos`, `pagina`, `porPagina`, `total` e `totalPaginas`; páginas além do fim são ajustadas. O Histórico aceita `localizar=<idAgendamento>` para abrir a página do atendimento indicado em uma notificação de avaliação. A busca respeita o cliente autenticado e retorna `localizado` para indicar se o atendimento foi encontrado. A consulta mantém os extras e o total em cada cartão, e ações como cancelamento e avaliação atualizam a página. Publicar o backend antes do frontend; não há migração.
+A agenda do **cliente** também pagina Próximos horários e Histórico, com 10 registros por padrão e opções de 25 e 50. Cada lista preserva sua página e seu tamanho ao alternar. `GET /api/clientes/agendamentos/futuros` e `/historico` aceitam `pagina` e `porPagina` e retornam `agendamentos`, `pagina`, `porPagina`, `total` e `totalPaginas`; páginas além do fim são ajustadas. O Histórico aceita `localizar=<idAgendamento>` para abrir a página do atendimento indicado em uma notificação de avaliação. A busca respeita o cliente autenticado e retorna `localizado` para indicar se o atendimento foi encontrado. A consulta mantém os extras e o total em cada cartão, e ações como cancelamento e avaliação atualizam a página. `podeAvaliar` considera o status, o término previsto e a ausência de avaliação anterior. A agenda do salão retorna também `podeConcluir` e `conclusaoDisponivelEm`. Para os prazos de conclusão e avaliação, seguir a preparação da migração de notificações descrita acima e publicar o backend antes do frontend.
 
 ## Dashboard Premium e dados para BI
 
@@ -481,3 +489,73 @@ Não substitua as chaves de proteção de documentos ao atualizar o código. Pre
 ---
 
 Feito com foco em tornar o agendamento de serviços de beleza mais simples para clientes e salões.
+
+## Correções da revisão de código — 28/10/2026
+
+As correções dos itens 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14 e 15 estão descritas em [CHANGELOG.md](CHANGELOG.md). Os itens 1 (migrações legadas), 5 (restrição de destinos push) e 10 (edição em outro fuso) ficaram fora do escopo por decisão do projeto.
+
+### Restaurar contas após recriar o MySQL
+
+A autorização usa o perfil e a situação do usuário no MySQL, vinculados ao identificador autenticado pelo Supabase. O campo editável `user_metadata.perfil` não concede acesso. Depois de recriar manualmente a base com `database/script.sql`, a restauração ocorre automaticamente no próximo login válido, inclusive em produção.
+
+O login de uma identidade Supabase válida sem cadastro local cria o perfil local na área escolhida (cliente ou salão) e abre **Completar cadastro**. A pessoa informa os dados ausentes e aceita os documentos legais. Não é necessário apagar a identidade Supabase nem preparar metadados para contas antigas. O primeiro perfil local criado para o UID determina a área dessa conta; um perfil confiável já definido no Supabase também precisa corresponder à área escolhida. Situações inativas registradas em metadados confiáveis e operações de exclusão ainda registradas no MySQL impedem a restauração.
+
+O fluxo recria apenas o perfil local; não restaura salões, filiais, assinaturas nem histórico apagado. Recriar o banco também remove as restrições que existiam somente no MySQL, como registros de exclusão pendente.
+
+Nenhuma migração de base antiga é fornecida nesta entrega.
+
+Recriar o MySQL não cancela recursos Stripe. Concilie ou encerre os recursos descartáveis no sandbox antes de apagar suas referências locais. Os scripts desta entrega não recriam automaticamente a base da aplicação.
+
+### Assinaturas, cancelamento e exclusão
+
+- O checkout é reservado sob bloqueio do salão no MySQL e criado no Stripe com referência e parâmetros estáveis. Repetições recuperam a mesma contratação; uma preparação concorrente retorna `409` com `CHECKOUT_EM_PREPARACAO`.
+- O status da assinatura pode reconciliar um checkout cujo ID ainda não tenha sido persistido. Erros de comunicação mantêm a pendência; não liberam automaticamente uma segunda contratação. Sem ID conhecido e após 24 horas, a API retorna `CHECKOUT_REQUER_CONCILIACAO` em vez de arriscar recriar um checkout cuja chave de idempotência possa ter expirado. Concilie a referência no Stripe antes de prosseguir.
+- Assinaturas em dia ou em teste mantêm o cancelamento no fim do ciclo. Assinaturas inadimplentes, pausadas ou incompletas são encerradas imediatamente, sem reembolso automático nem fatura proporcional final. Faturas já emitidas não são apagadas ou perdoadas pela aplicação.
+- Excluir a conta do salão encerra imediatamente todos os recursos Stripe vinculados antes de remover os dados locais e a identidade Supabase. A operação registra etapas persistentes e bloqueia novas contratações e restauração da conta durante a exclusão.
+- `GET /api/salao/conta/exclusao` consulta a etapa; repetir `DELETE /api/salao/conta` retoma a operação. Falhas parciais retornam `EXCLUSAO_PENDENTE`, `etapa` e `cobrancaEncerrada`. Cobranças já encerradas não são reativadas.
+- Se a identidade já não permitir entrar, o operador pode retomar exclusões previamente solicitadas pelo comando abaixo. Ele simula por padrão e só executa com `--aplicar`.
+
+```bash
+cd backend
+npm run retomar:exclusoes
+npm run retomar:exclusoes -- --aplicar
+```
+
+As referências mínimas das operações de exclusão são preservadas fora das exclusões em cascata para permitir retomada e reconhecer eventos Stripe atrasados de assinaturas já encerradas. Nenhum token é gravado nesse registro.
+
+### Sessões e notificações do dispositivo
+
+As sessões administrativas continuam durando oito horas, mas agora dependem de um registro revogável no MySQL. Logout revoga a sessão atual; alterar e-mail, senha ou segredo administrativo invalida as sessões anteriores. Tokens são armazenados somente como hash.
+
+O logout do salão utiliza `/api/saloes/logout`. Cliente, salão e administrador podem sair localmente quando a API estiver indisponível; a interface informa que não houve confirmação do encerramento remoto.
+
+Os avisos push do sistema operacional exibem **“Você tem uma nova atualização.”** Os detalhes continuam na central autenticada. Inscrições recebem um vínculo por destinatário/dispositivo; o service worker persiste os identificadores em IndexedDB e descarta mensagens antigas ou de outra conta. Ao sair, trocar de conta ou excluir o cadastro, o vínculo local é removido. A remoção no servidor exige o vínculo correspondente e a desativação de uma área preserva a inscrição compartilhada quando a outra área ainda estiver vinculada.
+
+Publique backend, frontend e service worker compatíveis; após a atualização, registre novamente o dispositivo se o painel solicitar e verifique a entrega de notificações em navegador e dispositivo reais.
+
+### Agenda e indicadores
+
+A edição da jornada e do expediente utiliza os mesmos bloqueios transacionais das reservas. Uma alteração que deixe um atendimento ativo, inclusive em andamento, fora do expediente retorna `409`.
+
+A taxa de cancelamento considera a data agendada e conta cada atendimento uma vez:
+
+```text
+cancelados elegíveis / atendimentos elegíveis × 100
+```
+
+São elegíveis os atendimentos do período cujo horário já começou ou cujo status é cancelado. Sem base, a taxa é `null` e a interface mostra **—**. O período anterior segue a mesma regra. O card usa o recorte `taxaCancelamento` no Analítico; os indicadores, insights e PDF usam o valor calculado pela API. O contador operacional de cancelamentos por data de cancelamento é preservado separadamente. A distribuição de status usa somente a data agendada.
+
+O detalhe do motivo de bloqueio permanece limitado a 200 caracteres; a coluna do motivo completo comporta 300 caracteres, preservando o prefixo e a mensagem da central sem truncamento.
+
+### Build do frontend
+
+Para gerar o build de produção:
+
+```bash
+cd frontend
+npm run build
+```
+
+### Coleção da API
+
+A coleção Postman utiliza variáveis separadas por perfil, dados fictícios e data de agendamento futura. Configure seus identificadores, horários disponíveis, e-mails e tokens no ambiente Postman.
