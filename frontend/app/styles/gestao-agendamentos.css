@@ -353,6 +353,11 @@
 .conclusao-extra__numero { align-items: center; background: var(--fundo-secundario); border: 1px solid var(--borda); border-radius: 8px; color: var(--texto-suave); display: flex; font-size: .68rem; font-weight: 700; height: 28px; justify-content: center; min-width: 28px; }
 .conclusao-extra__campos { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr) minmax(0, .65fr); }
 .conclusao-extra__campos .campo-formulario { margin: 0; min-width: 0; }
+.conclusao-extra__precos { color: var(--texto-suave); display: flex; flex-wrap: wrap; font-size: .78rem; gap: .5rem 1.25rem; line-height: 1.6; }
+.conclusao-extra__observacao { margin: .25rem 0 0; }
+.conclusao-extra__observacao textarea { min-height: 80px; resize: vertical; }
+.conclusao-extra__observacao small { color: var(--texto-suave); font-size: .73rem; line-height: 1.5; }
+.servico-adicional-historico__observacao { display: block; font-weight: 400; margin: .2rem 0 .4rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 .conclusao-extra__servico { grid-column: 1 / -1; }
 .conclusao-extra__remover { margin-left: auto; min-height: 40px; }
 .conclusao-extras__adicionar { align-items: center; display: inline-flex; gap: .5rem; margin-top: 1rem; min-height: 44px; padding: .65rem 1rem; }

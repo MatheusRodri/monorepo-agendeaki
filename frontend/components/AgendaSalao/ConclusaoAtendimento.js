@@ -4,6 +4,11 @@ import { useState } from 'react';
 import DialogoAgendamento from '../DialogoAgendamento/DialogoAgendamento';
 
 const dinheiro = (valor) => `R$ ${Number(valor).toFixed(2).replace('.', ',')}`;
+function diferencaAjuste(extra) {
+  if (!extra.idServico || extra.valorCobrado === '') return 0;
+  const diferenca = Math.round(Number(extra.valorCobrado) * 100) - Math.round(Number(extra.precoVigente) * 100);
+  return Number.isFinite(diferenca) ? diferenca : 0;
+}
 
 export default function ConclusaoAtendimento({ agendamento, servicos, funcionarios, requisitar, aoFechar, aoSalvar, mostrarToastErro }) {
   const [extras, definirExtras] = useState([]);
@@ -20,7 +25,7 @@ export default function ConclusaoAtendimento({ agendamento, servicos, funcionari
     const servico = servicosFilial.find((item) => Number(item.idServico) === Number(idServico));
     const profissionais = profissionaisServico(idServico);
     const profissional = profissionais.find((item) => Number(item.idFuncionario) === Number(agendamento.idFuncionario)) ?? profissionais[0];
-    atualizar(indice, { idServico, idFuncionario: profissional ? String(profissional.idFuncionario) : '', valorCobrado: servico ? Number(servico.valor).toFixed(2) : '' });
+    atualizar(indice, { idServico, idFuncionario: profissional ? String(profissional.idFuncionario) : '', precoNormal: servico?.valorOriginal ?? servico?.valor, precoVigente: servico?.valorVigente ?? servico?.valor, promocaoAplicada: Boolean(servico?.promocaoAtiva), valorCobrado: servico ? Number(servico.valorVigente ?? servico.valor).toFixed(2) : '', observacaoAjuste: '' });
   }
   async function confirmar(evento) {
     evento.preventDefault();
@@ -29,12 +34,21 @@ export default function ConclusaoAtendimento({ agendamento, servicos, funcionari
     try {
       const resultado = await requisitar(`/agendamentos/${agendamento.idAgendamento}/confirmar-atendimento`, {
         method: 'PATCH', body: JSON.stringify({ servicosAdicionais: extras.map((item) => ({
-          idServico: Number(item.idServico), idFuncionario: Number(item.idFuncionario), valorCobrado: item.valorCobrado,
+          idServico: Number(item.idServico), idFuncionario: Number(item.idFuncionario), valorCobrado: item.valorCobrado, valorEsperado: item.precoVigente,
+          observacaoAjuste: diferencaAjuste(item) !== 0 ? item.observacaoAjuste : null,
         })) }),
       });
       aoFechar();
       await aoSalvar(resultado.mensagem);
-    } catch (erro) { mostrarToastErro(erro.message); }
+    } catch (erro) {
+      if (erro.codigo === 'PRECO_ALTERADO' && erro.precosAtualizados) {
+        definirExtras((atuais) => atuais.map((item) => {
+          const preco = erro.precosAtualizados.find((atual) => Number(atual.idServico) === Number(item.idServico));
+          return preco ? { ...item, precoNormal: preco.precoNormal, precoVigente: preco.precoVigente, promocaoAplicada: preco.promocaoAplicada } : item;
+        }));
+      }
+      mostrarToastErro(erro.message);
+    }
     finally { definirEnviando(false); }
   }
   return <DialogoAgendamento tituloId="titulo-concluir-atendimento" aoFechar={aoFechar} ocupado={enviando} classe="modal-agendamento modal-conclusao" classeConteudo="modal-agendamento__conteudo modal-conclusao__conteudo">
@@ -67,15 +81,17 @@ export default function ConclusaoAtendimento({ agendamento, servicos, funcionari
             </div>
             <div className="conclusao-extra__campos">
               <label className="campo-formulario conclusao-extra__servico"><span>Serviço</span><select disabled={enviando} onChange={(evento) => selecionarServico(indice, evento.target.value)} required value={extra.idServico}>
-                <option value="">Selecione um serviço</option>{servicosFilial.filter((item) => profissionaisServico(item.idServico).length).map((item) => <option key={item.idServico} value={item.idServico}>{item.nome} · {dinheiro(item.valor)}</option>)}
+                <option value="">Selecione um serviço</option>{servicosFilial.filter((item) => profissionaisServico(item.idServico).length).map((item) => <option key={item.idServico} value={item.idServico}>{item.nome} · {dinheiro(item.valorVigente ?? item.valor)}</option>)}
               </select></label>
               <label className="campo-formulario"><span>Profissional que realizou</span><select disabled={enviando || !extra.idServico} onChange={(evento) => atualizar(indice, { idFuncionario: evento.target.value })} required value={extra.idFuncionario}>
                 <option value="">Selecione um profissional</option>{profissionaisServico(extra.idServico).map((item) => <option key={item.idFuncionario} value={item.idFuncionario}>{item.nome}</option>)}
               </select></label>
               <label className="campo-formulario"><span>Valor cobrado (R$)</span><input disabled={enviando || !extra.idServico} inputMode="decimal" max="99999999.99" min="0" onChange={(evento) => atualizar(indice, { valorCobrado: evento.target.value })} required step="0.01" type="number" value={extra.valorCobrado} /></label>
             </div>
+            {extra.idServico && <ResumoPrecoExtra extra={extra} />}
+            {diferencaAjuste(extra) !== 0 && <label className="campo-formulario conclusao-extra__observacao"><span>Observação do ajuste (opcional)</span><textarea disabled={enviando} maxLength={500} onChange={(evento) => atualizar(indice, { observacaoAjuste: evento.target.value })} placeholder="Descreva o motivo do desconto adicional ou acréscimo." rows={3} value={extra.observacaoAjuste ?? ''} /><small>Registre o motivo para consulta no histórico do salão. {(extra.observacaoAjuste ?? '').length}/500 caracteres.</small></label>}
           </fieldset>)}
-          <button className="botao-secundario conclusao-extras__adicionar" disabled={enviando || extras.length >= 50 || !servicosFilial.some((item) => profissionaisServico(item.idServico).length)} onClick={() => definirExtras((atuais) => [...atuais, { idServico: '', idFuncionario: '', valorCobrado: '' }])} type="button"><span aria-hidden="true">+</span> Adicionar serviço extra</button>
+          <button className="botao-secundario conclusao-extras__adicionar" disabled={enviando || extras.length >= 50 || !servicosFilial.some((item) => profissionaisServico(item.idServico).length)} onClick={() => definirExtras((atuais) => [...atuais, { idServico: '', idFuncionario: '', valorCobrado: '', observacaoAjuste: '' }])} type="button"><span aria-hidden="true">+</span> Adicionar serviço extra</button>
         </section>
       </div>
       <footer className="conclusao-atendimento__rodape">
@@ -84,4 +100,15 @@ export default function ConclusaoAtendimento({ agendamento, servicos, funcionari
       </footer>
     </form>
   </DialogoAgendamento>;
+}
+
+function ResumoPrecoExtra({ extra }) {
+  const diferenca = diferencaAjuste(extra);
+  const descontoPromocional = (Math.round(Number(extra.precoNormal) * 100) - Math.round(Number(extra.precoVigente) * 100)) / 100;
+  return <div className="conclusao-extra__precos" aria-live="polite">
+    <span>Preço normal: <strong>{dinheiro(extra.precoNormal)}</strong></span>
+    <span>{extra.promocaoAplicada ? `Desconto promocional: ${dinheiro(descontoPromocional)}` : 'Sem promoção aplicada'}</span>
+    <span>Preço vigente: <strong>{dinheiro(extra.precoVigente)}</strong></span>
+    <span>{diferenca < 0 ? `Desconto adicional: ${dinheiro(-diferenca / 100)}` : diferenca > 0 ? `Acréscimo: ${dinheiro(diferenca / 100)}` : 'Sem ajuste de valor'}</span>
+  </div>;
 }
