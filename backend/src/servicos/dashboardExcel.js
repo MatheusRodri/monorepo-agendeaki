@@ -81,7 +81,7 @@ export async function exportarAnaliticoExcel(consulta, resposta) {
   workbook.zip.on('error', (erro) => arquivo.destroy(erro));
   try {
     const abas = {
-      analitico: criarAba(workbook, 'Analítico', colunasExportacao.map(([nome, campo]) => [nome, campo, nome === 'valor_item' ? 'valor' : undefined])),
+      analitico: criarAba(workbook, 'Analítico', colunasExportacao.map(([nome, campo]) => [nome, campo, ['valor_item', 'preco_normal', 'preco_vigente', 'desconto_promocional', 'desconto_adicional', 'acrescimo'].includes(nome) ? 'valor' : undefined])),
       filiais: criarAba(workbook, 'Unidades', [['id_unidade', 'idUnidade'], ['unidade', 'filial'], ['ativo', 'ativo']]),
       servicos: criarAba(workbook, 'Serviços', [['id_servico', 'idServico'], ['id_unidade', 'idUnidade'], ['servico', 'servico'], ['valor_referencia', 'valorReferencia', 'valor'], ['duracao_minutos', 'duracaoMinutos'], ['ativo', 'ativo']]),
       profissionais: criarAba(workbook, 'Profissionais', [['id_funcionario', 'idFuncionario'], ['id_unidade', 'idUnidade'], ['profissional', 'profissional'], ['ativo', 'ativo']]),
