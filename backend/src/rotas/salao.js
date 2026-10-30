@@ -462,7 +462,7 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
   }
   const coordenadas = { latitude, longitude };
   const valores = { ...dadosFilial, ...enderecoCep, ...coordenadas, ...protegido, email, telefone, documento, tipoDocumento: 'CNPJ', indiceRaizCnpj, idSalao: salao.idSalao, idUnidade };
-  const transacao = await bancoDeDados.transaction();
+  const transacao = await criarTransacaoAgenda();
   async function validarCnpjUnico() {
     const cnpjsEmUnidades = await bancoDeDados.query(
       'SELECT id_unidade FROM tb_unidade WHERE ds_documento_indice=:documentoIndice AND (:idUnidade IS NULL OR id_unidade<>:idUnidade) LIMIT 1',
@@ -482,12 +482,13 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       await validarCnpjUnico();
       const filiais = await bancoDeDados.query('SELECT id_unidade AS idUnidade FROM tb_unidade WHERE id_unidade = :idUnidade AND fk_salao = :idSalao LIMIT 1', { replacements: valores, transaction: transacao, type: QueryTypes.SELECT });
       if (!filiais.length) { await transacao.rollback(); resposta.status(404).json({ mensagem: 'Unidade não encontrada.' }); return; }
+      await bloquearRecursosAgenda({ idsUnidades: [idUnidade], transaction: transacao });
       const agendamentosFuturos = await bancoDeDados.query(
         `SELECT DAYOFWEEK(dt_inicio)-1 AS diaSemana,
                 TIME_FORMAT(dt_inicio, '%H:%i') AS inicio,
                 TIME_FORMAT(dt_fim, '%H:%i') AS fim
          FROM tb_agendamento WHERE fk_unidade=:idUnidade
-           AND cd_status='AGENDADO' AND dt_inicio>NOW()`,
+           AND cd_status='AGENDADO' AND dt_fim>NOW()`,
         { replacements: { idUnidade }, transaction: transacao, type: QueryTypes.SELECT },
       );
       const conflitoExpediente = agendamentosFuturos.find((agendamento) => {
@@ -500,7 +501,7 @@ async function salvarFilial(requisicao, resposta, idUnidade = null) {
       await salvarHorariosUnidade(idUnidade, horarios, transacao);
       await transacao.commit();
       resposta.status(200).json({ mensagem: 'Unidade, localização e horários atualizados.', coordenadas }); return;
-    } catch (erro) { await transacao.rollback(); const duplicado = codigoErroBanco(erro) === 'ER_DUP_ENTRY'; resposta.status(erro.status ?? (duplicado ? 409 : 500)).json({ mensagem: duplicado ? 'Este CNPJ já está cadastrado na plataforma.' : erro.message }); return; }
+    } catch (erro) { if (!transacao.finished) await transacao.rollback(); const duplicado = codigoErroBanco(erro) === 'ER_DUP_ENTRY'; const ocupado = ['ER_LOCK_DEADLOCK','ER_LOCK_WAIT_TIMEOUT'].includes(codigoErroBanco(erro)); resposta.status(erro.status ?? (duplicado || ocupado ? 409 : 500)).json({ mensagem: ocupado ? 'A agenda está sendo atualizada. Tente novamente.' : duplicado ? 'Este CNPJ já está cadastrado na plataforma.' : erro.message }); return; }
   }
   let etapa = 'gerar slug';
   let idUnidadeCriada = null;
@@ -802,28 +803,32 @@ async function salvarDisponibilidadeFuncionario(requisicao, resposta) {
     { replacements: { idFuncionario, idSalao: salao.idSalao }, type: QueryTypes.SELECT },
   );
   if (!profissionais.length) { resposta.status(404).json({ mensagem: 'Profissional não encontrado.' }); return; }
-  const agendamentos = await bancoDeDados.query(
-    `SELECT id_agendamento AS idAgendamento, DAYOFWEEK(dt_inicio)-1 AS diaSemana,
-            TIME_FORMAT(dt_inicio, '%H:%i') AS inicio, TIME_FORMAT(dt_fim, '%H:%i') AS fim
-     FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
-       AND cd_status='AGENDADO' AND dt_inicio>NOW()`,
-    { replacements: { idFuncionario }, type: QueryTypes.SELECT },
-  );
-  const foraDaNovaAgenda = agendamentos.find((agendamento) => !periodos.some((periodo) =>
-    periodo.diaSemana === Number(agendamento.diaSemana) && agendamento.inicio >= periodo.inicio && agendamento.fim <= periodo.fim));
-  if (foraDaNovaAgenda) { resposta.status(409).json({ mensagem: 'A nova jornada deixaria um agendamento confirmado fora do expediente.' }); return; }
-  const transacao = await bancoDeDados.transaction();
+  const transacao = await criarTransacaoAgenda();
   try {
+    await bloquearRecursosAgenda({ idsUnidades: [profissionais[0].idUnidade], transaction: transacao });
+    const [atual] = await bancoDeDados.query(`SELECT fk_unidade AS idUnidade FROM tb_funcionario
+      WHERE id_funcionario=:idFuncionario AND st_ativo=TRUE`, { replacements: { idFuncionario }, transaction: transacao, type: QueryTypes.SELECT });
+    if (!atual || Number(atual.idUnidade) !== Number(profissionais[0].idUnidade)) throw Object.assign(new Error('O profissional foi alterado. Atualize a tela.'), { status: 409 });
+    const agendamentos = await bancoDeDados.query(`SELECT DAYOFWEEK(dt_inicio)-1 AS diaSemana,
+      TIME_FORMAT(dt_inicio, '%H:%i') AS inicio, TIME_FORMAT(dt_fim, '%H:%i') AS fim
+      FROM tb_agendamento WHERE fk_funcionario=:idFuncionario AND cd_status='AGENDADO' AND dt_fim>NOW()`, {
+      replacements: { idFuncionario }, transaction: transacao, type: QueryTypes.SELECT,
+    });
+    if (agendamentos.some((a) => !periodos.some((p) => p.diaSemana === Number(a.diaSemana) && a.inicio >= p.inicio && a.fim <= p.fim))) {
+      throw Object.assign(new Error('A nova jornada deixaria um agendamento confirmado fora do expediente.'), { status: 409 });
+    }
     await bancoDeDados.query('DELETE FROM tb_disponibilidade_funcionario WHERE fk_funcionario=:idFuncionario', { replacements: { idFuncionario }, transaction: transacao });
-    for (const periodo of periodos) await bancoDeDados.query(
-      `INSERT INTO tb_disponibilidade_funcionario
-       (fk_funcionario, nr_dia_semana, hr_inicio, hr_fim)
-       VALUES (:idFuncionario, :diaSemana, :inicio, :fim)`,
-      { replacements: { idFuncionario, ...periodo }, transaction: transacao },
-    );
+    for (const periodo of periodos) await bancoDeDados.query(`INSERT INTO tb_disponibilidade_funcionario
+      (fk_funcionario,nr_dia_semana,hr_inicio,hr_fim) VALUES (:idFuncionario,:diaSemana,:inicio,:fim)`, {
+      replacements: { idFuncionario, ...periodo }, transaction: transacao,
+    });
     await transacao.commit();
-    resposta.status(200).json({ mensagem: 'Disponibilidade atualizada com sucesso.' });
-  } catch (erro) { await transacao.rollback(); resposta.status(400).json({ mensagem: erro.message }); }
+    resposta.json({ mensagem: 'Disponibilidade atualizada com sucesso.' });
+  } catch (erro) {
+    if (!transacao.finished) await transacao.rollback();
+    const conflito = ['ER_LOCK_DEADLOCK','ER_LOCK_WAIT_TIMEOUT'].includes(codigoErroBanco(erro));
+    resposta.status(erro.status ?? (conflito ? 409 : 400)).json({ mensagem: conflito ? 'A agenda está sendo atualizada. Tente novamente.' : erro.message });
+  }
 }
 
 function dataHoraBanco(valor) {
