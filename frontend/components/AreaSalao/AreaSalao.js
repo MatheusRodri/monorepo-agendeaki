@@ -1,5 +1,6 @@
 'use client';
 
+import { encerrarSessaoPerfil, desativarNotificacoes, registrarVinculoPush } from '../../utils/notificacoesDispositivo';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -13,7 +14,7 @@ import DisponibilidadeSalao from '../DisponibilidadeSalao/DisponibilidadeSalao';
 import AgendaSalao from '../AgendaSalao/AgendaSalao';
 import { dataParaExibicao, dataParaIso, formatarCnpj, formatarData, formatarTelefone } from '../../utils/formatadores';
 import { requisitarApi } from '../../utils/api';
-import { limparSessao, obterTokenAcesso } from '../../utils/respostaApi';
+import { limparSessao, obterTokenAcesso, obterIdentidadeSessao } from '../../utils/respostaApi';
 import { toastAviso, toastErro, toastInfo, toastSucesso } from '../../utils/toast';
 
 const navegacao = [['dashboard', 'Visão geral', '/salao/dashboard'], ['filiais', 'Unidades', '/salao/filiais'], ['servicos', 'Serviços', '/salao/servicos'], ['funcionarios', 'Profissionais', '/salao/funcionarios'], ['disponibilidade', 'Disponibilidade', '/salao/disponibilidade'], ['clientes', 'Clientes', '/salao/clientes'], ['agendamentos', 'Agenda', '/salao/agendamentos'], ['avaliacoes', 'Avaliações', '/salao/avaliacoes'], ['configuracoes', 'Configurações', '/salao/configuracoes']];
@@ -75,7 +76,7 @@ export default function AreaSalao({ secao }) {
       novasNotificacoes.forEach((notificacao) => idsNotificacoesConhecidos.current.add(Number(notificacao.id)));
       try {
         const idsConhecidos = [...idsNotificacoesConhecidos.current].slice(-1000);
-        sessionStorage.setItem('notificacoesSalaoConhecidas', JSON.stringify(idsConhecidos));
+        sessionStorage.setItem(`notificacoesSalaoConhecidas:${obterIdentidadeSessao('salao')}`,  JSON.stringify(idsConhecidos));
       } catch {}
       carregouNotificacoes.current = true;
       definirNotificacoes(resultado.notificacoes ?? []);
@@ -85,7 +86,7 @@ export default function AreaSalao({ secao }) {
 
   useEffect(() => {
     try {
-      const snapshotPersistido = sessionStorage.getItem('notificacoesSalaoConhecidas');
+      const snapshotPersistido = sessionStorage.getItem(`notificacoesSalaoConhecidas:${obterIdentidadeSessao('salao')}`);
       const idsPersistidos = JSON.parse(snapshotPersistido || '[]');
       if (snapshotPersistido !== null && Array.isArray(idsPersistidos)) {
         idsPersistidos.forEach((id) => idsNotificacoesConhecidos.current.add(Number(id)));
@@ -107,13 +108,13 @@ export default function AreaSalao({ secao }) {
     const aoReceberPush = (evento) => {
       if (evento.data?.type !== 'AGENDEAKI_PUSH_NOTIFICATION' || !evento.data.notificacao) return;
       const notificacaoRecebida = evento.data.notificacao;
-      if (notificacaoRecebida.audience !== 'salao') return;
+      if (notificacaoRecebida.audience !== 'salao' || notificacaoRecebida.destinatarioId !== obterIdentidadeSessao('salao')) return;
       const idNotificacao = Number(notificacaoRecebida.id);
       if (Number.isSafeInteger(idNotificacao) && idNotificacao > 0) {
         if (idsNotificacoesConhecidos.current.has(idNotificacao)) return;
         idsNotificacoesConhecidos.current.add(idNotificacao);
         try {
-          sessionStorage.setItem('notificacoesSalaoConhecidas', JSON.stringify([...idsNotificacoesConhecidos.current].slice(-1000)));
+          sessionStorage.setItem(`notificacoesSalaoConhecidas:${obterIdentidadeSessao('salao')}`,  JSON.stringify([...idsNotificacoesConhecidos.current].slice(-1000)));
         } catch {}
       }
       carregouNotificacoes.current = true;
@@ -245,6 +246,7 @@ export default function AreaSalao({ secao }) {
   async function excluirConta() {
     try {
       await requisitar('/conta', { method: 'DELETE' });
+      await desativarNotificacoes('salao').catch(() => {});
       limparSessao('salao');
       roteador.replace('/');
       return true;
@@ -257,8 +259,8 @@ export default function AreaSalao({ secao }) {
   async function sairDaConta() {
     if (saindo) return;
     definirSaindo(true);
-    try { await requisitar('/logout', { method: 'POST' }); } catch {}
-    finally { limparSessao('salao'); roteador.replace('/salao'); }
+    if (!await encerrarSessaoPerfil('salao')) toastAviso('Você saiu deste dispositivo. O encerramento no servidor não foi confirmado.');
+    roteador.replace('/salao');
   }
 
   async function buscarCep(valorCep) {
@@ -274,7 +276,7 @@ export default function AreaSalao({ secao }) {
     } catch (erro) { toastErro(erro.message); }
   }
   const enderecoCep = dados.enderecoCep ?? filialEdicao ?? {};
-  if (exclusaoPendente) return <main className="conteudo-limitado"><h1>Exclusão da conta em andamento</h1><p>Alguma etapa ainda precisa ser concluída. Cobranças já encerradas não serão reativadas.</p><button type="button" onClick={async () => { try { await requisitar('/conta', { method: 'DELETE' }); limparSessao('salao'); roteador.replace('/salao'); } catch (erro) { toastErro(erro.message); } }}>Retomar exclusão</button><button type="button" onClick={sairDaConta}>Sair deste dispositivo</button></main>;
+  if (exclusaoPendente) return <main className="conteudo-limitado"><h1>Exclusão da conta em andamento</h1><p>Alguma etapa ainda precisa ser concluída. Cobranças já encerradas não serão reativadas.</p><button type="button" onClick={async () => { try { await requisitar('/conta', { method: 'DELETE' }); await desativarNotificacoes('salao').catch(() => {}); limparSessao('salao'); roteador.replace('/salao'); } catch (erro) { toastErro(erro.message); } }}>Retomar exclusão</button><button type="button" onClick={sairDaConta}>Sair deste dispositivo</button></main>;
 
   return (
     <main className="area-salao">
@@ -423,8 +425,9 @@ function GerenciarNotificacoes({ requisitar }) {
     navigator.serviceWorker.ready
       .then((registro) => registro.pushManager.getSubscription())
       .then((inscricao) => requisitar(`/notificacoes/inscricao?endpoint=${encodeURIComponent(inscricao?.endpoint ?? '')}`))
-      .then((resultado) => {
+      .then(async (resultado) => {
         if (!ativo) return;
+        if (resultado.ativa) await registrarVinculoPush(resultado);
         definirAtiva(Boolean(resultado.ativa));
         if (!resultado.ativa && Notification.permission === 'granted') toastInfo('O navegador já permite receber notificações do AgendeAki, mas falta ativá-las neste dispositivo. Clique em “Registrar este dispositivo” para receber avisos de agendamentos, cancelamentos e alterações de horário.');
         if (Notification.permission === 'denied') toastAviso('O navegador bloqueou as notificações. Libere a permissão nas configurações deste site.');
@@ -440,10 +443,7 @@ function GerenciarNotificacoes({ requisitar }) {
       const registro = await navigator.serviceWorker.ready;
       let inscricao = await registro.pushManager.getSubscription();
       if (ativa) {
-        if (inscricao) {
-          await requisitar('/notificacoes/inscricao', { method: 'DELETE', body: JSON.stringify({ endpoint: inscricao.endpoint }) });
-          await inscricao.unsubscribe();
-        }
+        await desativarNotificacoes('salao');
         definirAtiva(false);
         toastSucesso('Notificações desativadas neste dispositivo.');
         return;
@@ -456,7 +456,8 @@ function GerenciarNotificacoes({ requisitar }) {
       const chaveBase64 = chavePublica.replace(/-/g, '+').replace(/_/g, '/');
       const chave = Uint8Array.from(atob(chaveBase64 + '='.repeat((4 - (chaveBase64.length % 4)) % 4)), (caractere) => caractere.charCodeAt(0));
       inscricao ??= await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: chave });
-      await requisitar('/notificacoes/inscricao', { method: 'POST', body: JSON.stringify(inscricao.toJSON()) });
+      const vinculo = await requisitar('/notificacoes/inscricao', { method: 'POST', body: JSON.stringify(inscricao.toJSON()) });
+      await registrarVinculoPush(vinculo);
       definirAtiva(true);
       toastSucesso('Notificações ativadas neste dispositivo.');
     } catch (erro) {

@@ -448,14 +448,15 @@ async function salvarInscricaoNotificacoesCliente(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Inscrição de notificações inválida.' });
     return;
   }
-  await salvarInscricaoPushCliente(cliente.idUsuario, inscricao);
-  resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.' });
+  const idVinculo = await salvarInscricaoPushCliente(cliente.idUsuario, inscricao);
+  resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.', idVinculo, destinatarioId: cliente.idAutenticacaoExterna, audience: 'cliente' });
 }
 
 async function consultarInscricaoNotificacoesCliente(requisicao, resposta) {
   const cliente = await obterClienteAutenticado(requisicao, resposta);
   if (!cliente) return;
-  resposta.status(200).json({ ativa: await consultarInscricaoPushCliente(cliente.idUsuario, String(requisicao.query.endpoint ?? '')) });
+  const idVinculo = await consultarInscricaoPushCliente(cliente.idUsuario, String(requisicao.query.endpoint ?? ''));
+  resposta.json({ ativa: Boolean(idVinculo), idVinculo, destinatarioId: cliente.idAutenticacaoExterna, audience: 'cliente' });
 }
 
 async function excluirInscricaoNotificacoesCliente(requisicao, resposta) {
@@ -466,7 +467,7 @@ async function excluirInscricaoNotificacoesCliente(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Informe o dispositivo a desativar.' });
     return;
   }
-  await removerInscricaoPushCliente(cliente.idUsuario, endpoint);
+  await removerInscricaoPushCliente(cliente.idUsuario, endpoint, requisicao.body?.idVinculo ?? '');
   resposta.status(200).json({ mensagem: 'Notificações desativadas neste dispositivo.' });
 }
 

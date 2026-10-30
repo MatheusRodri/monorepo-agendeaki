@@ -1,3 +1,4 @@
+import { desvincularPushIdentidade } from '../servicos/notificacoesPush.js';
 import { Router } from 'express';
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
@@ -398,7 +399,10 @@ async function realizarLogout(requisicao, resposta) {
 
   try {
     const clienteSupabase = obterClienteSupabase(tokenAcesso);
-    const { error: erroAutenticacao } = await clienteSupabase.auth.admin.signOut(tokenAcesso, 'local');
+    const { data, error } = await clienteSupabase.auth.getUser(tokenAcesso);
+    if (error || !data?.user) return resposta.status(401).json({ mensagem: 'Sessão inválida.' });
+    await desvincularPushIdentidade(data.user.id, requisicao.path.startsWith('/clientes/') ? 'cliente' : 'salao', requisicao.body?.endpointPush, requisicao.body?.idVinculo);
+    const { error: erroAutenticacao } = await obterClienteAdministrativoSupabase().auth.admin.signOut(tokenAcesso, 'local');
 
     if (erroAutenticacao) {
       return resposta.status(401).json({ mensagem: 'Não foi possível encerrar a sessão informada.' });
@@ -406,7 +410,7 @@ async function realizarLogout(requisicao, resposta) {
 
     return resposta.status(204).send();
   } catch (erro) {
-    return resposta.status(500).json({ mensagem: erro.message });
+    return resposta.status(erro.status ?? 500).json({ mensagem: erro.status ? erro.message : 'Não foi possível processar a autenticação.', codigo: erro.codigo });
   }
 }
 

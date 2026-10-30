@@ -1,4 +1,6 @@
-const CACHE = 'agendeaki-offline-v3';
+importScripts('/push-vinculos.js');
+const identidadesJanelas = new Map();
+const CACHE = 'agendeaki-offline-v4';
 const ARQUIVOS = ['/offline', '/icone-192.png', '/icone-512.png'];
 
 self.addEventListener('install', (evento) => {
@@ -9,52 +11,70 @@ self.addEventListener('activate', (evento) => {
   evento.waitUntil(Promise.all([
     caches.keys().then((chaves) => Promise.all(chaves.filter((chave) => chave.startsWith('agendeaki-offline-') && chave !== CACHE).map((chave) => caches.delete(chave)))),
     self.clients.claim(),
+    self.registration.getNotifications().then((avisos) => avisos.filter((a) => !a.data?.idVinculo).forEach((a) => a.close())),
   ]));
 });
 
-self.addEventListener('push', (evento) => {
-  const dados = evento.data?.json() ?? {};
-  const audience = dados.audience === 'cliente' ? 'cliente' : 'salao';
-  const destinoPadrao = audience === 'cliente' ? '/cliente/notificacoes' : '/salao/agendamentos';
-  const destinoSolicitado = new URL(dados.url || destinoPadrao, self.location.origin);
-  const destino = destinoSolicitado.origin === self.location.origin
-    ? `${destinoSolicitado.pathname}${destinoSolicitado.search}${destinoSolicitado.hash}`
-    : destinoPadrao;
-  const notificacao = {
-    id: dados.id,
-    audience,
-    titulo: dados.title || 'Agende Aki',
-    mensagem: dados.body || 'Você tem uma atualização no seu salão.',
-    link: destino,
-  };
-  evento.waitUntil(Promise.all([
-    self.registration.showNotification(notificacao.titulo, {
-      body: notificacao.mensagem,
-      icon: '/icone-192.png',
-      badge: '/icone-192.png',
-      data: { url: destino },
-    }),
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientes) => {
-      clientes.forEach((cliente) => {
-        const caminho = new URL(cliente.url).pathname;
-        const clienteDoPublico = audience === 'cliente' && caminho.startsWith('/cliente/');
-        const salaoDoPublico = audience === 'salao' && caminho.startsWith('/salao/');
-        if (clienteDoPublico || salaoDoPublico) {
-          cliente.postMessage({ type: 'AGENDEAKI_PUSH_NOTIFICATION', notificacao });
+self.addEventListener('message', (evento) => {
+  const dados = evento.data;
+  if (!dados?.type?.startsWith('AGENDEAKI_VINCULO_')) return;
+  evento.waitUntil((async () => {
+    try {
+      if (dados.type === 'AGENDEAKI_VINCULO_IDENTIFICAR' && evento.source?.id) {
+        identidadesJanelas.set(evento.source.id, { audience: dados.audience, destinatarioId: dados.destinatarioId });
+      }
+      if (dados.type === 'AGENDEAKI_VINCULO_SALVAR') await VinculosPush.salvar(dados);
+      if (dados.type === 'AGENDEAKI_VINCULO_REMOVER') {
+        await VinculosPush.remover(dados);
+        const avisos = await self.registration.getNotifications();
+        for (const aviso of avisos) {
+          if (aviso.data?.audience === dados.audience && aviso.data?.destinatarioId === dados.destinatarioId
+            && (!dados.idVinculo || aviso.data.idVinculo === dados.idVinculo)) aviso.close();
         }
-      });
-    }),
-  ]));
+      }
+      evento.ports?.[0]?.postMessage({ vinculos: await VinculosPush.listar() });
+    } catch { evento.ports?.[0]?.postMessage({ erro: true }); }
+  })());
+});
+
+self.addEventListener('push', (evento) => {
+  evento.waitUntil((async () => {
+    let dados;
+    try { dados = evento.data?.json(); } catch { return; }
+    const vinculos = await VinculosPush.listar();
+    const vinculo = vinculos.find((v) => v.audience === dados?.audience);
+    if (!VinculosPush.avisoPermitido(dados, vinculo)) return;
+    const url = `/${dados.audience}/notificacoes`;
+    await self.registration.showNotification('AgendeAki', {
+      body: 'Você tem uma nova atualização.', icon: '/icone-192.png', badge: '/icone-192.png',
+      tag: `agendeaki:${dados.audience}:${dados.idVinculo}:${dados.id}`,
+      data: { ...vinculo, url, id: dados.id },
+    });
+    const janelas = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const janela of janelas) {
+      const identidade = identidadesJanelas.get(janela.id);
+      if (identidade?.audience === dados.audience && identidade.destinatarioId === dados.destinatarioId) {
+        janela.postMessage({ type: 'AGENDEAKI_PUSH_NOTIFICATION', notificacao: {
+          id: dados.id, audience: dados.audience, destinatarioId: dados.destinatarioId, idVinculo: dados.idVinculo,
+          titulo: 'AgendeAki', mensagem: 'Você tem uma nova atualização.', link: url,
+        } });
+      }
+    }
+  })());
 });
 
 self.addEventListener('notificationclick', (evento) => {
   evento.notification.close();
-  const destino = new URL(evento.notification.data?.url || '/salao/agendamentos', self.location.origin).href;
-  evento.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientes) => {
-    const clienteExistente = clientes.find((cliente) => cliente.url === destino);
-    if (clienteExistente) return clienteExistente.focus();
-    return self.clients.openWindow(destino);
-  }));
+  evento.waitUntil((async () => {
+    const dados = evento.notification.data;
+    const atual = (await VinculosPush.listar()).find((v) => v.audience === dados?.audience);
+    if (!VinculosPush.avisoPermitido({ ...dados, versao: 1 }, atual)) return;
+    const destino = new URL(`/${dados.audience}/notificacoes`, self.location.origin).href;
+    const janelas = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const existente = janelas.find((j) => j.url === destino);
+    if (existente) await existente.focus();
+    else await self.clients.openWindow(destino);
+  })());
 });
 
 self.addEventListener('fetch', (evento) => {

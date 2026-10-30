@@ -89,8 +89,8 @@ async function salvarInscricaoNotificacoes(requisicao, resposta) {
     resposta.status(400).json({ mensagem: 'Inscrição de notificações inválida.' }); return;
   }
   try {
-    await salvarInscricaoPush(salao.idSalao, inscricao);
-    resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.' });
+    const idVinculo = await salvarInscricaoPush(salao.idSalao, inscricao);
+    resposta.status(201).json({ mensagem: 'Notificações ativadas neste dispositivo.', idVinculo, destinatarioId: administrador.idAutenticacaoExterna, audience: 'salao' });
   } catch (erro) {
     console.error('[Notificações push] Falha ao salvar inscrição.', { idSalao: salao.idSalao, mensagem: erro.message });
     resposta.status(500).json({ mensagem: 'Não foi possível ativar as notificações. Confira se a tabela tb_inscricao_notificacao existe.' });
@@ -101,16 +101,16 @@ async function consultarInscricaoNotificacoes(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
   const endpoint = String(requisicao.query.endpoint ?? '');
-  const ativa = await consultarInscricaoPush(salao.idSalao, endpoint);
-  resposta.status(200).json({ ativa });
+  const idVinculo = await consultarInscricaoPush(salao.idSalao, endpoint);
+  resposta.json({ ativa: Boolean(idVinculo), idVinculo, destinatarioId: administrador.idAutenticacaoExterna, audience: 'salao' });
 }
 
 async function excluirInscricaoNotificacoes(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
-  const salao = await obterSalaoPremiumAdministrador(administrador.idUsuario, resposta); if (!salao) return;
+  const salao = await obterSalaoAdministrador(administrador.idUsuario); if (!salao) { resposta.status(404).json({ mensagem: 'Salão não encontrado.' }); return; }
   const endpoint = requisicao.body?.endpoint;
   if (typeof endpoint !== 'string' || !endpoint) { resposta.status(400).json({ mensagem: 'Informe o dispositivo a desativar.' }); return; }
-  await removerInscricaoPush(salao.idSalao, endpoint);
+  await removerInscricaoPush(salao.idSalao, endpoint, requisicao.body?.idVinculo ?? '');
   resposta.status(200).json({ mensagem: 'Notificações desativadas neste dispositivo.' });
 }
 

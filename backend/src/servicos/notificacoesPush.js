@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 
@@ -76,36 +76,40 @@ async function salaoTemAcessoPremium(idSalao) {
 }
 
 export async function salvarInscricaoPush(idSalao, inscricao) {
+  const idVinculo = randomUUID();
   const hashEndpoint = createHash('sha256').update(inscricao.endpoint).digest('hex');
   await bancoDeDados.query(
-    `INSERT INTO tb_inscricao_notificacao (fk_salao, ds_endpoint, ds_endpoint_hash, ds_chave_publica, ds_chave_auth)
-     VALUES (:idSalao, :endpoint, :hashEndpoint, :chavePublica, :chaveAuth)
-     ON DUPLICATE KEY UPDATE fk_salao=VALUES(fk_salao), ds_endpoint=VALUES(ds_endpoint), ds_chave_publica=VALUES(ds_chave_publica), ds_chave_auth=VALUES(ds_chave_auth)`,
-    { replacements: { idSalao, endpoint: inscricao.endpoint, hashEndpoint, chavePublica: inscricao.keys.p256dh, chaveAuth: inscricao.keys.auth } },
+    `INSERT INTO tb_inscricao_notificacao (fk_salao, ds_endpoint, ds_endpoint_hash, ds_chave_publica, ds_chave_auth, id_vinculo_dispositivo)
+     VALUES (:idSalao, :endpoint, :hashEndpoint, :chavePublica, :chaveAuth, :idVinculo)
+     ON DUPLICATE KEY UPDATE fk_salao=VALUES(fk_salao), ds_endpoint=VALUES(ds_endpoint), ds_chave_publica=VALUES(ds_chave_publica), ds_chave_auth=VALUES(ds_chave_auth), id_vinculo_dispositivo=VALUES(id_vinculo_dispositivo)`,
+    { replacements: { idVinculo, idSalao, endpoint: inscricao.endpoint, hashEndpoint, chavePublica: inscricao.keys.p256dh, chaveAuth: inscricao.keys.auth } },
   );
+  return idVinculo;
 }
 
-export async function removerInscricaoPush(idSalao, endpoint) {
+export async function removerInscricaoPush(idSalao, endpoint, idVinculo) {
   await bancoDeDados.query(
-    'DELETE FROM tb_inscricao_notificacao WHERE fk_salao=:idSalao AND ds_endpoint=:endpoint',
-    { replacements: { idSalao, endpoint } },
+    'DELETE FROM tb_inscricao_notificacao WHERE fk_salao=:idSalao AND ds_endpoint=:endpoint AND id_vinculo_dispositivo=:idVinculo',
+    { replacements: { idSalao, endpoint, idVinculo } },
   );
 }
 
 export async function salvarInscricaoPushCliente(idUsuario, inscricao) {
+  const idVinculo = randomUUID();
   const hashEndpoint = createHash('sha256').update(inscricao.endpoint).digest('hex');
   await bancoDeDados.query(
-    `INSERT INTO tb_inscricao_notificacao_cliente (fk_usuario, ds_endpoint, ds_endpoint_hash, ds_chave_publica, ds_chave_auth)
-     VALUES (:idUsuario, :endpoint, :hashEndpoint, :chavePublica, :chaveAuth)
-     ON DUPLICATE KEY UPDATE fk_usuario=VALUES(fk_usuario), ds_endpoint=VALUES(ds_endpoint), ds_chave_publica=VALUES(ds_chave_publica), ds_chave_auth=VALUES(ds_chave_auth)`,
-    { replacements: { idUsuario, endpoint: inscricao.endpoint, hashEndpoint, chavePublica: inscricao.keys.p256dh, chaveAuth: inscricao.keys.auth } },
+    `INSERT INTO tb_inscricao_notificacao_cliente (fk_usuario, ds_endpoint, ds_endpoint_hash, ds_chave_publica, ds_chave_auth, id_vinculo_dispositivo)
+     VALUES (:idUsuario, :endpoint, :hashEndpoint, :chavePublica, :chaveAuth, :idVinculo)
+     ON DUPLICATE KEY UPDATE fk_usuario=VALUES(fk_usuario), ds_endpoint=VALUES(ds_endpoint), ds_chave_publica=VALUES(ds_chave_publica), ds_chave_auth=VALUES(ds_chave_auth), id_vinculo_dispositivo=VALUES(id_vinculo_dispositivo)`,
+    { replacements: { idVinculo, idUsuario, endpoint: inscricao.endpoint, hashEndpoint, chavePublica: inscricao.keys.p256dh, chaveAuth: inscricao.keys.auth } },
   );
+  return idVinculo;
 }
 
-export async function removerInscricaoPushCliente(idUsuario, endpoint) {
+export async function removerInscricaoPushCliente(idUsuario, endpoint, idVinculo) {
   await bancoDeDados.query(
-    'DELETE FROM tb_inscricao_notificacao_cliente WHERE fk_usuario=:idUsuario AND ds_endpoint=:endpoint',
-    { replacements: { idUsuario, endpoint } },
+    'DELETE FROM tb_inscricao_notificacao_cliente WHERE fk_usuario=:idUsuario AND ds_endpoint=:endpoint AND id_vinculo_dispositivo=:idVinculo',
+    { replacements: { idUsuario, endpoint, idVinculo } },
   );
 }
 
@@ -113,10 +117,10 @@ export async function consultarInscricaoPushCliente(idUsuario, endpoint) {
   if (!endpoint) return false;
   const hashEndpoint = createHash('sha256').update(endpoint).digest('hex');
   const inscricoes = await bancoDeDados.query(
-    'SELECT id_inscricao FROM tb_inscricao_notificacao_cliente WHERE fk_usuario=:idUsuario AND ds_endpoint_hash=:hashEndpoint LIMIT 1',
+    'SELECT id_vinculo_dispositivo AS idVinculo FROM tb_inscricao_notificacao_cliente WHERE fk_usuario=:idUsuario AND ds_endpoint_hash=:hashEndpoint LIMIT 1',
     { replacements: { idUsuario, hashEndpoint }, type: QueryTypes.SELECT },
   );
-  return inscricoes.length > 0;
+  return inscricoes[0]?.idVinculo ?? null;
 }
 
 export async function criarNotificacaoCliente(idUsuario, idAgendamento, { tipo = 'AVALIACAO', titulo, mensagem, link }, transaction) {
@@ -177,7 +181,9 @@ export async function enviarNotificacaoPushCliente(idUsuario, titulo, mensagem, 
       return;
     }
     const inscricoes = await bancoDeDados.query(
-      'SELECT ds_endpoint AS endpoint, ds_chave_publica AS p256dh, ds_chave_auth AS auth FROM tb_inscricao_notificacao_cliente WHERE fk_usuario=:idUsuario',
+      `SELECT i.ds_endpoint AS endpoint, i.ds_chave_publica AS p256dh, i.ds_chave_auth AS auth,
+        i.id_vinculo_dispositivo AS idVinculo, u.id_autenticacao_externa AS destinatarioId
+        FROM tb_inscricao_notificacao_cliente i INNER JOIN tb_usuario u ON u.id_usuario=i.fk_usuario WHERE i.fk_usuario=:idUsuario`,
       { replacements: { idUsuario }, type: QueryTypes.SELECT },
     );
     if (!inscricoes.length) return;
@@ -185,7 +191,7 @@ export async function enviarNotificacaoPushCliente(idUsuario, titulo, mensagem, 
       try {
         await webpush.sendNotification(
           { endpoint: inscricao.endpoint, keys: { p256dh: inscricao.p256dh, auth: inscricao.auth } },
-          JSON.stringify({ id: idNotificacao, audience: 'cliente', title: titulo, body: mensagem, url: link }),
+          JSON.stringify(montarAvisoPush(inscricao, 'cliente', idNotificacao)),
         );
       } catch (erro) {
         if ([404, 410].includes(erro.statusCode)) {
@@ -206,10 +212,10 @@ export async function consultarInscricaoPush(idSalao, endpoint) {
   if (!endpoint) return false;
   const hashEndpoint = createHash('sha256').update(endpoint).digest('hex');
   const inscricoes = await bancoDeDados.query(
-    'SELECT id_inscricao FROM tb_inscricao_notificacao WHERE fk_salao=:idSalao AND ds_endpoint_hash=:hashEndpoint LIMIT 1',
+    'SELECT id_vinculo_dispositivo AS idVinculo FROM tb_inscricao_notificacao WHERE fk_salao=:idSalao AND ds_endpoint_hash=:hashEndpoint LIMIT 1',
     { replacements: { idSalao, hashEndpoint }, type: QueryTypes.SELECT },
   );
-  return inscricoes.length > 0;
+  return inscricoes[0]?.idVinculo ?? null;
 }
 
 export async function enviarNotificacaoSalao(idSalao, titulo, corpo, idNotificacao = null) {
@@ -219,17 +225,19 @@ export async function enviarNotificacaoSalao(idSalao, titulo, corpo, idNotificac
       return;
     }
     const inscricoes = await bancoDeDados.query(
-      'SELECT ds_endpoint AS endpoint, ds_chave_publica AS p256dh, ds_chave_auth AS auth FROM tb_inscricao_notificacao WHERE fk_salao=:idSalao',
+      `SELECT i.ds_endpoint AS endpoint, i.ds_chave_publica AS p256dh, i.ds_chave_auth AS auth,
+        i.id_vinculo_dispositivo AS idVinculo, u.id_autenticacao_externa AS destinatarioId
+        FROM tb_inscricao_notificacao i INNER JOIN tb_salao s ON s.id_salao=i.fk_salao
+        INNER JOIN tb_usuario u ON u.id_usuario=s.fk_usuario_administrador WHERE i.fk_salao=:idSalao`,
       { replacements: { idSalao }, type: QueryTypes.SELECT },
     );
     if (!inscricoes.length) {
       console.info('[Notificações push] Nenhum dispositivo inscrito para receber o aviso.', { idSalao, titulo });
       return;
     }
-    const payload = JSON.stringify({ id: idNotificacao, audience: 'salao', title: titulo, body: corpo, url: '/salao/agendamentos' });
     await Promise.all(inscricoes.map(async (inscricao) => {
       try {
-        await webpush.sendNotification({ endpoint: inscricao.endpoint, keys: { p256dh: inscricao.p256dh, auth: inscricao.auth } }, payload);
+        await webpush.sendNotification({ endpoint: inscricao.endpoint, keys: { p256dh: inscricao.p256dh, auth: inscricao.auth } }, JSON.stringify(montarAvisoPush(inscricao, 'salao', idNotificacao)));
       } catch (erro) {
         if ([404, 410].includes(erro.statusCode)) {
           await bancoDeDados.query('DELETE FROM tb_inscricao_notificacao WHERE ds_endpoint_hash=:hashEndpoint', { replacements: { hashEndpoint: createHash('sha256').update(inscricao.endpoint).digest('hex') } });
@@ -298,4 +306,21 @@ export async function notificarSalaoDaUnidade(idUnidade, titulo, corpo) {
   } catch (erro) {
     console.error('[Notificações push] Não foi possível notificar o salão.', { idUnidade, mensagem: erro.message });
   }
+}
+
+export function montarAvisoPush(inscricao, audience, id) {
+  return { versao: 1, id, audience, destinatarioId: inscricao.destinatarioId, idVinculo: inscricao.idVinculo,
+    title: 'AgendeAki', body: 'Você tem uma nova atualização.', url: `/${audience}/notificacoes` };
+}
+
+export async function desvincularPushIdentidade(idExterno, publico, endpoint, idVinculo) {
+  if (typeof endpoint !== 'string' || typeof idVinculo !== 'string') return;
+  if (publico === 'cliente') await bancoDeDados.query(`DELETE i FROM tb_inscricao_notificacao_cliente i
+    INNER JOIN tb_usuario u ON u.id_usuario=i.fk_usuario WHERE u.id_autenticacao_externa=:idExterno
+    AND i.ds_endpoint=:endpoint AND i.id_vinculo_dispositivo=:idVinculo`, { replacements: { idExterno, endpoint, idVinculo } });
+  else await bancoDeDados.query(`DELETE i FROM tb_inscricao_notificacao i
+    INNER JOIN tb_salao s ON s.id_salao=i.fk_salao INNER JOIN tb_usuario u ON u.id_usuario=s.fk_usuario_administrador
+    WHERE u.id_autenticacao_externa=:idExterno AND i.ds_endpoint=:endpoint AND i.id_vinculo_dispositivo=:idVinculo`, {
+    replacements: { idExterno, endpoint, idVinculo },
+  });
 }

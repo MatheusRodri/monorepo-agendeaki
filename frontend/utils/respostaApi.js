@@ -43,10 +43,16 @@ export function obterUrlApi() {
   return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 }
 
-export function armazenarSessao(tokenAcesso, tokenAtualizacao, perfilUsuario, manterConectado = true) {
+export function armazenarSessao(tokenAcesso, tokenAtualizacao, perfilUsuario, manterConectado = true, identidade) {
   if (typeof window === 'undefined' || !perfisValidos.includes(perfilUsuario)) return;
   migrarSessaoLegada();
   const chaves = obterChaves(perfilUsuario);
+  const anterior = obterIdentidadeSessao(perfilUsuario);
+  if (identidade && anterior) navigator.serviceWorker?.controller?.postMessage({ type: 'AGENDEAKI_VINCULO_REMOVER', audience: perfilUsuario, destinatarioId: anterior });
+  if (identidade) {
+    localStorage.removeItem(`identidade${perfilUsuario}`); sessionStorage.removeItem(`identidade${perfilUsuario}`);
+    (manterConectado ? localStorage : sessionStorage).setItem(`identidade${perfilUsuario}`, identidade);
+  }
   localStorage.removeItem(chaves.tokenAcesso);
   localStorage.removeItem(chaves.tokenAtualizacao);
   sessionStorage.removeItem(chaves.tokenAcesso);
@@ -83,10 +89,24 @@ export function limparSessao(perfilUsuario) {
 
   const perfisParaLimpar = perfisValidos.includes(perfilUsuario) ? [perfilUsuario] : perfisValidos;
   perfisParaLimpar.forEach((perfil) => {
+    const identidade = obterIdentidadeSessao(perfil);
+    navigator.serviceWorker?.controller?.postMessage({ type: 'AGENDEAKI_VINCULO_REMOVER', audience: perfil, destinatarioId: identidade });
+    localStorage.removeItem(`identidade${perfil}`); sessionStorage.removeItem(`identidade${perfil}`);
     const chaves = obterChaves(perfil);
     localStorage.removeItem(chaves.tokenAcesso);
     localStorage.removeItem(chaves.tokenAtualizacao);
     sessionStorage.removeItem(chaves.tokenAcesso);
     sessionStorage.removeItem(chaves.tokenAtualizacao);
   });
+}
+
+export function obterIdentidadeSessao(perfil) {
+  if (typeof window === 'undefined') return null;
+  const salva = localStorage.getItem(`identidade${perfil}`) || sessionStorage.getItem(`identidade${perfil}`);
+  if (salva) return salva;
+  // Apenas identificação da interface. A autorização sempre é feita pela API.
+  try {
+    const payload = obterTokenAcesso(perfil)?.split('.')[1]?.replace(/-/g, '+').replace(/_/g, '/');
+    return payload ? JSON.parse(atob(payload)).sub : null;
+  } catch { return null; }
 }

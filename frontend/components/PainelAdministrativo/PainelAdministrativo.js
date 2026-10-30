@@ -1,5 +1,7 @@
 'use client';
 
+import { encerrarSessaoPerfil } from '../../utils/notificacoesDispositivo';
+import { toastAviso } from '../../utils/toast';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { requisitarApi } from '../../utils/api';
@@ -75,7 +77,7 @@ export default function PainelAdministrativo() {
   }
 
   async function sair() {
-    try { await requisitarApi('/api/admin/logout', { metodo: 'POST' }); } catch {}
+    if (!await encerrarSessaoPerfil('admin')) toastAviso('Saída local concluída. A revogação no servidor não foi confirmada.');
     limparSessao('admin'); definirPerfil(null); definirEstado('login'); definirDashboard(null); definirSecao('dashboard');
   }
 
