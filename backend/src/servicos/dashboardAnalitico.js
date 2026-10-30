@@ -1,8 +1,9 @@
+import { filtroServicoSql, normalizarFiltrosPrecos } from './historicoPrecos.js';
 import { QueryTypes, Transaction } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 
 const recortes = ['todos', 'agendamentos', 'realizados', 'extras', 'cancelados', 'naoCompareceu', 'comparecimento', 'previstos', 'taxaCancelamento'];
-export const camposOrdenacao = ['idAgendamento', 'dataInicio', 'dataRealizacao', 'cliente', 'contato', 'servico', 'quantidadeServicosExtras', 'unidade', 'profissional', 'status', 'valor', 'tipoItem', 'statusPagamento', 'motivoCancelamento', 'origemCancelamento'];
+export const camposOrdenacao = ['idAgendamento', 'dataInicio', 'dataRealizacao', 'cliente', 'contato', 'servico', 'quantidadeServicosExtras', 'unidade', 'profissional', 'status', 'valor', 'tipoItem', 'statusPagamento', 'motivoCancelamento', 'origemCancelamento', 'promocaoAplicada', 'precoNormal', 'precoVigente', 'descontoPromocional', 'descontoAdicional', 'acrescimo'];
 const erroConsulta = (mensagem) => Object.assign(new Error(mensagem), { status: 400 });
 const dataIso = (data) => {
   const valor = new Date(`${data}T12:00:00Z`);
@@ -16,7 +17,7 @@ function deslocar(data, dias) {
 
 export function normalizarConsultaAnalitica(query, idSalao, agora = new Date()) {
   const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(agora);
-  const filtros = { idSalao };
+  const filtros = { idSalao, ...normalizarFiltrosPrecos(query) };
   for (const campo of ['idUnidade', 'idServico', 'idFuncionario']) {
     const valor = query[campo] ?? '';
     if (valor !== '' && (!/^\d+$/.test(String(valor)) || !Number.isSafeInteger(Number(valor)))) throw erroConsulta(`Filtro ${campo} inválido.`);
@@ -42,9 +43,9 @@ export function normalizarConsultaAnalitica(query, idSalao, agora = new Date()) 
   return { filtros, recorte, visualizarPor, ordenarPor, direcao, pagina: Number(pagina), porPagina };
 }
 
-const filtroItem = '(:idServico = 0 OR item.fk_servico = :idServico) AND (:idFuncionario = 0 OR item.fk_funcionario = :idFuncionario)';
-export const contagemServicosExtrasSql = `(SELECT COUNT(*) FROM tb_agendamento_servico_adicional item
-  WHERE item.fk_agendamento = a.id_agendamento AND ${filtroItem})`;
+const filtroItem = filtroServicoSql();
+export const contagemServicosExtrasSql = `(SELECT COUNT(*) FROM vw_servico_atendimento item
+  WHERE item.id_agendamento = a.id_agendamento AND item.id_extra IS NOT NULL AND ${filtroItem})`;
 const origem = `FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade = a.fk_unidade
   LEFT JOIN tb_usuario c ON c.id_usuario = a.fk_usuario
   LEFT JOIN tb_cliente_salao cs ON cs.id_cliente_salao = a.fk_cliente_salao`;
@@ -64,34 +65,44 @@ function condicao({ recorte }) {
     AND ${periodo}${recorte === 'taxaCancelamento' ? " AND (a.dt_inicio <= :agora OR a.cd_status='CANCELADO')" : ''}${recorte === 'comparecimento' ? " AND a.cd_status IN ('REALIZADO','NAO_COMPARECEU')" : ''}${recorte === 'extras' ? ` AND ${contagemServicosExtrasSql} > 0` : ''}`;
 }
 
+// O ID do extra identifica o tipo sem depender da collation dos textos da view.
+const tipoItemSql = "CASE WHEN item.id_extra IS NULL THEN 'ORIGINAL' ELSE 'EXTRA' END";
+// A view usa zero para extras na ocupação; a tabela analítica exibe a duração histórica do fechamento.
+const duracaoItemSql = 'CASE WHEN item.id_extra IS NULL THEN item.minutos_reservados ELSE extra.nu_duracao_minutos END';
 const dataSql = (campo) => `DATE_FORMAT(a.${campo},'%Y-%m-%dT%H:%i:%s-03:00')`;
-const itensServicos = `(SELECT a.id_agendamento, a.fk_servico, a.fk_funcionario,
-  a.nm_servico_agendado AS servico, f.nm_funcionario AS profissional, a.vl_servico_agendado AS valor,
-  'ORIGINAL' AS tipoItem, NULL AS idExtra
-  FROM tb_agendamento a INNER JOIN tb_funcionario f ON f.id_funcionario = a.fk_funcionario
-  UNION ALL SELECT e.fk_agendamento, e.fk_servico, e.fk_funcionario, e.nm_servico, e.nm_funcionario,
-  e.vl_cobrado, 'EXTRA', e.id_servico_adicional FROM tb_agendamento_servico_adicional e)`;
+export const camposPrecosItemSql = `CASE WHEN item.st_promocao_aplicada IS NULL THEN 'NAO_INFORMADO'
+    WHEN item.st_promocao_aplicada THEN 'COM' ELSE 'SEM' END AS promocaoAplicada,
+  item.vl_preco_normal AS precoNormal, item.vl_preco_vigente AS precoVigente,
+  item.desconto_promocional AS descontoPromocional, item.desconto_adicional AS descontoAdicional,
+  item.acrescimo, (item.st_promocao_aplicada IS NULL) AS totaisParciais`;
 
 function origemConsulta(consulta) {
   return consulta.visualizarPor === 'servico'
-    ? `${origem} INNER JOIN ${itensServicos} item ON item.id_agendamento = a.id_agendamento`
+    ? `${origem} INNER JOIN vw_servico_atendimento item ON item.id_agendamento = a.id_agendamento
+      LEFT JOIN tb_agendamento_servico_adicional extra ON extra.id_servico_adicional = item.id_extra`
     : origem;
 }
 function condicaoConsulta(consulta) {
-  return `${condicao(consulta)}${consulta.visualizarPor === 'servico' ? ` AND ${filtroItem}${consulta.recorte === 'extras' ? " AND item.tipoItem = 'EXTRA'" : ''}` : ''}`;
+  return `${condicao(consulta)}${consulta.visualizarPor === 'servico' ? ` AND ${filtroItem}${consulta.recorte === 'extras' ? " AND item.id_extra IS NOT NULL" : ''}` : ''}`;
 }
 
 function colunas(consulta) {
-  const fonteItem = consulta.recorte === 'extras'
-    ? '(SELECT fk_agendamento AS id_agendamento, fk_servico, fk_funcionario, nm_servico AS servico, vl_cobrado AS valor FROM tb_agendamento_servico_adicional)'
-    : 'vw_servico_atendimento';
+  const filtro = `${filtroItem}${consulta.recorte === 'extras' ? " AND item.id_extra IS NOT NULL" : ''}`;
+  const soma = (campo) => `(SELECT SUM(item.${campo}) FROM vw_servico_atendimento item WHERE item.id_agendamento = a.id_agendamento AND ${filtro})`;
   const colunasItem = consulta.visualizarPor === 'servico'
-    ? `item.fk_servico AS idServico, item.fk_funcionario AS idFuncionario, item.tipoItem, item.idExtra,
-      CONCAT(item.tipoItem, ':', CASE WHEN item.tipoItem = 'ORIGINAL' THEN a.id_agendamento ELSE item.idExtra END) AS idLinha,
-      item.servico, item.profissional, item.valor`
-    : `(SELECT GROUP_CONCAT(item.servico ORDER BY item.servico SEPARATOR ' + ') FROM ${fonteItem} item WHERE item.id_agendamento = a.id_agendamento AND ${filtroItem}) AS servico,
-      (SELECT GROUP_CONCAT(DISTINCT f.nm_funcionario ORDER BY f.nm_funcionario SEPARATOR ', ') FROM ${fonteItem} item INNER JOIN tb_funcionario f ON f.id_funcionario = item.fk_funcionario WHERE item.id_agendamento = a.id_agendamento AND ${filtroItem}) AS profissional,
-      (SELECT SUM(item.valor) FROM ${fonteItem} item WHERE item.id_agendamento = a.id_agendamento AND ${filtroItem}) AS valor`;
+    ? `item.fk_servico AS idServico, item.fk_funcionario AS idFuncionario, ${tipoItemSql} AS tipoItem, item.id_extra AS idExtra,
+      CONCAT(${tipoItemSql}, ':', COALESCE(item.id_extra, a.id_agendamento)) AS idLinha,
+      item.servico, item.profissional, item.valor, ${duracaoItemSql} AS duracaoMinutos,
+      extra.ds_observacao_ajuste AS observacaoAjuste, ${camposPrecosItemSql}`
+    : `(SELECT GROUP_CONCAT(item.servico ORDER BY item.servico SEPARATOR ' + ') FROM vw_servico_atendimento item WHERE item.id_agendamento = a.id_agendamento AND ${filtro}) AS servico,
+      (SELECT GROUP_CONCAT(DISTINCT item.profissional ORDER BY item.profissional SEPARATOR ', ') FROM vw_servico_atendimento item WHERE item.id_agendamento = a.id_agendamento AND ${filtro}) AS profissional,
+      ${soma('valor')} AS valor, ${soma('vl_preco_normal')} AS precoNormal, ${soma('vl_preco_vigente')} AS precoVigente,
+      ${soma('desconto_promocional')} AS descontoPromocional, ${soma('desconto_adicional')} AS descontoAdicional, ${soma('acrescimo')} AS acrescimo,
+      (SELECT CASE WHEN COUNT(item.st_promocao_aplicada) < COUNT(*) THEN 'NAO_INFORMADO'
+        WHEN MIN(item.st_promocao_aplicada) <> MAX(item.st_promocao_aplicada) THEN 'MISTA'
+        WHEN MAX(item.st_promocao_aplicada) = 1 THEN 'COM' ELSE 'SEM' END
+        FROM vw_servico_atendimento item WHERE item.id_agendamento = a.id_agendamento AND ${filtro}) AS promocaoAplicada,
+      (SELECT COUNT(*) > COUNT(item.st_promocao_aplicada) FROM vw_servico_atendimento item WHERE item.id_agendamento = a.id_agendamento AND ${filtro}) AS totaisParciais`;
   return `a.id_agendamento AS idAgendamento, a.fk_usuario AS idUsuario, a.fk_cliente_salao AS idClienteSalao,
   a.fk_unidade AS idUnidade, ${dataSql('dt_inicio')} AS dataInicio, ${dataSql('dt_fim')} AS dataFim,
   ${dataSql('dt_realizacao')} AS dataRealizacao, ${dataSql('dt_cancelamento')} AS dataCancelamento,
@@ -110,7 +121,7 @@ function colunas(consulta) {
 
 function ordenar(consulta) {
   // Os identificadores vêm exclusivamente da lista fechada validada na entrada.
-  return `${consulta.ordenarPor} IS NULL ASC, ${consulta.ordenarPor} ${consulta.direcao.toUpperCase()}, idAgendamento DESC${consulta.visualizarPor === 'servico' ? ", (tipoItem = 'EXTRA') ASC, idExtra ASC" : ''}`;
+  return `${consulta.ordenarPor} IS NULL ASC, ${consulta.ordenarPor} ${consulta.direcao.toUpperCase()}, idAgendamento DESC${consulta.visualizarPor === 'servico' ? ", (idExtra IS NOT NULL) ASC, idExtra ASC" : ''}`;
 }
 
 export function consultarLinhasAnaliticas(consulta, { limite, offset = 0, transaction } = {}) {
@@ -121,14 +132,22 @@ export function consultarLinhasAnaliticas(consulta, { limite, offset = 0, transa
 
 export async function consultarAnalitico(consulta) {
   return bancoDeDados.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.REPEATABLE_READ }, async (transaction) => {
-    const contagemExtras = consulta.visualizarPor === 'servico' ? "CASE WHEN item.tipoItem = 'EXTRA' THEN 1 ELSE 0 END" : contagemServicosExtrasSql;
+    const contagemExtras = consulta.visualizarPor === 'servico' ? "CASE WHEN item.id_extra IS NOT NULL THEN 1 ELSE 0 END" : contagemServicosExtrasSql;
     const [contagem] = await bancoDeDados.query(`SELECT COUNT(*) AS total, COUNT(DISTINCT a.id_agendamento) AS totalAtendimentos,
       COALESCE(SUM(${contagemExtras}),0) AS totalServicosExtras ${origemConsulta(consulta)} WHERE ${condicaoConsulta(consulta)}`, { replacements: consulta.filtros, type: QueryTypes.SELECT, transaction });
     const total = Number(contagem.total);
     const totalPaginas = Math.max(1, Math.ceil(total / consulta.porPagina));
     const pagina = Math.min(consulta.pagina, totalPaginas);
     const agendamentos = await consultarLinhasAnaliticas(consulta, { limite: consulta.porPagina, offset: (pagina - 1) * consulta.porPagina, transaction });
-    return { agendamentos, pagina, porPagina: consulta.porPagina, total, totalPaginas,
+    let linhas = agendamentos;
+    if (consulta.visualizarPor === 'atendimento' && agendamentos.length) {
+      // Uma única consulta para compor a página inteira, no mesmo snapshot dos totais.
+      const itens = await consultarItens(consulta, agendamentos.map((item) => item.idAgendamento), transaction);
+      const porAtendimento = new Map(agendamentos.map((item) => [String(item.idAgendamento), []]));
+      for (const item of itens) porAtendimento.get(String(item.idAgendamento))?.push(item);
+      linhas = agendamentos.map((item) => ({ ...item, servicos: porAtendimento.get(String(item.idAgendamento)) }));
+    }
+    return { agendamentos: linhas, pagina, porPagina: consulta.porPagina, total, totalPaginas,
       totalAtendimentos: Number(contagem.totalAtendimentos ?? total), totalServicosExtras: Number(contagem.totalServicosExtras ?? 0),
       recorte: consulta.recorte, visualizarPor: consulta.visualizarPor };
   });
@@ -140,8 +159,12 @@ export const colunasExportacao = [
   ['id_unidade', 'idUnidade'], ['unidade', 'unidade'], ['id_servico', 'idServico'], ['servico', 'nomeServico'],
   ['id_funcionario', 'idFuncionario'], ['profissional', 'nomeFuncionario'], ['data_agendada', 'dataInicio'],
   ['data_realizacao', 'dataRealizacao'], ['data_cancelamento', 'dataCancelamento'], ['status', 'status'],
-  ['status_pagamento', 'statusPagamento'], ['valor_item', 'valorItem'], ['motivo_cancelamento', 'motivoCancelamento'],
+  ['status_pagamento', 'statusPagamento'], ['valor_item', 'valorItem'],
+  ['promocao_aplicada', 'promocaoAplicada'], ['preco_normal', 'precoNormal'], ['preco_vigente', 'precoVigente'],
+  ['desconto_promocional', 'descontoPromocional'], ['desconto_adicional', 'descontoAdicional'], ['acrescimo', 'acrescimo'],
+  ['dados_parciais', 'totaisParciais'], ['motivo_cancelamento', 'motivoCancelamento'],
   ['detalhe_cancelamento', 'detalheCancelamento'], ['origem_cancelamento', 'origemCancelamento'],
+  ['observacao_ajuste', 'observacaoAjuste'],
 ];
 export function linhaCsv(valores) {
   return valores.map((valor) => {
@@ -152,17 +175,15 @@ export function linhaCsv(valores) {
 }
 
 export async function consultarItens(consulta, ids, transaction) {
-  return bancoDeDados.query(`SELECT item.* FROM (
-    SELECT a.id_agendamento AS idAgendamento, 'ORIGINAL' AS tipoItem, NULL AS idExtra,
-      a.fk_servico AS idServico, a.nm_servico_agendado AS nomeServico, a.fk_funcionario AS idFuncionario,
-      f.nm_funcionario AS nomeFuncionario, a.vl_servico_agendado AS valorItem
-      FROM tb_agendamento a INNER JOIN tb_funcionario f ON f.id_funcionario = a.fk_funcionario WHERE a.id_agendamento IN (:ids)
-    UNION ALL
-    SELECT e.fk_agendamento, 'EXTRA', e.id_servico_adicional, e.fk_servico, e.nm_servico, e.fk_funcionario, e.nm_funcionario, e.vl_cobrado
-      FROM tb_agendamento_servico_adicional e WHERE e.fk_agendamento IN (:ids)
-    ) item WHERE (:idServico = 0 OR item.idServico = :idServico) AND (:idFuncionario = 0 OR item.idFuncionario = :idFuncionario)
-    ${consulta.recorte === 'extras' ? "AND item.tipoItem = 'EXTRA'" : ''}
-    ORDER BY item.idAgendamento, (item.tipoItem = 'EXTRA'), item.idExtra`, {
+  return bancoDeDados.query(`SELECT item.id_agendamento AS idAgendamento, ${tipoItemSql} AS tipoItem, item.id_extra AS idExtra,
+    item.fk_servico AS idServico, item.fk_funcionario AS idFuncionario, item.servico AS nomeServico,
+    item.profissional AS nomeFuncionario, item.valor AS valorItem, ${duracaoItemSql} AS duracaoMinutos,
+    extra.ds_observacao_ajuste AS observacaoAjuste, ${camposPrecosItemSql}
+    FROM vw_servico_atendimento item
+    LEFT JOIN tb_agendamento_servico_adicional extra ON extra.id_servico_adicional = item.id_extra
+    WHERE item.id_agendamento IN (:ids) AND ${filtroItem}
+    ${consulta.recorte === 'extras' ? "AND item.id_extra IS NOT NULL" : ''}
+    ORDER BY item.id_agendamento, (item.id_extra IS NOT NULL), item.id_extra`, {
     replacements: { ...consulta.filtros, ids }, type: QueryTypes.SELECT, transaction,
   });
 }
@@ -200,7 +221,10 @@ export async function exportarAnaliticoCsv(consulta, resposta) {
     while (lote.length) {
       const linhas = await prepararLinhasExportacao(consulta, lote, transaction);
       for (const item of linhas) {
-        const linha = { ...item, valorItem: Number(item.valorItem).toFixed(2) };
+        const linha = { ...item };
+        for (const campo of ['valorItem', 'precoNormal', 'precoVigente', 'descontoPromocional', 'descontoAdicional', 'acrescimo']) {
+          linha[campo] = item[campo] == null ? '' : Number(item[campo]).toFixed(2);
+        }
         await escrever(linhaCsv(colunasExportacao.map(([, campo]) => linha[campo])));
       }
       if (lote.length < 500) break;

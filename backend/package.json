@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/servidor.js",
-    "start": "node src/servidor.js"
+    "start": "node src/servidor.js",
+    "test": "node --test --test-isolation=none tests/historicoPrecos.test.js tests/dashboardVisaoGeral.test.js tests/dashboardAnalitico.test.js tests/observacaoAjuste.test.js",
+    "test:integracao": "node --experimental-test-module-mocks --test --test-isolation=none tests/promocoes.integracao.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

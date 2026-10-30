@@ -1,3 +1,6 @@
+import { calcularHistoricoPreco, calcularAjusteExtra, normalizarObservacaoAjuste } from './historicoPrecos.js';
+import { camposPromocaoSql, lerPromocao } from './promocoesServicos.js';
+import { obterAcessoPremiumSalao } from './acessoPremium.js';
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { bloquearRecursosAgenda, criarTransacaoAgenda, resolverReserva } from './disponibilidade.js';
@@ -44,9 +47,11 @@ export async function criarReservasCliente({ idUsuario, idUnidade, itens, exigir
       });
       const [idAgendamento] = await bancoDeDados.query(`INSERT INTO tb_agendamento
         (fk_usuario, fk_unidade, fk_funcionario, fk_servico, dt_inicio, dt_fim,
-         nm_servico_agendado, vl_servico_agendado, nu_duracao_minutos, ds_observacao)
+         nm_servico_agendado, vl_servico_agendado, nu_duracao_minutos, ds_observacao,
+         vl_preco_normal, vl_preco_vigente, st_promocao_aplicada, tp_promocao_aplicada, vl_promocao_aplicada)
         VALUES (:idUsuario, :idUnidade, :idFuncionario, :idServico, :dataInicioBanco, :dataFimBanco,
-         :nomeServico, :valorServico, :duracaoMinutos, :observacao)`, {
+         :nomeServico, :valorServico, :duracaoMinutos, :observacao,
+         :precoNormal, :precoVigente, :promocaoAplicada, :tipoPromocaoAplicada, :valorPromocaoAplicada)`, {
         replacements: { ...reserva, idUsuario, idUnidade: Number(idUnidade), idServico: Number(item.idServico), observacao: item.observacao?.trim() || null }, transaction,
       });
       agendamentos.push({ ...reserva, idAgendamento: Number(idAgendamento), idServico: Number(item.idServico) });
@@ -72,12 +77,17 @@ export async function salvarServicosAdicionais({ idAgendamento, idUnidade, servi
   if (!Array.isArray(servicosAdicionais) || servicosAdicionais.length > 50) {
     throw Object.assign(new Error('Informe uma lista de até 50 serviços adicionais.'), { status: 400 });
   }
+  if (!servicosAdicionais.length) return;
+  const agora = new Date();
+  const [unidade] = await bancoDeDados.query('SELECT fk_salao AS idSalao FROM tb_unidade WHERE id_unidade=:idUnidade', { replacements: { idUnidade }, transaction, type: QueryTypes.SELECT });
+  const premiumAtivo = await obterAcessoPremiumSalao(unidade.idSalao, { transaction, agora });
   for (const item of servicosAdicionais) {
     if (!item || !idValido(item.idServico) || !idValido(item.idFuncionario)) {
       throw Object.assign(new Error('Selecione serviço e profissional válidos para cada extra.'), { status: 400 });
     }
+    const observacao = normalizarObservacaoAjuste(item.observacaoAjuste);
     const [servico] = await bancoDeDados.query(`SELECT s.nm_servico AS nomeServico,
-      s.vl_servico AS valorReferencia, s.nu_duracao_minutos AS duracaoMinutos,
+      s.vl_servico AS valorReferencia, s.nu_duracao_minutos AS duracaoMinutos, ${camposPromocaoSql('s')},
       f.nm_funcionario AS nomeFuncionario
       FROM tb_servico s INNER JOIN tb_funcionario_servico fs ON fs.fk_servico=s.id_servico
       INNER JOIN tb_funcionario f ON f.id_funcionario=fs.fk_funcionario AND f.fk_unidade=s.fk_unidade
@@ -86,21 +96,32 @@ export async function salvarServicosAdicionais({ idAgendamento, idUnidade, servi
       replacements: { idServico: Number(item.idServico), idFuncionario: Number(item.idFuncionario), idUnidade }, transaction, type: QueryTypes.SELECT,
     });
     if (!servico) throw Object.assign(new Error('O serviço extra ou profissional não está disponível nesta unidade.'), { status: 400 });
-    const valorCobrado = valorMonetario(item.valorCobrado ?? servico.valorReferencia);
+    const historico = calcularHistoricoPreco(servico.valorReferencia, lerPromocao(servico), premiumAtivo, agora);
+    let ajuste;
+    try {
+      ajuste = calcularAjusteExtra(historico, item.valorCobrado, item.valorEsperado);
+    } catch (erro) {
+      if (erro.codigo === 'PRECO_ALTERADO') erro.precosAtualizados = [{ idServico: Number(item.idServico), ...historico }];
+      throw erro;
+    }
+    const { valorCobrado } = ajuste;
+    const observacaoAjuste = ajuste.descontoAdicional > 0 || ajuste.acrescimo > 0 ? observacao : null;
     await bancoDeDados.query(`INSERT INTO tb_agendamento_servico_adicional
-      (fk_agendamento, fk_servico, fk_funcionario, nm_servico, nm_funcionario, vl_referencia, vl_cobrado, nu_duracao_minutos)
-      VALUES (:idAgendamento, :idServico, :idFuncionario, :nomeServico, :nomeFuncionario, :valorReferencia, :valorCobrado, :duracaoMinutos)`, {
-      replacements: { ...servico, idAgendamento, idServico: Number(item.idServico), idFuncionario: Number(item.idFuncionario), valorCobrado }, transaction,
+      (fk_agendamento, fk_servico, fk_funcionario, nm_servico, nm_funcionario, vl_referencia, vl_cobrado, nu_duracao_minutos,
+       vl_preco_normal, vl_preco_vigente, st_promocao_aplicada, tp_promocao_aplicada, vl_promocao_aplicada, ds_observacao_ajuste)
+      VALUES (:idAgendamento, :idServico, :idFuncionario, :nomeServico, :nomeFuncionario, :valorReferencia, :valorCobrado, :duracaoMinutos,
+       :precoNormal, :precoVigente, :promocaoAplicada, :tipoPromocaoAplicada, :valorPromocaoAplicada, :observacaoAjuste)`, {
+      replacements: { ...servico, ...historico, idAgendamento, idServico: Number(item.idServico), idFuncionario: Number(item.idFuncionario), valorCobrado, observacaoAjuste }, transaction,
     });
   }
 }
 
-export async function incluirServicosAdicionais(agendamentos, { transaction } = {}) {
+export async function incluirServicosAdicionais(agendamentos, { transaction, incluirObservacoesAjuste = false } = {}) {
   if (!agendamentos.length) return agendamentos;
   const adicionais = await bancoDeDados.query(`SELECT fk_agendamento AS idAgendamento,
     fk_servico AS idServico, fk_funcionario AS idFuncionario, nm_servico AS servico,
     nm_funcionario AS profissional, vl_referencia AS valorReferencia, vl_cobrado AS valorCobrado,
-    nu_duracao_minutos AS duracaoMinutos FROM tb_agendamento_servico_adicional
+    nu_duracao_minutos AS duracaoMinutos${incluirObservacoesAjuste ? ', ds_observacao_ajuste AS observacaoAjuste' : ''} FROM tb_agendamento_servico_adicional
     WHERE fk_agendamento IN (:ids) ORDER BY id_servico_adicional`, {
     replacements: { ids: agendamentos.map(({ idAgendamento }) => idAgendamento) }, type: QueryTypes.SELECT, transaction,
   });

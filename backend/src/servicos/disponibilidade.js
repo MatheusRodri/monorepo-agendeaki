@@ -1,3 +1,4 @@
+import { calcularHistoricoPreco } from './historicoPrecos.js';
 import { QueryTypes, Transaction } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { obterAcessoPremiumSalao } from './acessoPremium.js';
@@ -268,6 +269,7 @@ export async function listarHorariosDisponiveis({
       idServico: Number(contexto[0].idServico),
       nome: contexto[0].nomeServico,
       ...preco,
+      ...calcularHistoricoPreco(contexto[0].valorServico, lerPromocao(contexto[0]), premiumAtivo, agoraPreco),
       valor: preco.valorVigente,
     },
   };
@@ -303,6 +305,11 @@ export async function resolverReserva({
     nomeFuncionario: profissional.nome,
     nomeServico: disponibilidade.servico.nome,
     valorServico: disponibilidade.servico.valor,
+    precoNormal: disponibilidade.servico.precoNormal,
+    precoVigente: disponibilidade.servico.precoVigente,
+    promocaoAplicada: disponibilidade.servico.promocaoAplicada,
+    tipoPromocaoAplicada: disponibilidade.servico.tipoPromocaoAplicada,
+    valorPromocaoAplicada: disponibilidade.servico.valorPromocaoAplicada,
   };
   await validarConflitoCliente({ ...reserva, idUsuario, idClienteSalao, ignorarIdAgendamento, transaction });
   return reserva;

@@ -36,6 +36,7 @@ function criarErroApi(causa) {
   );
   erro.status = causa.response?.status;
   erro.codigo = causa.response?.data?.codigo;
+  erro.precosAtualizados = causa.response?.data?.precosAtualizados;
   erro.etapa = causa.response?.data?.etapa;
   erro.cobrancaEncerrada = causa.response?.data?.cobrancaEncerrada;
   erro.indiceItem = causa.response?.data?.indiceItem;

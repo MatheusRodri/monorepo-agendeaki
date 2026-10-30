@@ -1,3 +1,6 @@
+import { consultarVisaoGeralDashboard } from '../servicos/dashboardVisaoGeral.js';
+import { filtroServicoSql, normalizarFiltrosPrecos } from '../servicos/historicoPrecos.js';
+import { consultarMetricasPromocoes } from '../servicos/metricasPromocoes.js';
 import { comporMotivo, calcularMetricasCancelamento } from '../servicos/metricasAgenda.js';
 import { iniciarExclusaoSalao } from '../servicos/exclusaoContaSalao.js';
 import { consultarExclusao } from '../servicos/usuarios.js';
@@ -1071,11 +1074,13 @@ async function criarAgendamentoSalao(requisicao, resposta) {
       `INSERT INTO tb_agendamento (
         fk_usuario, fk_cliente_salao, fk_unidade, fk_funcionario, fk_servico,
         dt_inicio, dt_fim, nm_servico_agendado, vl_servico_agendado,
-        nu_duracao_minutos, ds_observacao
+        nu_duracao_minutos, ds_observacao,
+        vl_preco_normal, vl_preco_vigente, st_promocao_aplicada, tp_promocao_aplicada, vl_promocao_aplicada
       ) VALUES (
         NULL, :idClienteSalao, :idUnidade, :idFuncionario, :idServico,
         :dataInicioBanco, :dataFimBanco, :nomeServico, :valorServico,
-        :duracaoMinutos, :observacao
+        :duracaoMinutos, :observacao,
+        :precoNormal, :precoVigente, :promocaoAplicada, :tipoPromocaoAplicada, :valorPromocaoAplicada
       )`,
       { replacements: { ...reserva, idClienteSalao: clienteId, idUnidade, idServico, observacao: String(dados.observacao ?? '').trim() || null }, transaction: transacao },
     );
@@ -1185,7 +1190,7 @@ async function registrarResultadoAgendamento(requisicao, resposta, status) {
     await transacao.commit();
   } catch (erro) {
     await transacao.rollback();
-    resposta.status(erro.status ?? 500).json({ mensagem: erro.message }); return;
+    resposta.status(erro.status ?? 500).json({ mensagem: erro.message, codigo: erro.codigo, precosAtualizados: erro.precosAtualizados }); return;
   }
   resposta.status(200).json({ mensagem: status === 'REALIZADO' ? 'Atendimento confirmado como realizado.' : 'Ausência registrada.' });
 }
@@ -1434,6 +1439,7 @@ async function indicadoresPremium(requisicao, resposta) {
     resposta.status(403).json({ mensagem: 'O dashboard avançado está disponível para assinantes Premium.' }); return;
   }
   try {
+    const filtrosPrecos = normalizarFiltrosPrecos(requisicao.query);
     const idUnidade = Number(requisicao.query.idUnidade) || 0;
     const idServico = Number(requisicao.query.idServico) || 0;
     const idFuncionario = Number(requisicao.query.idFuncionario) || 0;
@@ -1447,14 +1453,14 @@ async function indicadoresPremium(requisicao, resposta) {
     const quantidadeDiasPeriodo = Math.floor((new Date(`${dataFim}T00:00:00.000Z`) - new Date(`${dataInicio}T00:00:00.000Z`)) / 86_400_000) + 1;
     const dataFimAnterior = deslocarDataIso(dataInicio, -1);
     const dataInicioAnterior = deslocarDataIso(dataFimAnterior, -(quantidadeDiasPeriodo - 1));
-    const filtros = { idSalao: salao.idSalao, idServico, idFuncionario, agora: normalizarConsultaAnalitica({}, salao.idSalao).filtros.agora };
+    const filtros = { idSalao: salao.idSalao, idUnidade, idServico, idFuncionario, ...filtrosPrecos, agora: normalizarConsultaAnalitica({}, salao.idSalao).filtros.agora };
     const condicoes = ['u.fk_salao=:idSalao'];
     if (idUnidade) { filtros.idUnidade = idUnidade; condicoes.push('a.fk_unidade=:idUnidade'); }
-    const filtroItem = '(:idServico = 0 OR item.fk_servico=:idServico) AND (:idFuncionario = 0 OR item.fk_funcionario=:idFuncionario)';
-    if (idServico || idFuncionario) condicoes.push(`EXISTS (SELECT 1 FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem})`);
+    const filtroItem = filtroServicoSql();
+    condicoes.push(`EXISTS (SELECT 1 FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem})`);
     const valorAtendimento = `(SELECT SUM(item.valor) FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem})`;
     const quantidadeServicos = `(SELECT COUNT(*) FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem})`;
-    const valorExtras = `(SELECT COALESCE(SUM(item.vl_cobrado),0) FROM tb_agendamento_servico_adicional item WHERE item.fk_agendamento=a.id_agendamento AND ${filtroItem})`;
+    const valorExtras = `(SELECT COALESCE(SUM(item.valor),0) FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND item.id_extra IS NOT NULL AND ${filtroItem})`;
     const condicoesItens = ['u.fk_salao=:idSalao', filtroItem, ...(idUnidade ? ['a.fk_unidade=:idUnidade'] : [])];
     const condicaoBase = condicoes.join(' AND ');
     const condicoesAgendamentos = [...condicoes];
@@ -1473,7 +1479,7 @@ async function indicadoresPremium(requisicao, resposta) {
     const periodoAnteriorRealizacoes = 'DATE(a.dt_realizacao) BETWEEN :dataInicioAnterior AND :dataFimAnterior';
     const filtrosComparacao = { ...filtros, dataInicioAnterior, dataFimAnterior };
     const idClienteSql = "COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))";
-    const [resumo, receitaPrevista, comparacaoAnterior, receitaPorDia, receitaPorServico, receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes, clientesInativos, profissionais, disponibilidade, filiais, servicos, funcionarios, cancelamentosPorMotivo, analiseAgendamentos] = await Promise.all([
+    const [resumo, receitaPrevista, comparacaoAnterior, receitaPorDia, receitaPorServico, receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes, clientesInativos, profissionais, disponibilidade, filiais, servicos, funcionarios, cancelamentosPorMotivo, analiseAgendamentos, promocoes, visaoGeral] = await Promise.all([
       bancoDeDados.query(`SELECT
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN ${valorAtendimento} ELSE 0 END),0) AS receitaRealizada,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
@@ -1492,7 +1498,7 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN (a.dt_inicio<= :agora OR a.cd_status='CANCELADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase}`, { replacements: filtros, type: QueryTypes.SELECT }),
-      bancoDeDados.query(`SELECT COALESCE(SUM(a.vl_servico_agendado),0) AS receitaPrevista
+      bancoDeDados.query(`SELECT COALESCE(SUM(${valorAtendimento}),0) AS receitaPrevista, COUNT(*) AS quantidadeAgendamentosFuturos
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase} AND a.cd_status='AGENDADO' AND a.dt_inicio>= :agora
           AND a.dt_inicio<DATE_ADD(:agora, INTERVAL 30 DAY)`, { replacements: filtros, type: QueryTypes.SELECT }),
@@ -1512,16 +1518,16 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN ${periodoAnteriorCancelamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase}`, { replacements: filtrosComparacao, type: QueryTypes.SELECT }),
-      bancoDeDados.query(`SELECT DATE_FORMAT(a.dt_realizacao,'%Y-%m-%d') AS data, SUM(item.valor) AS valor
+      bancoDeDados.query(`SELECT DATE_FORMAT(a.dt_realizacao,'%Y-%m-%d') AS data, SUM(item.valor) AS valor, COUNT(DISTINCT a.id_agendamento) AS atendimentosRealizados
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         INNER JOIN vw_servico_atendimento item ON item.id_agendamento=a.id_agendamento
         WHERE ${condicoesItens.join(' AND ')} AND a.cd_status='REALIZADO'${restricaoRealizacao}
         GROUP BY DATE_FORMAT(a.dt_realizacao,'%Y-%m-%d') ORDER BY DATE_FORMAT(a.dt_realizacao,'%Y-%m-%d')`, { replacements: filtros, type: QueryTypes.SELECT }),
-      bancoDeDados.query(`SELECT item.servico, SUM(item.valor) AS valor
+      bancoDeDados.query(`SELECT item.servico, SUM(item.valor) AS valor, COUNT(*) AS quantidade
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         INNER JOIN vw_servico_atendimento item ON item.id_agendamento=a.id_agendamento
         WHERE ${condicoesItens.join(' AND ')} AND a.cd_status='REALIZADO'${restricaoRealizacao}
-        GROUP BY item.servico ORDER BY valor DESC LIMIT 8`, { replacements: filtros, type: QueryTypes.SELECT }),
+        GROUP BY item.servico ORDER BY quantidade DESC, valor DESC, item.servico`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT item.servico, SUM(item.valor) AS valor
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         INNER JOIN vw_servico_atendimento item ON item.id_agendamento=a.id_agendamento
@@ -1567,7 +1573,10 @@ async function indicadoresPremium(requisicao, resposta) {
           AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)
         GROUP BY COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))
         HAVING MAX(a.dt_realizacao)<DATE_SUB(:agora, INTERVAL 90 DAY)
-        ORDER BY ultimoAtendimento ASC LIMIT 20`, { replacements: { idSalao: salao.idSalao, agora: filtros.agora }, type: QueryTypes.SELECT }),
+          AND MAX(CASE WHEN (:idUnidade = 0 OR a.fk_unidade=:idUnidade)
+            AND EXISTS (SELECT 1 FROM vw_servico_atendimento item WHERE item.id_agendamento=a.id_agendamento AND ${filtroItem})
+            THEN 1 ELSE 0 END) = 1
+        ORDER BY ultimoAtendimento ASC LIMIT 20`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS profissional,
         COUNT(DISTINCT CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.id_agendamento END) AS atendimentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN item.minutos_reservados ELSE 0 END),0) AS minutosAtendimentoRealizado,
@@ -1575,7 +1584,7 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN item.valor ELSE 0 END),0) AS receitaRealizada
         FROM tb_funcionario f INNER JOIN tb_unidade u ON u.id_unidade=f.fk_unidade
         LEFT JOIN vw_servico_atendimento item ON item.fk_funcionario=f.id_funcionario
-          AND (:idServico = 0 OR item.fk_servico=:idServico)
+          AND ${filtroItem}
         LEFT JOIN tb_agendamento a ON a.id_agendamento=item.id_agendamento
         WHERE u.fk_salao=:idSalao AND (:idUnidade = 0 OR f.fk_unidade=:idUnidade)
           AND (:idFuncionario = 0 OR f.id_funcionario=:idFuncionario)
@@ -1606,8 +1615,10 @@ async function indicadoresPremium(requisicao, resposta) {
         WHERE ${condicaoBase} AND a.cd_status='CANCELADO'${restricaoCancelamento}
         GROUP BY motivo ORDER BY quantidade DESC, motivo`, { replacements: filtros, type: QueryTypes.SELECT }),
       requisicao.query.incluirAnalise === 'false' ? Promise.resolve([]) : consultarLinhasAnaliticas(
-        normalizarConsultaAnalitica({ dataInicio, dataFim, idUnidade, idServico, idFuncionario }, salao.idSalao),
+        normalizarConsultaAnalitica({ dataInicio, dataFim, idUnidade, idServico, idFuncionario, ...filtrosPrecos }, salao.idSalao),
       ),
+      consultarMetricasPromocoes(filtros, dataInicioAnterior, dataFimAnterior),
+      consultarVisaoGeralDashboard(filtros, dataInicioAnterior, dataFimAnterior),
     ]);
     const ocorrenciasSemana = Array(7).fill(Math.floor(quantidadeDiasPeriodo / 7));
     const diasRestantes = quantidadeDiasPeriodo % 7;
@@ -1633,6 +1644,7 @@ async function indicadoresPremium(requisicao, resposta) {
     calcularMetricasCancelamento(resumo[0]);
     calcularMetricasCancelamento(comparacaoAnterior[0]);
     resumo[0].receitaPrevista = receitaPrevista[0].receitaPrevista;
+    resumo[0].quantidadeAgendamentosFuturos = Number(receitaPrevista[0].quantidadeAgendamentosFuturos);
     // Comparecimento usa a mesma data agendada para realizados e ausências.
     // Os agregados partem dos atendimentos, evitando multiplicação pelos extras.
     for (const periodo of [resumo[0], comparacaoAnterior[0]]) {
@@ -1674,15 +1686,15 @@ async function indicadoresPremium(requisicao, resposta) {
     resposta.status(200).json({
       resumo: resumo[0], comparacaoAnterior: comparacaoAnterior[0], receitaPorDia, receitaPorServico,
       receitaPorServicoAnterior, agendamentosPorDia, mapaCalor, clientes: clientes[0], clientesInativos,
-      cancelamentosPorMotivo, analiseAgendamentos,
+      cancelamentosPorMotivo, analiseAgendamentos, promocoes, visaoGeral,
       profissionais: desempenhoProfissionais, insights,
       periodoComparacao: { dataInicioAnterior, dataFimAnterior },
-      filtros: { dataInicio, dataFim, idUnidade, idServico, idFuncionario },
+      filtros: { dataInicio, dataFim, idUnidade, idServico, idFuncionario, ...filtrosPrecos },
       opcoesFiltros: { filiais, servicos, funcionarios },
     });
   } catch (erro) {
     console.error('[Dashboard Premium salão] Falha ao carregar.', { mensagem: erro.message, parametros: requisicao.query });
-    resposta.status(500).json({ mensagem: 'Não foi possível carregar o dashboard Premium.' });
+    resposta.status(erro.status ?? 500).json({ mensagem: erro.status === 400 ? erro.message : 'Não foi possível carregar o dashboard Premium.' });
   }
 }
 

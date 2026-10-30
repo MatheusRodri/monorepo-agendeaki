@@ -485,7 +485,7 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
   useEffect(() => { definirAssinatura(dados.assinatura); }, [dados.assinatura]);
   const oferta = dados.oferta ?? {};
   const premium = oferta.premium ?? { opcoes: [], recursos: [] };
-  const recursosBasicos = oferta.basico?.recursos?.length ? oferta.basico.recursos : ['Dashboard atual', 'Agenda, clientes e gestão do salão', '1 unidade'];
+  const recursosBasicos = oferta.basico?.recursos?.length ? oferta.basico.recursos : ['Dashboard Simples', 'Agenda, clientes e gestão do salão', '1 unidade'];
   const recursosPremium = premium.recursos?.length ? premium.recursos : [
     { nome: 'Promoções em serviços', descricao: 'Ofereça preços promocionais ou descontos percentuais, com período opcional.' },
     { nome: 'Dashboard avançado', descricao: 'Painel mais detalhado para te auxiliar na tomada de decisão.' },
