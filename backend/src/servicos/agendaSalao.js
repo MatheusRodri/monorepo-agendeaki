@@ -67,7 +67,7 @@ export async function consultarAgendaSalao(idSalao, consulta) {
       podeConcluir: podeConcluirAgendamento(agendamento, agora),
       conclusaoDisponivelEm: liberacaoConclusao(agendamento.dataHoraInicio),
     }));
-    return { agendamentos: await incluirServicosAdicionais(comPermissoes, { transaction }),
+    return { agendamentos: await incluirServicosAdicionais(comPermissoes, { transaction, incluirObservacoesAjuste: true }),
       pagina, porPagina: consulta.porPagina, total, totalPaginas, tipo: consulta.tipo, periodo: consulta.periodo };
   });
 }

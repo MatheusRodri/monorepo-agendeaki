@@ -591,7 +591,10 @@ async function atualizarAgendamento(requisicao, resposta) {
   try {
     const [original] = await bancoDeDados.query('SELECT fk_unidade AS idUnidade FROM tb_agendamento WHERE id_agendamento=:idAgendamento AND fk_usuario=:idUsuario', { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT });
     await bloquearRecursosAgenda({ idUsuario: cliente.idUsuario, idsUnidades: [idUnidade, ...(original ? [original.idUnidade] : [])], transaction: transacao });
-    const agendamentos = await bancoDeDados.query(`SELECT id_agendamento AS idAgendamento, fk_servico AS idServicoOriginal, nm_servico_agendado AS nomeServico, vl_servico_agendado AS valorServico, nu_duracao_minutos AS duracaoMinutos FROM tb_agendamento WHERE id_agendamento = :idAgendamento AND fk_usuario = :idUsuario AND cd_status = 'AGENDADO' AND dt_inicio > NOW() LIMIT 1 FOR UPDATE`, { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT });
+    const agendamentos = await bancoDeDados.query(`SELECT id_agendamento AS idAgendamento, fk_servico AS idServicoOriginal, nm_servico_agendado AS nomeServico, vl_servico_agendado AS valorServico, nu_duracao_minutos AS duracaoMinutos, vl_preco_normal AS precoNormal,
+      vl_preco_vigente AS precoVigente, st_promocao_aplicada AS promocaoAplicada,
+      tp_promocao_aplicada AS tipoPromocaoAplicada, vl_promocao_aplicada AS valorPromocaoAplicada
+      FROM tb_agendamento WHERE id_agendamento = :idAgendamento AND fk_usuario = :idUsuario AND cd_status = 'AGENDADO' AND dt_inicio > NOW() LIMIT 1 FOR UPDATE`, { replacements: { idAgendamento, idUsuario: cliente.idUsuario }, transaction: transacao, type: QueryTypes.SELECT });
     if (!agendamentos.length) { const erro = new Error('Esse agendamento não pode mais ser alterado.'); erro.status = 404; throw erro; }
     const mesmoServico = Number(agendamentos[0].idServicoOriginal) === idServico;
     const reserva = await resolverReserva({ idUsuario: cliente.idUsuario, dataHoraInicio: requisicao.body?.dataHoraInicio, idFuncionario, idServico, idUnidade, ignorarIdAgendamento: idAgendamento, duracaoMinutos: mesmoServico ? Number(agendamentos[0].duracaoMinutos) : null, transaction: transacao });
@@ -599,6 +602,7 @@ async function atualizarAgendamento(requisicao, resposta) {
       reserva.nomeServico = agendamentos[0].nomeServico;
       reserva.valorServico = Number(agendamentos[0].valorServico);
       reserva.duracaoMinutos = Number(agendamentos[0].duracaoMinutos);
+      for (const campo of ['precoNormal', 'precoVigente', 'promocaoAplicada', 'tipoPromocaoAplicada', 'valorPromocaoAplicada']) reserva[campo] = agendamentos[0][campo];
     }
     const conflitos = await bancoDeDados.query(
       `SELECT id_agendamento FROM tb_agendamento WHERE fk_funcionario=:idFuncionario
@@ -607,7 +611,7 @@ async function atualizarAgendamento(requisicao, resposta) {
       { replacements: { ...reserva, idAgendamento }, transaction: transacao, type: QueryTypes.SELECT },
     );
     if (conflitos.length) { const erro = new Error('Esse horário acabou de ser reservado. Escolha outro.'); erro.status = 409; throw erro; }
-    await bancoDeDados.query(`UPDATE tb_agendamento SET fk_unidade=:idUnidade, fk_funcionario=:idFuncionario, fk_servico=:idServico, dt_inicio=:dataInicioBanco, dt_fim=:dataFimBanco, nm_servico_agendado=:nomeServico, vl_servico_agendado=:valorServico, nu_duracao_minutos=:duracaoMinutos, ds_observacao=:observacao WHERE id_agendamento=:idAgendamento`, { replacements: { ...reserva, idAgendamento, idServico, idUnidade, observacao: requisicao.body?.observacao?.trim() || null }, transaction: transacao });
+    await bancoDeDados.query(`UPDATE tb_agendamento SET fk_unidade=:idUnidade, fk_funcionario=:idFuncionario, fk_servico=:idServico, dt_inicio=:dataInicioBanco, dt_fim=:dataFimBanco, nm_servico_agendado=:nomeServico, vl_servico_agendado=:valorServico, vl_preco_normal=:precoNormal, vl_preco_vigente=:precoVigente, st_promocao_aplicada=:promocaoAplicada, tp_promocao_aplicada=:tipoPromocaoAplicada, vl_promocao_aplicada=:valorPromocaoAplicada, nu_duracao_minutos=:duracaoMinutos, ds_observacao=:observacao WHERE id_agendamento=:idAgendamento`, { replacements: { ...reserva, idAgendamento, idServico, idUnidade, observacao: requisicao.body?.observacao?.trim() || null }, transaction: transacao });
     await transacao.commit();
     void notificarSalaoDoAgendamento(idAgendamento, 'Agendamento alterado', 'Um cliente alterou os dados de um horário marcado.');
     resposta.status(200).json({ mensagem: 'Agendamento atualizado com sucesso.' });
