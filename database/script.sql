@@ -49,6 +49,16 @@ CREATE TABLE IF NOT EXISTS tb_usuario (
     UNIQUE (id_autenticacao_externa)
 ) ENGINE = InnoDB;
 
+-- Sessões administrativas revogáveis; nunca armazena o token em texto.
+CREATE TABLE IF NOT EXISTS tb_sessao_admin (
+  ds_token_hash CHAR(64) NOT NULL PRIMARY KEY,
+  ds_credencial_versao CHAR(64) NOT NULL,
+  dt_expiracao DATETIME NOT NULL,
+  dt_revogacao DATETIME NULL,
+  dt_criacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_sessao_admin_expiracao (dt_expiracao)
+) ENGINE=InnoDB;
+
 -- Sobrevive à remoção do salão para permitir retomar falhas entre provedores.
 CREATE TABLE IF NOT EXISTS tb_exclusao_conta_salao (
   id_operacao CHAR(36) NOT NULL PRIMARY KEY,
