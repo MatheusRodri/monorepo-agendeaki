@@ -9,7 +9,7 @@ let clienteStripe;
 
 export function obterOfertaPremium() {
   return {
-    basico: { nome: 'Básico', preco: 0, recursos: ['Dashboard atual', 'Agenda, clientes e gestão do salão', '1 unidade'] },
+    basico: { nome: 'Básico', preco: 0, recursos: ['Dashboard Simples', 'Agenda, clientes e gestão do salão', '1 unidade'] },
     premium: {
       nome: 'Premium',
       testeGratisDias: 7,
