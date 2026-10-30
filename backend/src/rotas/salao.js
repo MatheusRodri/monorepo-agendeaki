@@ -1,4 +1,4 @@
-import { comporMotivo } from '../servicos/metricasAgenda.js';
+import { comporMotivo, calcularMetricasCancelamento } from '../servicos/metricasAgenda.js';
 import { iniciarExclusaoSalao } from '../servicos/exclusaoContaSalao.js';
 import { consultarExclusao } from '../servicos/usuarios.js';
 import { reservarContratacao, finalizarCheckout, cancelarRecursosContratacao, recuperarCheckout } from '../servicos/contratacoes.js';
@@ -1386,7 +1386,7 @@ async function indicadoresPremium(requisicao, resposta) {
     const quantidadeDiasPeriodo = Math.floor((new Date(`${dataFim}T00:00:00.000Z`) - new Date(`${dataInicio}T00:00:00.000Z`)) / 86_400_000) + 1;
     const dataFimAnterior = deslocarDataIso(dataInicio, -1);
     const dataInicioAnterior = deslocarDataIso(dataFimAnterior, -(quantidadeDiasPeriodo - 1));
-    const filtros = { idSalao: salao.idSalao, idServico, idFuncionario };
+    const filtros = { idSalao: salao.idSalao, idServico, idFuncionario, agora: normalizarConsultaAnalitica({}, salao.idSalao).filtros.agora };
     const condicoes = ['u.fk_salao=:idSalao'];
     if (idUnidade) { filtros.idUnidade = idUnidade; condicoes.push('a.fk_unidade=:idUnidade'); }
     const filtroItem = '(:idServico = 0 OR item.fk_servico=:idServico) AND (:idFuncionario = 0 OR item.fk_funcionario=:idFuncionario)';
@@ -1422,18 +1422,19 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeComparecimentos,
         COALESCE(SUM(CASE WHEN a.cd_status IN ('AGENDADO','REALIZADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosAtivos,
         COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoCancelamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados,
+        COALESCE(SUM(CASE WHEN a.cd_status='CANCELADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeCancelamentosElegiveis,
         COALESCE(SUM(CASE WHEN a.cd_status='NAO_COMPARECEU'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO'${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosMarcados,
-        COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO' AND a.dt_inicio<NOW()${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
+        COALESCE(SUM(CASE WHEN a.cd_status='AGENDADO' AND a.dt_inicio< :agora${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
         COALESCE(SUM(CASE WHEN 1=1${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
-        COALESCE(SUM(CASE WHEN (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis
+        COALESCE(SUM(CASE WHEN (a.dt_inicio<= :agora OR a.cd_status='CANCELADO')${restricaoAgendamento} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase}`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT COALESCE(SUM(a.vl_servico_agendado),0) AS receitaPrevista
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
-        WHERE ${condicaoBase} AND a.cd_status='AGENDADO' AND a.dt_inicio>=NOW()
-          AND a.dt_inicio<DATE_ADD(NOW(), INTERVAL 30 DAY)`, { replacements: filtros, type: QueryTypes.SELECT }),
+        WHERE ${condicaoBase} AND a.cd_status='AGENDADO' AND a.dt_inicio>= :agora
+          AND a.dt_inicio<DATE_ADD(:agora, INTERVAL 30 DAY)`, { replacements: filtros, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT
         COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN ${valorAtendimento} ELSE 0 END),0) AS receitaRealizada,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorRealizacoes} AND a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS atendimentosRealizados,
@@ -1443,8 +1444,10 @@ async function indicadoresPremium(requisicao, resposta) {
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='REALIZADO' THEN 1 ELSE 0 END),0) AS quantidadeComparecimentos,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='NAO_COMPARECEU' THEN 1 ELSE 0 END),0) AS quantidadeNaoCompareceu,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosTotal,
-        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' AND a.dt_inicio<NOW() THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
-        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND (a.dt_inicio<=NOW() OR a.cd_status='CANCELADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' AND a.dt_inicio< :agora THEN 1 ELSE 0 END),0) AS quantidadeAtendimentosAConfirmar,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND (a.dt_inicio<= :agora OR a.cd_status='CANCELADO') THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosElegiveis,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeCancelamentosElegiveis,
+        COALESCE(SUM(CASE WHEN ${periodoAnteriorAgendamentos} AND a.cd_status='AGENDADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosMarcados,
         COALESCE(SUM(CASE WHEN ${periodoAnteriorCancelamentos} AND a.cd_status='CANCELADO' THEN 1 ELSE 0 END),0) AS quantidadeAgendamentosCancelados
         FROM tb_agendamento a INNER JOIN tb_unidade u ON u.id_unidade=a.fk_unidade
         WHERE ${condicaoBase}`, { replacements: filtrosComparacao, type: QueryTypes.SELECT }),
@@ -1502,8 +1505,8 @@ async function indicadoresPremium(requisicao, resposta) {
         WHERE u.fk_salao=:idSalao AND a.cd_status='REALIZADO'
           AND (a.fk_usuario IS NOT NULL OR a.fk_cliente_salao IS NOT NULL)
         GROUP BY COALESCE(CONCAT('U:',a.fk_usuario),CONCAT('S:',a.fk_cliente_salao))
-        HAVING MAX(a.dt_realizacao)<DATE_SUB(NOW(), INTERVAL 90 DAY)
-        ORDER BY ultimoAtendimento ASC LIMIT 20`, { replacements: { idSalao: salao.idSalao }, type: QueryTypes.SELECT }),
+        HAVING MAX(a.dt_realizacao)<DATE_SUB(:agora, INTERVAL 90 DAY)
+        ORDER BY ultimoAtendimento ASC LIMIT 20`, { replacements: { idSalao: salao.idSalao, agora: filtros.agora }, type: QueryTypes.SELECT }),
       bancoDeDados.query(`SELECT f.id_funcionario AS idFuncionario, f.nm_funcionario AS profissional,
         COUNT(DISTINCT CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN a.id_agendamento END) AS atendimentosRealizados,
         COALESCE(SUM(CASE WHEN a.cd_status='REALIZADO'${restricaoRealizacao} THEN item.minutos_reservados ELSE 0 END),0) AS minutosAtendimentoRealizado,
@@ -1566,6 +1569,8 @@ async function indicadoresPremium(requisicao, resposta) {
         ocupacaoEstimada: minutosDisponiveis ? (minutosAtendidos / minutosDisponiveis) * 100 : null,
       };
     });
+    calcularMetricasCancelamento(resumo[0]);
+    calcularMetricasCancelamento(comparacaoAnterior[0]);
     resumo[0].receitaPrevista = receitaPrevista[0].receitaPrevista;
     // Comparecimento usa a mesma data agendada para realizados e ausências.
     // Os agregados partem dos atendimentos, evitando multiplicação pelos extras.
@@ -1576,14 +1581,12 @@ async function indicadoresPremium(requisicao, resposta) {
     }
     const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
     const insights = [];
-    const taxaCancelamentoAtual = Number(resumo[0].quantidadeAgendamentosElegiveis)
-      ? (Number(resumo[0].quantidadeAgendamentosCancelados) / Number(resumo[0].quantidadeAgendamentosElegiveis)) * 100 : 0;
-    const taxaCancelamentoPassada = Number(comparacaoAnterior[0].quantidadeAgendamentosElegiveis)
-      ? (Number(comparacaoAnterior[0].quantidadeAgendamentosCancelados) / Number(comparacaoAnterior[0].quantidadeAgendamentosElegiveis)) * 100 : 0;
+    const taxaCancelamentoAtual = resumo[0].taxaCancelamento;
+    const taxaCancelamentoPassada = comparacaoAnterior[0].taxaCancelamento;
     if (Number(resumo[0].quantidadeAtendimentosAConfirmar) > 0) {
       insights.push({ tipo: 'acao', titulo: 'Confirme atendimentos concluídos', descricao: `${resumo[0].quantidadeAtendimentosAConfirmar} agendamento(s) passado(s) ainda aguardam confirmação na Agenda.` });
     }
-    if (taxaCancelamentoAtual >= 15 && taxaCancelamentoAtual > taxaCancelamentoPassada) {
+    if (taxaCancelamentoAtual != null && taxaCancelamentoPassada != null && taxaCancelamentoAtual >= 15 && taxaCancelamentoAtual > taxaCancelamentoPassada) {
       insights.push({ tipo: 'alerta', titulo: 'Cancelamentos em alta', descricao: `A taxa está em ${taxaCancelamentoAtual.toFixed(1).replace('.', ',')}%, ${ (taxaCancelamentoAtual - taxaCancelamentoPassada).toFixed(1).replace('.', ',')} p.p. acima do período anterior.` });
     }
     const horarioMaisProcurado = [...mapaCalor].sort((a, b) => Number(b.quantidade) - Number(a.quantidade))[0];
