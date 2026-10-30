@@ -1,10 +1,26 @@
 importScripts('/push-vinculos.js');
 const identidadesJanelas = new Map();
-const CACHE = 'agendeaki-offline-v4';
+const CACHE = 'agendeaki-offline-v5';
 const ARQUIVOS = ['/offline', '/icone-192.png', '/icone-512.png'];
 
 self.addEventListener('install', (evento) => {
-  evento.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
+  evento.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await cache.addAll(ARQUIVOS);
+
+    // O HTML sozinho não inclui os estilos globais nem os controles React da tela.
+    const resposta = await cache.match('/offline');
+    const html = await resposta.text();
+    const dependencias = new Set();
+    for (const [, caminho] of html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)=["']([^"']+)["']/gi)) {
+      const url = new URL(caminho, self.location.origin);
+      if (url.origin === self.location.origin && url.pathname.startsWith('/_next/static/')) {
+        dependencias.add(url.href);
+      }
+    }
+    await cache.addAll([...dependencias]);
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (evento) => {
@@ -79,7 +95,12 @@ self.addEventListener('notificationclick', (evento) => {
 
 self.addEventListener('fetch', (evento) => {
   const url = new URL(evento.request.url);
-  if (evento.request.mode !== 'navigate' || url.origin !== self.location.origin || url.pathname === '/offline') return;
+  if (evento.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/_next/static/')) {
+    evento.respondWith(caches.open(CACHE).then(async (cache) => (await cache.match(evento.request)) || fetch(evento.request)));
+    return;
+  }
+  if (evento.request.mode !== 'navigate') return;
   evento.respondWith(fetch(evento.request).catch(async () => {
     const resposta = await caches.match('/offline');
     return resposta || Response.error();
