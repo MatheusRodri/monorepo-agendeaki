@@ -8,7 +8,8 @@
     "start": "node src/servidor.js",
     "migrar:documentos": "node scripts/migrar-documentos.js",
     "gerar:seed-filiais-demo": "node scripts/gerar-seed-filiais-hair-plus-demo.js",
-    "importar:faturas-stripe": "node scripts/importar-faturas-stripe.js"
+    "importar:faturas-stripe": "node scripts/importar-faturas-stripe.js",
+    "retomar:exclusoes": "node scripts/retomar-exclusoes.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

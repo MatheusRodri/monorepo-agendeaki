@@ -128,7 +128,8 @@ export default function FormularioAutenticacao({ modo, perfil }) {
         }
         roteador.replace(perfil === 'cliente' ? '/cliente/inicio' : '/salao/dashboard');
       } catch (erro) {
-        if (erro.status === 403) limparSessao(perfil);
+        if (erro.codigo === 'EXCLUSAO_PENDENTE') roteador.replace('/salao/configuracoes');
+        else if (erro.status === 403) limparSessao(perfil);
       } finally {
         if (ativo) definirVerificandoSessao(false);
       }
@@ -152,6 +153,7 @@ export default function FormularioAutenticacao({ modo, perfil }) {
       if (estaNoCadastro) { definirConfirmarEmail(dadosFormulario.email); return; }
       if (!dadosResposta.tokenAcesso || !dadosResposta.tokenAtualizacao) throw new Error('O login não retornou uma sessão válida.');
       armazenarSessao(dadosResposta.tokenAcesso, dadosResposta.tokenAtualizacao, perfil, manterConectado);
+      if (dadosResposta.exclusaoPendente) { roteador.replace('/salao/configuracoes'); return; }
       if (dadosResposta.cadastroIncompleto || dadosResposta.salaoIncompleto) {
         definirCompletarPerfil({
           cadastroIncompleto: dadosResposta.cadastroIncompleto,

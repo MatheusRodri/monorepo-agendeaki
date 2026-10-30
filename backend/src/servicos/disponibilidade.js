@@ -143,7 +143,7 @@ async function buscarContexto({ idUnidade, idServico, idFuncionario = null, tran
      INNER JOIN tb_salao sa ON sa.id_salao = u.fk_salao
      WHERE s.id_servico = :idServico AND s.fk_unidade = :idUnidade
        AND s.st_ativo = TRUE AND f.st_ativo = TRUE
-       AND u.st_ativo = TRUE AND sa.st_ativo = TRUE
+       AND u.st_ativo = TRUE AND sa.st_ativo = TRUE AND sa.st_exclusao_pendente=FALSE
        AND (:idFuncionario IS NULL OR f.id_funcionario = :idFuncionario)
      ORDER BY f.id_funcionario`,
     { replacements: { idFuncionario, idServico, idUnidade }, transaction, type: QueryTypes.SELECT },

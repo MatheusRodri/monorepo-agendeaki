@@ -1,9 +1,10 @@
+import { iniciarExclusaoSalao } from '../servicos/exclusaoContaSalao.js';
+import { consultarExclusao } from '../servicos/usuarios.js';
 import { reservarContratacao, finalizarCheckout, cancelarRecursosContratacao, recuperarCheckout } from '../servicos/contratacoes.js';
 import { autenticarRequisicao } from '../servicos/autorizacaoUsuarios.js';
 import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
-import { obterClienteAdministrativoSupabase, obterClienteSupabase } from '../configuracoes/supabase.js';
 import { cnpjValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
 import { decifrarDocumento, prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
 import { atualizarPeriodicidadeStripe, obterOfertaPremium, consultarCheckoutStripe, reativarAssinaturaStripe, encerrarAssinaturaStripe } from '../servicos/stripe.js';
@@ -50,7 +51,7 @@ async function obterSalaoAdministrador(idUsuario) {
             s.st_teste_premium_utilizado AS testePremiumUtilizado,
             u.ds_email AS emailConta
      FROM tb_salao s INNER JOIN tb_usuario u ON u.id_usuario = s.fk_usuario_administrador
-     WHERE s.fk_usuario_administrador = :idUsuario AND s.st_ativo = TRUE LIMIT 1`,
+     WHERE s.fk_usuario_administrador = :idUsuario AND s.st_ativo = TRUE AND s.st_exclusao_pendente=FALSE LIMIT 1`,
     { replacements: { idUsuario }, type: QueryTypes.SELECT },
   );
   return saloes[0] ?? null;
@@ -390,61 +391,18 @@ async function alterarSenha(requisicao, resposta) {
   } catch { resposta.status(400).json({ mensagem: 'Não foi possível alterar a senha agora.' }); }
 }
 
+async function consultarEstadoExclusao(requisicao, resposta) {
+  const usuario = await autenticarRequisicao(requisicao, resposta, 'ADMIN_SALAO', { permitirExclusao: true });
+  if (!usuario) return;
+  const operacao = await consultarExclusao(usuario.idAutenticacaoExterna);
+  resposta.json({ pendente: Boolean(operacao && operacao.etapa !== 'CONCLUIDA'), etapa: operacao?.etapa ?? null });
+}
+
 async function excluirConta(requisicao, resposta) {
-  const administrador = await obterAdministradorAutenticado(requisicao, resposta);
-  if (!administrador) return;
-
-  let clienteAdministrativo;
-  try {
-    clienteAdministrativo = obterClienteAdministrativoSupabase();
-  } catch (erro) {
-    resposta.status(503).json({ mensagem: erro.message });
-    return;
-  }
-
-  const transacao = await bancoDeDados.transaction();
-  try {
-    const saloes = await bancoDeDados.query(
-      'SELECT id_salao AS idSalao FROM tb_salao WHERE fk_usuario_administrador = :idUsuario',
-      { replacements: administrador, transaction: transacao, type: QueryTypes.SELECT },
-    );
-    const idsSaloes = saloes.map((salao) => salao.idSalao);
-    const unidades = idsSaloes.length
-      ? await bancoDeDados.query('SELECT id_unidade AS idUnidade FROM tb_unidade WHERE fk_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao, type: QueryTypes.SELECT })
-      : [];
-    const idsUnidades = unidades.map((unidade) => unidade.idUnidade);
-    const condicoesAgendamento = ['fk_usuario = :idUsuario'];
-    if (idsUnidades.length) condicoesAgendamento.push('fk_unidade IN (:idsUnidades)');
-    const agendamentos = await bancoDeDados.query(
-      `SELECT id_agendamento AS idAgendamento FROM tb_agendamento WHERE ${condicoesAgendamento.join(' OR ')}`,
-      { replacements: { idUsuario: administrador.idUsuario, idsUnidades }, transaction: transacao, type: QueryTypes.SELECT },
-    );
-    const idsAgendamentos = agendamentos.map((agendamento) => agendamento.idAgendamento);
-
-    await bancoDeDados.query('UPDATE tb_agendamento SET fk_usuario_cancelamento = NULL WHERE fk_usuario_cancelamento = :idUsuario', { replacements: administrador, transaction: transacao });
-    if (idsAgendamentos.length) {
-      await bancoDeDados.query('DELETE FROM tb_pagamento WHERE fk_agendamento IN (:idsAgendamentos)', { replacements: { idsAgendamentos }, transaction: transacao });
-      await bancoDeDados.query('DELETE FROM tb_agendamento WHERE id_agendamento IN (:idsAgendamentos)', { replacements: { idsAgendamentos }, transaction: transacao });
-    }
-    if (idsUnidades.length) {
-      await bancoDeDados.query('DELETE FROM tb_funcionario WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
-      await bancoDeDados.query('DELETE FROM tb_servico WHERE fk_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
-      await bancoDeDados.query('DELETE FROM tb_unidade WHERE id_unidade IN (:idsUnidades)', { replacements: { idsUnidades }, transaction: transacao });
-    }
-    if (idsSaloes.length) await bancoDeDados.query('DELETE FROM tb_cliente_salao WHERE fk_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao });
-    if (idsSaloes.length) await bancoDeDados.query('DELETE FROM tb_salao WHERE id_salao IN (:idsSaloes)', { replacements: { idsSaloes }, transaction: transacao });
-    await bancoDeDados.query('DELETE FROM tb_usuario WHERE id_usuario = :idUsuario', { replacements: administrador, transaction: transacao });
-
-    const { error: erroSupabase } = await clienteAdministrativo.auth.admin.deleteUser(administrador.idAutenticacaoExterna);
-    if (erroSupabase) throw new Error('Não foi possível excluir a conta no Supabase. Nenhum dado local foi removido.');
-
-    await transacao.commit();
-    resposta.status(200).json({ mensagem: 'Conta e todos os dados vinculados foram excluídos.' });
-  } catch (erro) {
-    await transacao.rollback();
-    console.error('[Exclusão de conta] Falha ao excluir conta.', { idUsuario: administrador.idUsuario, mensagem: erro.message });
-    resposta.status(500).json({ mensagem: erro.message });
-  }
+  const usuario = await autenticarRequisicao(requisicao, resposta, 'ADMIN_SALAO', { permitirExclusao: true });
+  if (!usuario) return;
+  try { resposta.json(await iniciarExclusaoSalao(usuario)); }
+  catch (erro) { resposta.status(erro.status ?? 502).json({ mensagem: erro.message, codigo: erro.codigo, etapa: erro.etapa, cobrancaEncerrada: erro.cobrancaEncerrada }); }
 }
 
 async function listarFiliais(requisicao, resposta) {
@@ -1818,6 +1776,10 @@ async function reativarAssinatura(requisicao, resposta) {
       resposta.status(409).json({ mensagem: 'Esta assinatura não pode mais ser reativada. Se o período terminou, escolha “Assinar novamente”.' }); return;
     }
     await reativarAssinaturaStripe(assinatura.idAssinaturaProvedor);
+    if (!await obterSalaoAdministrador(administrador.idUsuario)) {
+      await encerrarAssinaturaStripe(assinatura.idAssinaturaProvedor);
+      throw Object.assign(new Error('A exclusão desta conta está em andamento.'), { status: 409, codigo: 'EXCLUSAO_PENDENTE' });
+    }
     const atualizada = await obterAssinaturaSalaoAtualizada(salao.idSalao);
     if (!['AUTORIZADA', 'EM_TESTE'].includes(atualizada?.status)) {
       resposta.status(409).json({ mensagem: 'A renovação ainda não foi confirmada. Atualize o status da assinatura e tente novamente.' }); return;
@@ -1843,11 +1805,16 @@ async function alterarPeriodicidadeAssinatura(requisicao, resposta) {
   if (assinatura.periodicidadePendente) { resposta.status(409).json({ mensagem: 'Já existe uma troca de periodicidade agendada.' }); return; }
   try {
     await atualizarPeriodicidadeStripe(assinatura.idAssinaturaProvedor, periodicidade);
+    if (!await obterSalaoAdministrador(administrador.idUsuario)) {
+      await encerrarAssinaturaStripe(assinatura.idAssinaturaProvedor);
+      throw Object.assign(new Error('A exclusão desta conta está em andamento.'), { status: 409 });
+    }
     await bancoDeDados.query('UPDATE tb_assinatura_salao SET cd_periodicidade_pendente=:periodicidade WHERE id_assinatura_salao=:idAssinatura', { replacements: { periodicidade, idAssinatura: assinatura.idAssinatura } });
     resposta.status(200).json({ mensagem: 'A nova periodicidade será aplicada na próxima renovação.' });
   } catch (erro) { resposta.status(400).json({ mensagem: erro.message }); }
 }
 
+roteadorSalao.get('/conta/exclusao', consultarEstadoExclusao);
 roteadorSalao.get('/enderecos/:cep', consultarCep);
 roteadorSalao.get('/notificacoes/chave-publica', chavePublicaNotificacoes);
 roteadorSalao.get('/notificacoes', consultarNotificacoes);

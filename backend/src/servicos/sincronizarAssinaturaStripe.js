@@ -145,7 +145,18 @@ export async function sincronizarEventoStripe(evento) {
     const idAssinatura = obterIdAssinaturaFatura(recurso);
     if (!idAssinatura) return false;
     const sincronizada = await sincronizarAssinaturaStripe(idAssinatura);
-    if (!sincronizada) throw new Error('A assinatura da fatura ainda não está associada a um salão local.');
+    if (!sincronizada) {
+      const assinatura = await obterClienteStripe().subscriptions.retrieve(idAssinatura);
+      const referencia = assinatura.metadata?.referenciaExterna;
+      if (referencia && ['canceled','incomplete_expired'].includes(assinatura.status)) {
+        const exclusoes = await bancoDeDados.query(`SELECT id_operacao FROM tb_exclusao_conta_salao
+          WHERE cd_etapa IN ('IDENTIDADE','CONCLUIDA') AND JSON_CONTAINS(js_referencias_stripe, JSON_QUOTE(:referencia)) LIMIT 1`, {
+          replacements: { referencia }, type: QueryTypes.SELECT,
+        });
+        if (exclusoes.length) return true;
+      }
+      throw new Error('A assinatura da fatura ainda não está associada a um salão local.');
+    }
     const faturaSalva = await salvarFaturaAssinatura(recurso);
     if (!faturaSalva) throw new Error('A fatura não foi associada a uma assinatura local.');
     return true;
