@@ -1,5 +1,6 @@
 'use client';
 
+import { normalizarRetornoInterno } from '../../utils/retornoSeguro.mjs';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -63,7 +64,9 @@ export default function FormularioAutenticacao({ modo, perfil }) {
   function obterRetorno() {
     if (perfil !== 'cliente' || typeof window === 'undefined') return null;
     const retorno = new URLSearchParams(window.location.search).get('retorno') ?? localStorage.getItem('retornoAgendamento');
-    return retorno?.startsWith('/') && !retorno.startsWith('//') ? retorno : null;
+    const seguro = normalizarRetornoInterno(retorno, window.location.origin);
+    if (!seguro) localStorage.removeItem('retornoAgendamento');
+    return seguro;
   }
 
   function caminhoAutenticacao(caminho) {
