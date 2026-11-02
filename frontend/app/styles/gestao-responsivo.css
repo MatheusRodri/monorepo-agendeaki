@@ -48,19 +48,8 @@
 
 @media (max-width: 580px) {
   .linha-horario {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .linha-horario>span:first-child {
-    grid-column: 1 / -1;
-  }
-
-  .linha-horario label {
-    justify-self: end;
-  }
-
-  .linha-horario input[type='time'] {
-    min-width: 0;
+    grid-template-areas: 'dia dia' 'fechado campos';
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .mapa-ajuste-filial {
