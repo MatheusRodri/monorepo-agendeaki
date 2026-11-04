@@ -300,7 +300,21 @@
 
 .profissional-etapas button:disabled { cursor: default; }
 .profissional-etapas button[aria-current='step'] { color: var(--coral-escuro); }
-.profissional-etapas__numero { align-items: center; border: 1px solid var(--borda); border-radius: 50%; display: flex; flex: 0 0 28px; height: 28px; justify-content: center; font-size: .8rem; font-weight: 700; }
+.profissional-etapas .profissional-etapas__numero {
+  aspect-ratio: 1;
+  border: 1px solid var(--borda);
+  border-radius: 50%;
+  display: inline-grid;
+  flex: none;
+  font-size: .8rem;
+  font-weight: 700;
+  height: 28px;
+  line-height: 1;
+  min-height: 28px;
+  min-width: 28px;
+  place-items: center;
+  width: 28px;
+}
 .profissional-etapas button[aria-current='step'] .profissional-etapas__numero { background: var(--coral); border-color: var(--coral); color: var(--fundo); }
 .profissional-etapas button>span:last-child { min-width: 0; }
 .profissional-etapas strong { display: block; font-size: .82rem; }
@@ -338,7 +352,14 @@
 @media (max-width: 540px) {
   .formulario-profissional { padding: 1rem; }
   .profissional-etapas { gap: .25rem; }
-  .profissional-etapas button { align-items: flex-start; flex-direction: column; gap: .4rem; }
+  .profissional-etapas button {
+    align-items: start;
+    display: grid;
+    gap: .4rem;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 28px auto;
+    justify-items: start;
+  }
   .profissional-etapas small { font-size: .68rem; }
   .profissional-servicos__lista { grid-template-columns: 1fr; }
   .formulario-profissional .profissional-acoes .botao-enviar { flex-basis: 100%; }

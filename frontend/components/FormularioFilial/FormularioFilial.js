@@ -143,7 +143,19 @@ export default function FormularioFilial({ endereco, filial, primeiraFilial = fa
     <p className="endereco-preenchido">{buscandoCep ? 'Buscando endereço pelo CEP...' : endereco?.rua ? `${endereco.rua}, ${endereco.bairro} · ${endereco.municipio}/${endereco.estado}` : 'Informe o CEP para preencher o endereço automaticamente.'}</p>
     {sugestoesEndereco.length > 0 && <section className="sugestoes-endereco"><strong>Confirme o endereço encontrado</strong><p>Selecione a opção que corresponde à entrada da unidade.</p>{sugestoesEndereco.map((sugestao) => <button key={sugestao.id} onClick={() => selecionarEndereco(sugestao)} type="button">{sugestao.endereco}</button>)}</section>}
     <section className="ajuste-localizacao"><div><strong>Localização da unidade</strong><p>{coordenadas ? 'Localização definida pelo endereço selecionado.' : 'Informe o CEP, o número e selecione o endereço sugerido.'}</p></div><MapaAjusteFilial coordenadas={coordenadas} />{coordenadas && <small>Latitude {coordenadas.latitude.toFixed(6)} · Longitude {coordenadas.longitude.toFixed(6)}</small>}</section>
-    <section className="horarios-filial"><div><strong>Horários de funcionamento</strong><p>Defina quando esta unidade recebe clientes.</p></div>{horarios.map((horario) => <div className="linha-horario" key={horario.diaSemana}><span>{diasSemana[horario.diaSemana]}</span><label><input checked={horario.fechado} onChange={(evento) => alterarHorario(horario.diaSemana, 'fechado', evento.target.checked)} type="checkbox" /> Fechado</label><input disabled={horario.fechado} onChange={(evento) => alterarHorario(horario.diaSemana, 'abertura', evento.target.value)} required={!horario.fechado} type="time" value={horario.abertura} /><span>até</span><input disabled={horario.fechado} onChange={(evento) => alterarHorario(horario.diaSemana, 'fechamento', evento.target.value)} required={!horario.fechado} type="time" value={horario.fechamento} /></div>)}</section>
+    <section className="horarios-filial">
+      <div><strong>Horários de funcionamento</strong><p>Defina a abertura e o fechamento de cada dia ou marque como fechado.</p></div>
+      {horarios.map((horario) => <div aria-label={diasSemana[horario.diaSemana]} className="linha-horario" key={horario.diaSemana} role="group">
+        <div className="linha-horario__cabecalho">
+          <span>{diasSemana[horario.diaSemana]}</span>
+          <label className="linha-horario__fechado"><input checked={horario.fechado} onChange={(evento) => alterarHorario(horario.diaSemana, 'fechado', evento.target.checked)} type="checkbox" /> Fechado</label>
+        </div>
+        {horario.fechado ? <p className="linha-horario__aviso">Sem atendimento neste dia.</p> : <div className="linha-horario__campos">
+          <label><span>Abertura</span><input onChange={(evento) => alterarHorario(horario.diaSemana, 'abertura', evento.target.value)} required type="time" value={horario.abertura} /></label>
+          <label><span>Fechamento</span><input onChange={(evento) => alterarHorario(horario.diaSemana, 'fechamento', evento.target.value)} required type="time" value={horario.fechamento} /></label>
+        </div>}
+      </div>)}
+    </section>
     <button className="botao-enviar" disabled={salvando}>{salvando ? 'Salvando...' : filial ? 'Atualizar unidade' : 'Criar unidade'} <span>→</span></button>
   </form>;
 }
