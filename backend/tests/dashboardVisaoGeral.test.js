@@ -1,20 +1,22 @@
 import assert from 'node:assert/strict';
-import { after, test } from 'node:test';
+import { jest } from '@jest/globals';
 import { bancoDeDados } from '../src/configuracoes/bancoDeDados.js';
 import { consultarVisaoGeralDashboard } from '../src/servicos/dashboardVisaoGeral.js';
 
-after(async () => bancoDeDados.close());
+const simular = (objeto, metodo, implementacao) => jest.spyOn(objeto, metodo).mockImplementation(implementacao);
+
+afterAll(async () => bancoDeDados.close());
 
 for (const [nome, selecao] of [
   ['sem filtros opcionais', { idUnidade: 0, idServico: 0, idFuncionario: 0, promocao: 'todas', ajusteValor: 'todos' }],
   ['com unidade, serviço, profissional e promoção', { idUnidade: 2, idServico: 3, idFuncionario: 4, promocao: 'com', ajusteValor: 'acrescimo' }],
 ]) {
-  test(`prepara as consultas da visão geral ${nome}`, async (t) => {
+  test(`prepara as consultas da visão geral ${nome}`, async () => {
     // Executa a preparação real do Sequelize, interceptando somente o acesso ao MySQL.
-    t.mock.method(bancoDeDados.connectionManager, 'getConnection', async () => ({}));
-    t.mock.method(bancoDeDados.connectionManager, 'releaseConnection', async () => {});
+    simular(bancoDeDados.connectionManager, 'getConnection', async () => ({}));
+    simular(bancoDeDados.connectionManager, 'releaseConnection', async () => {});
     const consultas = [];
-    t.mock.method(bancoDeDados.dialect.Query.prototype, 'run', async (sql) => {
+    simular(bancoDeDados.dialect.Query.prototype, 'run', async (sql) => {
       consultas.push(sql);
       assert.doesNotMatch(sql, /:[a-zA-Z_][a-zA-Z0-9_]*/, 'Não pode enviar parâmetros sem substituição ao MySQL');
       if (sql.includes('SUM(item.valor) AS valor')) {
