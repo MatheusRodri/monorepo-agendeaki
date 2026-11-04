@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 
 const codigo = await readFile(new URL('../public/sw.js', import.meta.url), 'utf8');

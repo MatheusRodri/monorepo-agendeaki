@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { destaquesDetalhados, rankingDetalhado, receitaPromocoes, resumirAgenda, seriesFinanceiras } from '../components/DashboardPremium/detalhadoDashboard.mjs';
 
 test('alternância dos rankings conserva quantidades e receitas inclusive em Outros', () => {

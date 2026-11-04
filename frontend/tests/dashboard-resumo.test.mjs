@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { montarRanking, montarSerie } from '../components/DashboardPremium/resumoDashboard.mjs';
 
 test('ranking ordena os valores reais e agrupa os restantes sem perder o total', () => {
