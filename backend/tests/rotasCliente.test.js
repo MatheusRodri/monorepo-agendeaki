@@ -65,9 +65,9 @@ test('perfil: exige aceite dos documentos quando pendente', async () => {
 test('senha: valida entradas e informa falha do provedor', async () => {
   assert.equal((await ambiente.patch(`${base}/senha`, { senha: '123', confirmacaoSenha: '123' })).status, 400);
   assert.equal((await ambiente.patch(`${base}/senha`, { senha: '123456', confirmacaoSenha: 'x23456' })).status, 400);
-  assert.equal((await ambiente.patch(`${base}/senha`, { senha: '123456', confirmacaoSenha: '123456' })).status, 200);
+  assert.equal((await ambiente.patch(`${base}/senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' })).status, 200);
   senhaOk = false;
-  assert.equal((await ambiente.patch(`${base}/senha`, { senha: '123456', confirmacaoSenha: '123456' })).status, 400);
+  assert.equal((await ambiente.patch(`${base}/senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' })).status, 400);
 });
 
 test('salões próximos: valida coordenadas, raio e cidade', async () => {
@@ -328,7 +328,7 @@ test('todas as rotas do cliente exigem sessão', async () => {
 });
 
 test('alterar senha sem cabeçalho Bearer ainda chega ao provedor', async () => {
-  const resposta = await ambiente.patch(`${base}/senha`, { senha: '123456', confirmacaoSenha: '123456' }, { authorization: 'Basic abc' });
+  const resposta = await ambiente.patch(`${base}/senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' }, { authorization: 'Basic abc' });
   assert.equal(resposta.status, 200);
 });
 
