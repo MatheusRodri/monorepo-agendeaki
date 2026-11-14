@@ -186,9 +186,9 @@ test('perfil do responsável: erros do banco viram 409 ou 400', async () => {
 test('senha e exclusão de conta', async () => {
   assert.equal((await ambiente.patch(`${base}/senha`, { senha: '1' })).status, 400);
   assert.equal((await ambiente.patch(`${base}/senha`, { senha: '123456', confirmacaoSenha: 'x' })).status, 400);
-  assert.equal((await ambiente.patch(`${base}/senha`, { senha: '123456', confirmacaoSenha: '123456' })).status, 200);
+  assert.equal((await ambiente.patch(`${base}/senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' })).status, 200);
   externo.senha = { ok: false };
-  assert.equal((await ambiente.patch(`${base}/senha`, { senha: '123456', confirmacaoSenha: '123456' })).status, 400);
+  assert.equal((await ambiente.patch(`${base}/senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' })).status, 400);
 
   assert.deepEqual((await ambiente.get(`${base}/conta/exclusao`)).corpo, { pendente: false, etapa: null });
   banco.responder(/FROM tb_exclusao_conta_salao WHERE id_autenticacao_externa/, [{ etapa: 'COBRANCA' }]);
@@ -386,6 +386,6 @@ test('perfil: erro sem mensagem devolve o texto padrão', async () => {
 });
 
 test('senha: cabeçalho sem Bearer ainda chega ao provedor', async () => {
-  const resposta = await ambiente.patch(`${base}/senha`, { senha: '123456', confirmacaoSenha: '123456' }, { authorization: 'Basic abc' });
+  const resposta = await ambiente.patch(`${base}/senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' }, { authorization: 'Basic abc' });
   assert.equal(resposta.status, 200);
 });
