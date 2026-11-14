@@ -24,8 +24,8 @@ const protegidos = await import('../src/servicos/documentosProtegidos.js');
 afterAll(async () => { await ambiente.parar(); await new Promise((r) => servidorSupabase.close(r)); });
 
 const base = '/api/autenticacao';
-const cliente = { nome: 'Maria', email: 'maria@teste.com', senha: '123456', confirmacaoSenha: '123456', dataNascimento: '1990-05-20', telefone: '11987654321', aceitouDocumentos: true };
-const salao = { nomeResponsavel: 'João', nomeSalao: 'Studio J', email: 'joao@teste.com', senha: '123456', confirmacaoSenha: '123456',
+const cliente = { nome: 'Maria', email: 'maria@teste.com', senha: 'Senha123!', confirmacaoSenha: 'Senha123!', dataNascimento: '1990-05-20', telefone: '11987654321', aceitouDocumentos: true };
+const salao = { nomeResponsavel: 'João', nomeSalao: 'Studio J', email: 'joao@teste.com', senha: 'Senha123!', confirmacaoSenha: 'Senha123!',
   dataNascimento: '1985-01-10', telefoneResponsavel: '11987654321', tipoDocumento: 'CNPJ', documento: '11.222.333/0001-81', aceitouDocumentos: true };
 
 function usuarioLogado(perfil = 'CLIENTE', extra = {}) {
@@ -57,7 +57,7 @@ test('cadastro exige aceite dos documentos', async () => {
 
 test('cadastro valida campos de cliente e de salão', async () => {
   const casos = [
-    [{ ...cliente, nome: '' }, /obrigatórios/], [{ ...cliente, email: 'ruim' }, /e-mail válido/], [{ ...cliente, senha: '123', confirmacaoSenha: '123' }, /6 caracteres/],
+    [{ ...cliente, nome: '' }, /obrigatórios/], [{ ...cliente, email: 'ruim' }, /e-mail válido/], [{ ...cliente, senha: '123', confirmacaoSenha: '123' }, /8 caracteres/],
     [{ ...cliente, confirmacaoSenha: 'outra1' }, /confirmação/], [{ ...cliente, dataNascimento: '2020-01-01' }, /18 anos/], [{ ...cliente, telefone: '123' }, /telefone/],
   ];
   for (const [corpo, padrao] of casos) {
@@ -247,18 +247,18 @@ test('recuperar senha valida e-mail e não revela se existe cadastro', async () 
 });
 
 test('redefinir senha valida entradas e atualiza no provedor', async () => {
-  assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: '123456', confirmacaoSenha: '123456' }, { authorization: '' })).status, 401);
+  assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' }, { authorization: '' })).status, 401);
   assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: '123', confirmacaoSenha: '123' })).status, 400);
   assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: '123456', confirmacaoSenha: '654321' })).status, 400);
   supabase.estado.respostas.getUser = { data: { user: null }, error: null };
-  assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: '123456', confirmacaoSenha: '123456' })).status, 401);
+  assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' })).status, 401);
   supabase.estado.respostas.getUser = undefined;
   usuarioLogado('CLIENTE');
-  assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: '123456', confirmacaoSenha: '123456' })).status, 200);
+  assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' })).status, 200);
   atualizacaoSenhaOk = false;
-  assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: '123456', confirmacaoSenha: '123456' })).status, 400);
+  assert.equal((await ambiente.post(`${base}/clientes/redefinir-senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' })).status, 400);
   supabase.estado.respostas.getUser = () => { throw new Error('boom'); };
-  assert.equal((await ambiente.post(`${base}/saloes/redefinir-senha`, { senha: '123456', confirmacaoSenha: '123456' })).status, 500);
+  assert.equal((await ambiente.post(`${base}/saloes/redefinir-senha`, { senha: 'Senha123!', confirmacaoSenha: 'Senha123!' })).status, 500);
 });
 
 // ---- serviços de usuário e documentos protegidos ----
