@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, before, mock, test } from 'node:test';
+import { jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -17,16 +17,18 @@ const { consultarMetricasPromocoes } = await import('../src/servicos/metricasPro
 const { criarReservasCliente, salvarServicosAdicionais } = await import('../src/servicos/agendamentos.js');
 const { exportarAnaliticoExcel } = await import('../src/servicos/dashboardExcel.js');
 const { default: ExcelJS } = await import('exceljs');
-mock.module('../src/servicos/autorizacaoUsuarios.js', { namedExports: {
+jest.unstable_mockModule('../src/servicos/autorizacaoUsuarios.js', () => ({
   autenticarRequisicao: async (req, res) => {
     if (!req.usuario) { res.status(401).json({ mensagem: 'Sem sessão' }); return null; }
     return req.usuario;
   },
-} });
+}));
 const notificacoes = await import('../src/servicos/notificacoesPush.js');
-mock.module('../src/servicos/notificacoesPush.js', { namedExports: { ...notificacoes, notificarSalaoDoAgendamento: async () => {} } });
+jest.unstable_mockModule('../src/servicos/notificacoesPush.js', () => ({ ...notificacoes, notificarSalaoDoAgendamento: async () => {} }));
 const { default: router } = await import('../src/rotas/salao.js');
 const { default: routerCliente } = await import('../src/rotas/cliente.js');
+const limpezas = [];
+afterEach(async () => { for (const limpar of limpezas.splice(0)) await limpar(); });
 const q = async (sql, replacements = {}) => (await db.query(sql, { replacements }))[0];
 const inicio = '2026-10-01', fim = '2026-10-30';
 const consulta = (extra = {}) => normalizarConsultaAnalitica({ dataInicio: inicio, dataFim: fim, recorte: 'realizados', ...extra }, 1);
@@ -49,7 +51,7 @@ function respostaArquivo() {
   return stream;
 }
 
-before(async () => {
+beforeAll(async () => {
   const schema = readFileSync(new URL('../../database/script.sql', import.meta.url), 'utf8').replaceAll('tccsalao', nomeBanco);
   execFileSync('mysql', ['--no-defaults', `--socket=${socket}`, '-uroot'], { input: schema });
   bancoCriado = true;
@@ -108,7 +110,7 @@ before(async () => {
     VALUES (2,3,1,'Barba','Profissional',30,25,30)`);
 });
 
-after(async () => {
+afterAll(async () => {
   try {
     if (bancoCriado) {
       await q(`DROP DATABASE IF EXISTS ${nomeBanco}_legado`);
@@ -246,8 +248,8 @@ test('preços cadastrados depois não recalculam serviços históricos', async (
   await q('UPDATE tb_servico SET vl_servico=50, vl_promocao=20 WHERE id_servico=1');
 });
 
-test('grava histórico na reserva do cliente e do salão e preserva preço nos reagendamentos', async (t) => {
-  t.after(() => q('UPDATE tb_servico SET vl_servico=50 WHERE id_servico=1'));
+test('grava histórico na reserva do cliente e do salão e preserva preço nos reagendamentos', async () => {
+  limpezas.push(() => q('UPDATE tb_servico SET vl_servico=50 WHERE id_servico=1'));
   const amanha = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   const [reserva] = await criarReservasCliente({ idUsuario: 2, idUnidade: 1, itens: [{ idServico: 1, idFuncionario: 1, dataHoraInicio: `${amanha}T09:00`, valorEsperado: 40 }] });
   const [salvo] = await q('SELECT vl_preco_normal,vl_preco_vigente,st_promocao_aplicada FROM tb_agendamento WHERE id_agendamento=:id', { id: reserva.idAgendamento });

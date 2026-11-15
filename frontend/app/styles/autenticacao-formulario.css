@@ -280,6 +280,46 @@
   color: var(--coral-escuro);
 }
 
+.regras-senha {
+  display: grid;
+  gap: .28rem;
+  list-style: none;
+  margin: .55rem 0 0;
+  padding: 0;
+}
+
+.confirmacao-senha {
+  margin: .55rem 0 0;
+}
+
+.regras-senha__item {
+  align-items: center;
+  display: flex;
+  font-size: .78rem;
+  gap: .4rem;
+  line-height: 1.35;
+}
+
+.regras-senha__item--neutro {
+  color: var(--texto-suave);
+}
+
+.regras-senha__item--pendente {
+  color: #a15c32;
+}
+
+.regras-senha__item--ok {
+  color: #23834b;
+}
+
+:root[data-tema='escuro'] .regras-senha__item--pendente {
+  color: #f0b089;
+}
+
+:root[data-tema='escuro'] .regras-senha__item--ok {
+  color: #8ed4a8;
+}
+
 .mensagem-formulario {
   border-radius: 10px;
   font-size: .8rem;

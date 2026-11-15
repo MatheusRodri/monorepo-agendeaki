@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { jest } from '@jest/globals';
 import { bancoDeDados } from '../src/configuracoes/bancoDeDados.js';
 import { consultarAnalitico, normalizarConsultaAnalitica, colunasExportacao, linhaCsv, prepararLinhasExportacao } from '../src/servicos/dashboardAnalitico.js';
 
-function simularBanco(t, linhas, itens = [], total = linhas.length) {
+const simular = (objeto, metodo, implementacao) => jest.spyOn(objeto, metodo).mockImplementation(implementacao);
+
+function simularBanco(linhas, itens = [], total = linhas.length) {
   const transaction = {};
   const consultas = [];
-  t.mock.method(bancoDeDados, 'transaction', async (_opcoes, callback) => callback(transaction));
-  t.mock.method(bancoDeDados, 'query', async (sql, opcoes) => {
+  simular(bancoDeDados, 'transaction', async (_opcoes, callback) => callback(transaction));
+  simular(bancoDeDados, 'query', async (sql, opcoes) => {
     assert.equal(opcoes.transaction, transaction, 'Contagem, página e composição devem compartilhar o snapshot');
     consultas.push({ sql, ...opcoes });
     if (sql.startsWith('SELECT COUNT(*)')) return [{ total, totalAtendimentos: total, totalServicosExtras: itens.filter((item) => item.tipoItem === 'EXTRA').length }];
@@ -20,14 +22,14 @@ function simularBanco(t, linhas, itens = [], total = linhas.length) {
 
 const consulta = (extra = {}) => normalizarConsultaAnalitica({ dataInicio: '2026-10-01', dataFim: '2026-10-31', ...extra }, 7);
 
-test('composição usa uma consulta em lote, preserva valores históricos e não altera as linhas originais', async (t) => {
+test('composição usa uma consulta em lote, preserva valores históricos e não altera as linhas originais', async () => {
   const linhas = [{ idAgendamento: 10, valor: '75.00' }, { idAgendamento: 20, valor: '0.00' }];
   const itens = [
     { idAgendamento: '10', tipoItem: 'ORIGINAL', valorItem: '40.00', precoNormal: '50.00', duracaoMinutos: 30 },
     { idAgendamento: 10, tipoItem: 'EXTRA', idExtra: 3, valorItem: '35.00', precoNormal: null, descontoAdicional: null, duracaoMinutos: 20, observacaoAjuste: 'Cortesia para o cliente.' },
     { idAgendamento: 20, tipoItem: 'ORIGINAL', valorItem: '0.00', precoNormal: '0.00', duracaoMinutos: 15 },
   ];
-  const consultas = simularBanco(t, linhas, itens);
+  const consultas = simularBanco(linhas, itens);
   const resultado = await consultarAnalitico(consulta());
   assert.equal(consultas.length, 3);
   assert.deepEqual(consultas[2].replacements.ids, [10, 20]);
@@ -39,8 +41,8 @@ test('composição usa uma consulta em lote, preserva valores históricos e não
   assert.equal(linhas[0].servicos, undefined);
 });
 
-test('composição recebe os mesmos filtros e limita extras ao recorte selecionado', async (t) => {
-  const consultas = simularBanco(t, [{ idAgendamento: 10, valor: '45.00' }], [{ idAgendamento: 10, tipoItem: 'EXTRA', valorItem: '45.00' }]);
+test('composição recebe os mesmos filtros e limita extras ao recorte selecionado', async () => {
+  const consultas = simularBanco([{ idAgendamento: 10, valor: '45.00' }], [{ idAgendamento: 10, tipoItem: 'EXTRA', valorItem: '45.00' }]);
   await consultarAnalitico(consulta({ idUnidade: 2, idServico: 3, idFuncionario: 4, promocao: 'com', ajusteValor: 'acrescimo', recorte: 'extras' }));
   const composicao = consultas[2];
   assert.match(composicao.sql, /AND item.id_extra IS NOT NULL/);
@@ -49,8 +51,8 @@ test('composição recebe os mesmos filtros e limita extras ao recorte seleciona
   for (const campo of ['idSalao', 'idUnidade', 'idServico', 'idFuncionario', 'promocao', 'ajusteValor']) assert.equal(composicao.replacements[campo], consultas[1].replacements[campo]);
 });
 
-test('visão por serviço mantém paginação e duração sem carregar uma composição duplicada', async (t) => {
-  const consultas = simularBanco(t, [{ idAgendamento: 10, idLinha: 'EXTRA:3', duracaoMinutos: 20 }], [], 30);
+test('visão por serviço mantém paginação e duração sem carregar uma composição duplicada', async () => {
+  const consultas = simularBanco([{ idAgendamento: 10, idLinha: 'EXTRA:3', duracaoMinutos: 20 }], [], 30);
   const resultado = await consultarAnalitico(consulta({ visualizarPor: 'servico', pagina: 99 }));
   assert.equal(consultas.length, 2);
   assert.equal(resultado.pagina, 2);
@@ -59,8 +61,8 @@ test('visão por serviço mantém paginação e duração sem carregar uma compo
   assert.equal(resultado.agendamentos[0].servicos, undefined);
 });
 
-test('página vazia não consulta itens com uma lista de identificadores vazia', async (t) => {
-  const consultas = simularBanco(t, []);
+test('página vazia não consulta itens com uma lista de identificadores vazia', async () => {
+  const consultas = simularBanco([]);
   const resultado = await consultarAnalitico(consulta());
   assert.equal(consultas.length, 2);
   assert.deepEqual(resultado.agendamentos, []);
@@ -68,14 +70,14 @@ test('página vazia não consulta itens com uma lista de identificadores vazia',
   assert.equal(resultado.totalPaginas, 1);
 });
 
-test('exportação preserva a observação por serviço e neutraliza fórmulas no CSV', async (t) => {
+test('exportação preserva a observação por serviço e neutraliza fórmulas no CSV', async () => {
   const observacaoAjuste = '=Motivo "combinado"; acabamento especial';
   const consultaServico = consulta({ visualizarPor: 'servico' });
   const [linha] = await prepararLinhasExportacao(consultaServico, [{ servico: 'Barba', valor: 45, observacaoAjuste }]);
   assert.equal(linha.observacaoAjuste, observacaoAjuste);
   assert.ok(colunasExportacao.some(([nome, campo]) => nome === 'observacao_ajuste' && campo === 'observacaoAjuste'));
   assert.equal(linhaCsv([linha.observacaoAjuste]), '"\'=Motivo ""combinado""; acabamento especial"\r\n');
-  t.mock.method(bancoDeDados, 'query', async () => [{ idAgendamento: 10, observacaoAjuste }]);
+  simular(bancoDeDados, 'query', async () => [{ idAgendamento: 10, observacaoAjuste }]);
   const [agrupada] = await prepararLinhasExportacao(consulta(), [{ idAgendamento: 10 }]);
   assert.equal(agrupada.observacaoAjuste, observacaoAjuste);
 });

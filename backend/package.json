@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "node --watch src/servidor.js",
     "start": "node src/servidor.js",
-    "test": "node --test --test-isolation=none tests/historicoPrecos.test.js tests/dashboardVisaoGeral.test.js tests/dashboardAnalitico.test.js tests/observacaoAjuste.test.js",
-    "test:integracao": "node --experimental-test-module-mocks --test --test-isolation=none tests/promocoes.integracao.test.js"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:integracao": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathIgnorePatterns=/node_modules/ tests/promocoes.integracao.test.js",
+    "test:cobertura": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",
@@ -19,5 +20,8 @@
     "sequelize": "^6.37.7",
     "stripe": "^23.0.0",
     "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "jest": "^30.5.2"
   }
 }

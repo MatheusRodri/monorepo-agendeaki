@@ -10,6 +10,7 @@ import { QueryTypes } from 'sequelize';
 import { Router } from 'express';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
 import { cnpjValido, dataNascimentoValida, normalizarCnpj, somenteNumeros } from '../servicos/documentos.js';
+import { mensagemSenhaInvalida } from '../servicos/senha.js';
 import { decifrarDocumento, prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documentosProtegidos.js';
 import { atualizarPeriodicidadeStripe, obterOfertaPremium, consultarCheckoutStripe, reativarAssinaturaStripe, encerrarAssinaturaStripe } from '../servicos/stripe.js';
 import { sincronizarAssinaturaStripe } from '../servicos/sincronizarAssinaturaStripe.js';
@@ -385,7 +386,8 @@ async function alterarSenha(requisicao, resposta) {
   const administrador = await obterAdministradorAutenticado(requisicao, resposta); if (!administrador) return;
   const senha = requisicao.body?.senha;
   const confirmacaoSenha = requisicao.body?.confirmacaoSenha;
-  if (!senha || senha.length < 6) { resposta.status(400).json({ mensagem: 'A nova senha deve possuir pelo menos 6 caracteres.' }); return; }
+  const mensagemSenha = mensagemSenhaInvalida(senha);
+  if (mensagemSenha) { resposta.status(400).json({ mensagem: mensagemSenha }); return; }
   if (senha !== confirmacaoSenha) { resposta.status(400).json({ mensagem: 'As senhas precisam ser iguais.' }); return; }
   const tokenAcesso = extrairTokenAcesso(requisicao);
   try {

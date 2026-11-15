@@ -8,6 +8,7 @@ import { prepararDocumento, prepararIndiceRaizCnpj } from '../servicos/documento
 import { sincronizarUsuario, obterPendenciasUsuario, publicarPerfilConfiavel } from '../servicos/usuarios.js';
 import { criarSlugSalaoUnico } from '../servicos/slugs.js';
 import { obterDocumentosLegais, obterVersoesDocumentosLegais } from '../servicos/documentosLegais.js';
+import { mensagemSenhaInvalida } from '../servicos/senha.js';
 
 const roteadorAutenticacao = Router();
 
@@ -61,9 +62,8 @@ function validarDadosCadastro(dadosCadastro, perfil) {
     return 'Informe um e-mail válido.';
   }
 
-  if (senha.length < 6) {
-    return 'A senha deve possuir pelo menos 6 caracteres.';
-  }
+  const mensagemSenha = mensagemSenhaInvalida(senha);
+  if (mensagemSenha) return mensagemSenha;
 
   if (senha !== confirmacaoSenha) {
     return 'A confirmação de senha não corresponde à senha informada.';
@@ -439,7 +439,8 @@ async function redefinirSenha(requisicao, resposta, perfil) {
   const senha = requisicao.body?.senha;
   const confirmacaoSenha = requisicao.body?.confirmacaoSenha;
   if (!tokenAcesso) { resposta.status(401).json({ mensagem: 'O link de redefinição é inválido ou expirou.' }); return; }
-  if (!senha || senha.length < 6) { resposta.status(400).json({ mensagem: 'A nova senha deve possuir pelo menos 6 caracteres.' }); return; }
+  const mensagemSenha = mensagemSenhaInvalida(senha);
+  if (mensagemSenha) { resposta.status(400).json({ mensagem: mensagemSenha }); return; }
   if (senha !== confirmacaoSenha) { resposta.status(400).json({ mensagem: 'As senhas precisam ser iguais.' }); return; }
 
   try {

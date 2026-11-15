@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { calcularHistoricoPreco, calcularAjusteExtra, normalizarFiltrosPrecos, normalizarObservacaoAjuste } from '../src/servicos/historicoPrecos.js';
 
 const agora = new Date('2026-10-30T15:00:00Z');

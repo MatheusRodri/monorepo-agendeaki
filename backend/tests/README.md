@@ -22,4 +22,4 @@ mysqld --no-defaults --datadir=/tmp/agendeaki-metricas-mysql --socket=/tmp/agend
 
 O usuário `root` dessa instância descartável não tem senha e o servidor não aceita conexões de rede. Para outro socket temporário, configure `TEST_MYSQL_SOCKET` com um caminho dentro de `/tmp` terminado em `.sock`. Não aponte para uma instância com dados reais.
 
-O runner de integração usa o recurso experimental de substituição de módulos do Node.js, sem adicionar dependências ao projeto.
+Os testes usam Jest em modo ESM (`--experimental-vm-modules`) e `jest.unstable_mockModule` para substituir módulos. Use `npm run test:cobertura` para o relatório de cobertura.
