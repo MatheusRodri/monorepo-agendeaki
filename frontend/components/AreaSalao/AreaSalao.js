@@ -494,7 +494,7 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
     { nome: 'Exportação de dados e relatórios', descricao: 'Exporte seus dados e relatórios.' },
     { nome: 'Unidades ilimitadas', descricao: 'Cadastre e gerencie quantas unidades sua empresa precisar.' },
   ];
-  const opcoesPremium = premium.opcoes?.length ? premium.opcoes : [{ periodicidade: 'MENSAL', valor: 50.00 }, { periodicidade: 'ANUAL', valor: 400.00 }];
+  const opcoesPremium = premium.opcoes?.length ? premium.opcoes : [{ periodicidade: 'MENSAL', valor: 150.00 }, { periodicidade: 'ANUAL', valor: 1500.00, descricao: '2 meses grátis' }];
   const premiumAtivo = assinatura?.temAcessoPremium;
   const modoTeste = Boolean(dados.modoTeste);
   const renovacaoCancelada = ['CANCELAMENTO_AGENDADO', 'CANCELADA'].includes(assinatura?.status);
@@ -599,7 +599,6 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
         {!renovacaoCancelada && <button className="botao-secundario" disabled={Boolean(enviando)} onClick={cancelar} type="button">{enviando === 'cancelar' ? 'Cancelando...' : 'Cancelar renovação'}</button>}
       </div>
     </section>}
-    {assinaturaEncerrada && <section className="status-assinatura"><div><strong>Seu período Premium terminou</strong><p>Escolha um plano abaixo para assinar novamente com esta conta. Suas unidades, profissionais, serviços e histórico continuam salvos. O Premium será liberado após a confirmação da contratação.</p></div><button className="botao-secundario" disabled={Boolean(enviando)} onClick={atualizarStatus} type="button">{enviando === 'atualizar' ? 'Atualizando...' : 'Atualizar status'}</button></section>}
     <div className="grade-planos">
       <article className="cartao-plano"><p className="sobretitulo">{oferta.basico?.nome ?? 'Básico'}</p><h2>Para organizar a rotina.</h2><strong className="preco-plano">Grátis</strong><ul>{recursosBasicos.map((recurso) => <li key={recurso}>✓ {recurso}</li>)}</ul><span className="plano-atual">{premiumAtivo ? 'Plano disponível' : 'Seu plano atual'}</span></article>
       <article className="cartao-plano cartao-plano--premium"><p className="sobretitulo">{premium.nome ?? 'Premium'}</p><h2>Para acompanhar cada resultado.</h2><p className="titulo-recursos-premium">Incluído no plano</p><ul className="lista-recursos-premium">{recursosPremium.map((recurso) => <li key={recurso.nome}><div><span>{recurso.nome}</span></div>{recurso.descricao && <small>{recurso.descricao}</small>}</li>)}</ul>
@@ -608,7 +607,7 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
           const planoAtual = assinatura?.periodicidade === opcao.periodicidade;
           const trocaAgendada = assinatura?.periodicidadePendente === opcao.periodicidade;
           return <section key={opcao.periodicidade}>
-            <div><strong>R$ {Number(opcao.valor).toFixed(2).replace('.', ',')}</strong><span>por {opcao.periodicidade === 'ANUAL' ? 'ano' : 'mês'}</span></div>
+            <div><strong>R$ {Number(opcao.valor).toFixed(2).replace('.', ',')}</strong><span>por {opcao.periodicidade === 'ANUAL' ? 'ano' : 'mês'}</span>{opcao.descricao && <small className="beneficio-plano">{opcao.descricao}</small>}</div>
             {premiumAtivo
               ? <button className="botao-secundario" disabled={planoAtual || trocaAgendada || renovacaoCancelada || Boolean(assinatura?.periodicidadePendente) || Boolean(enviando)} onClick={() => alterarPeriodicidade(opcao.periodicidade)} type="button">{planoAtual ? 'Plano atual' : trocaAgendada ? 'Troca agendada' : enviando === opcao.periodicidade ? 'Salvando...' : 'Escolher'}</button>
               : <button className="botao-enviar" disabled={contratacaoBloqueada || Boolean(enviando)} onClick={() => assinar(opcao.periodicidade)} type="button">{enviando === opcao.periodicidade ? (modoTeste ? 'Ativando...' : 'Abrindo checkout...') : modoTeste ? 'Ativar Premium para teste' : assinaturaEncerrada ? 'Assinar novamente' : 'Assinar com Stripe'}</button>}
