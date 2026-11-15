@@ -1,8 +1,8 @@
 import Stripe from 'stripe';
 
 const planosPremium = {
-  MENSAL: { periodicidade: 'MENSAL', valor: 50.00, frequencia: 1, variavelPreco: 'STRIPE_PRICE_ID_MENSAL' },
-  ANUAL: { periodicidade: 'ANUAL', valor: 400.00, frequencia: 12, variavelPreco: 'STRIPE_PRICE_ID_ANUAL' },
+  MENSAL: { periodicidade: 'MENSAL', valor: 150.00, frequencia: 1, variavelPreco: 'STRIPE_PRICE_ID_MENSAL' },
+  ANUAL: { periodicidade: 'ANUAL', valor: 1500.00, frequencia: 12, variavelPreco: 'STRIPE_PRICE_ID_ANUAL', descricao: '2 meses grátis' },
 };
 
 let clienteStripe;
@@ -13,7 +13,7 @@ export function obterOfertaPremium() {
     premium: {
       nome: 'Premium',
       testeGratisDias: 7,
-      opcoes: Object.values(planosPremium).map(({ periodicidade, valor }) => ({ periodicidade, valor })),
+      opcoes: Object.values(planosPremium).map(({ periodicidade, valor, descricao }) => ({ periodicidade, valor, ...(descricao ? { descricao } : {}) })),
       recursos: [
         { nome: 'Promoções em serviços', descricao: 'Ofereça preços promocionais ou descontos percentuais, com período opcional.' },
         { nome: 'Unidades ilimitadas', descricao: 'Cadastre e gerencie quantas unidades sua empresa precisar.' },
