@@ -24,8 +24,8 @@ function reiniciarStripe(objeto = stripe) {
   }
 }
 
-const precoMensal = { id: 'price_m', currency: 'brl', unit_amount: 5000, recurring: { interval: 'month', interval_count: 1 } };
-const precoAnual = { id: 'price_a', currency: 'brl', unit_amount: 40000, recurring: { interval: 'year' } };
+const precoMensal = { id: 'price_m', currency: 'brl', unit_amount: 15000, recurring: { interval: 'month', interval_count: 1 } };
+const precoAnual = { id: 'price_a', currency: 'brl', unit_amount: 150000, recurring: { interval: 'year' } };
 
 beforeEach(() => {
   banco.reiniciar();
@@ -37,7 +37,8 @@ beforeEach(() => {
 test('oferta e planos Premium', () => {
   const oferta = servico.obterOfertaPremium();
   assert.equal(oferta.premium.opcoes.length, 2);
-  assert.equal(servico.obterDadosPlanoPremium('mensal').valor, 50);
+  assert.equal(servico.obterDadosPlanoPremium('mensal').valor, 150);
+  assert.equal(servico.obterDadosPlanoPremium('anual').descricao, '2 meses grátis');
   assert.throws(() => servico.obterDadosPlanoPremium('SEMANAL'), { codigo: 'PLANO_INVALIDO' });
   assert.throws(() => servico.obterDadosPlanoPremium(undefined), { status: 400 });
 });
@@ -253,7 +254,7 @@ test('mapeamentos de status, periodicidade e valor do Stripe', () => {
 
 const assinaturaLocal = [{ idAssinatura: 3, idSalao: 9, periodicidade: 'MENSAL', valor: '50.00', statusAtual: 'PENDENTE', testeGratis: 0 }];
 const assinaturaStripe = (extra = {}) => ({ id: 'sub_1', status: 'active', customer: 'cus_1', metadata: { referenciaExterna: 'ref' }, start_date: 1761840000,
-  items: { data: [{ current_period_end: 1764432000, price: { id: 'price_m', unit_amount: 5000, recurring: { interval: 'month' } } }] }, ...extra });
+  items: { data: [{ current_period_end: 1764432000, price: { id: 'price_m', unit_amount: 15000, recurring: { interval: 'month' } } }] }, ...extra });
 
 test('sincronizar assinatura ignora sem referência ou sem registro local', async () => {
   stripe.subscriptions.retrieve.mockResolvedValue({ id: 'sub', metadata: {} });
