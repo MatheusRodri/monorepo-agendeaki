@@ -291,11 +291,13 @@
 }
 
 .opcoes-premium section > div {
-  flex: 0 0 92px;
+  flex: 0 1 120px;
+  min-width: 0;
 }
 
 .opcoes-premium strong,
-.opcoes-premium span {
+.opcoes-premium span,
+.opcoes-premium .beneficio-plano {
   display: block;
 }
 
@@ -309,6 +311,13 @@
   color: var(--texto-suave);
   font-size: .72rem;
   margin-top: .15rem;
+}
+
+.opcoes-premium .beneficio-plano {
+  color: var(--coral-escuro);
+  font-size: .72rem;
+  font-weight: 700;
+  margin-top: .2rem;
 }
 
 .opcoes-premium .botao-enviar {
