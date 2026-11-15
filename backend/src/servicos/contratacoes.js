@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { QueryTypes } from 'sequelize';
 import { bancoDeDados } from '../configuracoes/bancoDeDados.js';
-import { criarCheckoutAssinatura, consultarCheckoutStripe, prepararParametrosCheckout, obterDadosPlanoPremium, obterClienteStripe, encerrarAssinaturaStripe, cancelarAssinaturaStripe } from './stripe.js';
+import { criarCheckoutAssinatura, consultarCheckoutStripe, prepararParametrosCheckout, obterDadosPlanoPremium, obterPrecoStripe, obterClienteStripe, encerrarAssinaturaStripe, cancelarAssinaturaStripe } from './stripe.js';
 
 const falha = (mensagem, codigo, status = 409) => Object.assign(new Error(mensagem), { codigo, status });
 export const lerParametrosCheckout = (valor) => typeof valor === 'string' ? JSON.parse(valor) : valor;
@@ -52,9 +52,22 @@ export async function recuperarCheckout(registro) {
     // Chaves Stripe antigas podem ter sido removidas. Não arriscar uma segunda criação.
     throw falha('O checkout precisa de conciliação no Stripe antes de uma nova contratação.', 'CHECKOUT_REQUER_CONCILIACAO', 502);
   }
+  // Checkout pendente pode ter sido reservado com Price ID antigo; alinha ao preço vigente antes de criar.
+  const periodicidade = parametros.metadata?.periodicidade;
+  const precoAtual = obterPrecoStripe(periodicidade);
+  const plano = obterDadosPlanoPremium(periodicidade);
+  if (parametros.line_items?.[0]) parametros.line_items[0].price = precoAtual;
   const checkout = await criarCheckoutAssinatura({ parametros });
-  await bancoDeDados.query('UPDATE tb_assinatura_salao SET id_checkout_provedor=:idCheckout WHERE id_assinatura_salao=:id', {
-    replacements: { idCheckout: checkout.id, id: registro.idAssinatura },
+  await bancoDeDados.query(`UPDATE tb_assinatura_salao
+    SET id_checkout_provedor=:idCheckout, id_preco_provedor=:preco, vl_assinatura=:valor, js_parametros_checkout=:parametros
+    WHERE id_assinatura_salao=:id`, {
+    replacements: {
+      idCheckout: checkout.id,
+      preco: precoAtual,
+      valor: plano.valor,
+      parametros: JSON.stringify(parametros),
+      id: registro.idAssinatura,
+    },
   });
   return checkout;
 }
@@ -73,8 +86,8 @@ export async function finalizarCheckout(registro, idSalao) {
 
 export async function cancelarRecursosContratacao(registro, imediato = false) {
   let idAssinatura = registro.idAssinaturaProvedor;
-  if (registro.idCheckout || (!idAssinatura && registro.parametros)) {
-    const checkout = await recuperarCheckout(registro);
+  if (registro.idCheckout) {
+    const checkout = await consultarCheckoutStripe(registro.idCheckout);
     if (checkout.status === 'open') {
       try { await obterClienteStripe().checkout.sessions.expire(checkout.id); }
       catch (erro) {
