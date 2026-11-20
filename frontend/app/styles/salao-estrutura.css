@@ -62,7 +62,7 @@
   background: var(--coral-escuro);
   border: 2px solid var(--fundo);
   border-radius: 999px;
-  color: #fff;
+  color: var(--texto-sobre-destaque);
   display: inline-flex;
   font-size: .6rem;
   font-weight: 700;
@@ -92,7 +92,7 @@
 }
 
 :root[data-tema='escuro'] .botao-assinatura:not(.botao-assinatura--assinante) {
-  color: #3f1d3b;
+  color: var(--texto-sobre-destaque);
 }
 
 .botao-assinatura--assinante,
@@ -133,7 +133,7 @@
   align-items: center;
   background: var(--coral-escuro);
   border-radius: 999px;
-  color: #fff;
+  color: var(--texto-sobre-destaque);
   display: inline-flex;
   float: right;
   font-size: .65rem;

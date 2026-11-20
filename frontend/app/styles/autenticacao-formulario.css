@@ -164,7 +164,7 @@
 }
 
 :root[data-tema='escuro'] .modal-documento-legal {
-  background: #342638;
+  background: var(--creme);
 }
 
 .modal-documento-legal__cabecalho,
@@ -349,13 +349,18 @@
   color: #bcebd0;
 }
 
+:root[data-tema='escuro'] .botao-enviar,
+:root[data-tema='escuro'] .botao-enviar:hover:not(:disabled) {
+  box-shadow: 0 12px 22px rgba(200, 135, 74, .2);
+}
+
 .botao-enviar {
   align-items: center;
   background: var(--coral);
   border: 0;
   border-radius: 999px;
   box-shadow: 0 12px 22px rgba(211, 91, 87, .22);
-  color: #fff;
+  color: var(--texto-sobre-destaque);
   cursor: pointer;
   display: flex;
   font-size: .9rem;

@@ -13,26 +13,30 @@
   --sombra: 0 24px 60px rgba(92, 42, 79, .13);
   --fundo-chamada-salao: #3f1d3b;
   --texto-chamada-salao: #ffffff;
+  --texto-sobre-destaque: #ffffff;
   background: var(--fundo);
   color: var(--texto);
   font-family: 'DM Sans', Arial, sans-serif;
 }
 
+/* Tema masculino: grafite + cobre */
 :root[data-tema='escuro'] {
-  --ameixa: #f6d9eb;
-  --ameixa-suave: #d3a9ca;
-  --fundo: #1c1420;
-  --fundo-secundario: #271c2a;
-  --cartao: rgba(52, 38, 56, .8);
-  --texto: #f9edf6;
-  --texto-suave: #d1bdce;
-  --borda: rgba(255, 222, 246, .14);
-  --coral: #f09083;
-  --coral-escuro: #ffaaa0;
-  --creme: #37243a;
-  --sombra: 0 24px 60px rgba(0, 0, 0, .3);
-  --fundo-chamada-salao: #2b1830;
-  --texto-chamada-salao: #fff5fb;
+  --ameixa: #e7e3dc;
+  --ameixa-suave: #b8b2a8;
+  --fundo: #121417;
+  --fundo-secundario: #1b1f24;
+  --cartao: rgba(32, 37, 43, .85);
+  --texto: #eceae6;
+  --texto-suave: #a9adb3;
+  --borda: rgba(231, 227, 220, .12);
+  --coral: #c8874a;
+  --coral-escuro: #dda06a;
+  --creme: #22262c;
+  --sombra: 0 24px 60px rgba(0, 0, 0, .45);
+  --fundo-chamada-salao: #0d0f11;
+  --texto-chamada-salao: #f3ece2;
+  --texto-sobre-destaque: #121417;
+  color-scheme: dark;
 }
 
 * {

@@ -246,10 +246,10 @@
 :root[data-tema='escuro'] .dashboard-premium {
   --dashboard-painel: var(--fundo);
   --dashboard-controle: var(--fundo);
-  --dashboard-borda: #3a3043;
-  --dashboard-texto: #f5e1fa;
-  --dashboard-suave: #d1beda;
-  --dashboard-coral: #ff8c95;
+  --dashboard-borda: #2e333a;
+  --dashboard-texto: #eceae6;
+  --dashboard-suave: #a9adb3;
+  --dashboard-coral: var(--coral-escuro);
   --dashboard-verde: #65e9bb;
   --dashboard-azul: #9aafff;
   --dashboard-roxo: #b875f2;
