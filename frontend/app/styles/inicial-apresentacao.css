@@ -47,7 +47,7 @@
   align-items: center;
   background: var(--coral);
   border-radius: 50% 50% 50% 12%;
-  color: white;
+  color: var(--texto-sobre-destaque);
   display: inline-flex;
   font-family: Georgia, serif;
   font-size: 1.45rem;
@@ -260,7 +260,7 @@ h1 em {
 .botao-navegacao--destaque {
   background: var(--coral);
   box-shadow: 0 12px 22px rgba(211, 91, 87, .23);
-  color: #fff;
+  color: var(--texto-sobre-destaque);
 }
 
 .botao-navegacao--destaque:hover {
@@ -300,6 +300,27 @@ h1 em {
 
 :root[data-tema='escuro'] .cartao-agendamento {
   border-color: var(--borda);
+}
+
+:root[data-tema='escuro'] .apresentacao::before {
+  background: rgba(200, 135, 74, .1);
+}
+
+:root[data-tema='escuro'] .botao-navegacao--destaque,
+:root[data-tema='escuro'] .botao-navegacao--destaque:hover {
+  box-shadow: 0 12px 22px rgba(200, 135, 74, .2);
+}
+
+:root[data-tema='escuro'] .perfil-profissional__foto {
+  background: linear-gradient(135deg, var(--coral), #3a3f46);
+}
+
+:root[data-tema='escuro'] .brilho--um {
+  background: var(--coral);
+}
+
+:root[data-tema='escuro'] .brilho--dois {
+  background: #3a3f46;
 }
 
 .cartao-agendamento__topo {

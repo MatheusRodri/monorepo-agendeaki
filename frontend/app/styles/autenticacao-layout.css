@@ -17,7 +17,15 @@
 }
 
 :root[data-tema='escuro'] .pagina-autenticacao__painel {
-  background: linear-gradient(150deg, #321f36, #6d365f);
+  background: linear-gradient(150deg, #121417, #2a2f36);
+}
+
+:root[data-tema='escuro'] .pagina-autenticacao__texto .sobretitulo {
+  color: var(--coral-escuro);
+}
+
+:root[data-tema='escuro'] .pagina-autenticacao__detalhe--dois {
+  background: rgba(200, 135, 74, .35);
 }
 
 .pagina-autenticacao__painel .marca {

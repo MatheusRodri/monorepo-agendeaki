@@ -88,7 +88,7 @@
   align-items: center;
   background: var(--coral);
   border-radius: 999px;
-  color: #fff;
+  color: var(--texto-sobre-destaque);
   display: inline-flex;
   font-size: .68rem;
   justify-content: center;
@@ -121,7 +121,7 @@
 }
 
 :root[data-tema='escuro'] .modal-conta > section {
-  background: #342638;
+  background: var(--creme);
 }
 
 .modal-conta > section h2,
@@ -246,7 +246,7 @@
 .filtro-tipo button.filtro-tipo__ativo {
   background: var(--coral);
   border-color: var(--coral);
-  color: #fff;
+  color: var(--texto-sobre-destaque);
 }
 
 .lista-saloes {
@@ -386,7 +386,7 @@
   border: 3px solid #fff;
   border-radius: 50% 50% 50% 0;
   box-shadow: 0 5px 14px rgba(84, 34, 72, .25);
-  color: #fff;
+  color: var(--texto-sobre-destaque);
   cursor: pointer;
   display: flex;
   justify-content: center;

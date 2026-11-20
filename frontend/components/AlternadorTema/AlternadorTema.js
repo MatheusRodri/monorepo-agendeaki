@@ -8,9 +8,7 @@ export default function AlternadorTema() {
   const [destino, definirDestino] = useState(undefined);
 
   useEffect(() => {
-    const temaSalvo = localStorage.getItem('tema-agendeaki');
-    const prefereTemaEscuro = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const deveUsarTemaEscuro = temaSalvo ? temaSalvo === 'escuro' : prefereTemaEscuro;
+    const deveUsarTemaEscuro = localStorage.getItem('tema-agendeaki') === 'escuro';
 
     definirTemaEscuro(deveUsarTemaEscuro);
     document.documentElement.dataset.tema = deveUsarTemaEscuro ? 'escuro' : 'claro';
