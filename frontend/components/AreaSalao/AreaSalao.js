@@ -494,7 +494,7 @@ function Assinatura({ aoAtualizarPremium, dados, requisitar }) {
     { nome: 'Exportação de dados e relatórios', descricao: 'Exporte seus dados e relatórios.' },
     { nome: 'Unidades ilimitadas', descricao: 'Cadastre e gerencie quantas unidades sua empresa precisar.' },
   ];
-  const opcoesPremium = premium.opcoes?.length ? premium.opcoes : [{ periodicidade: 'MENSAL', valor: 150.00 }, { periodicidade: 'ANUAL', valor: 1500.00, descricao: '2 meses grátis' }];
+  const opcoesPremium = (premium.opcoes?.length ? premium.opcoes : [{ periodicidade: 'MENSAL', valor: 150.00 }]).filter((opcao) => opcao.periodicidade !== 'ANUAL');
   const premiumAtivo = assinatura?.temAcessoPremium;
   const modoTeste = Boolean(dados.modoTeste);
   const renovacaoCancelada = ['CANCELAMENTO_AGENDADO', 'CANCELADA'].includes(assinatura?.status);
